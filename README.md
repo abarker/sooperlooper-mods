@@ -1,3 +1,27 @@
+This modification of SooperLooper corrects for late hits on record starts and
+record stops.  If a start hit is late it starts the first loop as soon as
+possible, and corrects all the later loops.  If a stop hit is late it starts
+playing the loop as soon as possible, corrected for the error-induced offset,
+and repairs all the later loops.
+
+The basic mechanism is that the hit window, which is normally the same as the
+sync period, is shifted forward by some fixed amount.  The default in this
+branch is 50ms (which is half an eighth note at 300bpm, so a 16th note at
+300bpm).  The amount is user-settable by modifying the saved session file
+`SL_session_save.slsess` in the "Globals" section, adding a
+`late_hit_window_ms` key to it like this:
+
+```xml
+<Globals tempo="108" eighth_per_cycle="1" common_dry="0" common_wet="1" input_gain="1" sync_source="-1" auto_disable_latency="1" jack_timebase_master="0" output_midi_clock="0" use_midi_start="0" use_midi_stop="0" send_midi_start_on_trigger="0" smart_eighths="0" late_hit_window_ms="50"/>
+```
+
+The modification also corrects at the end of multiply operations.  This part
+can be disabled via a switch in `plugin.cc`.
+
+The original SooperLooper README is below.
+
+----------------------------------------------------------------
+
 SooperLooper -- Live Looping Sampler
 Jesse Chappell <jesse@essej.net>
 Copyright 2005
@@ -27,7 +51,7 @@ Future plans include a VST plugin version for both Windows and Mac.
 
 This software is licensed under the GPL, thus the source code is free,
 open and available.  It is fully functional, no nagging, no activation
-keys, nothing to waste but time if you find it doesn't suit your
+keys, nothing to waste qbut time if you find it doesn't suit your
 needs.  Best of all, because the source is open, there will always be
 someone around who can fix any problems, or add new features.  You are
 welcome to copy it, give copies to your friends, and modify it.  But

@@ -67,7 +67,7 @@ using namespace SooperLooper;
 // Window size in milliseconds for late-hit record correction.
 // LATE_HIT_WINDOW_MS is the compile-time default and must remain defined
 // so it can be used as the initialiser for g_late_hit_window_ms below.
-#define LATE_HIT_WINDOW_MS 100.0f
+#define LATE_HIT_WINDOW_MS 50.0f
 
 // Runtime value of the late-hit window.  Starts at the compile-time default
 // and may be overwritten by looper.cpp after reading the session file.
