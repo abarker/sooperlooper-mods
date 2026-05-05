@@ -160,7 +160,7 @@ typedef struct _LoopChunk {
 	
 	// used when doing frontfills
 	LADSPA_Data dOrigFeedback;
-	
+
 	// the loop where we should be frontfilled and backfilled from
 	struct _LoopChunk* srcloop;
 	
@@ -290,6 +290,23 @@ typedef struct {
 	LADSPA_Data fLoopXfadeTime;
 
 	unsigned int lSamplesSinceSync;
+
+	//------ albBegin ----------------------------------
+	// lGlobalSamplesSinceSync: continuously-running phase counter added for
+	// the late-hit window feature.  Incremented every sample in ALL states
+	// (including STATE_OFF and STATE_TRIG_START) and reset on each incoming
+	// sync pulse.  Unlike lSamplesSinceSync which only runs during recording,
+	// this is valid at button-press time in MULTI_RECORD.
+	// A pre-buffer snapshot (lGlobalSyncAtButtonPress) is taken before
+	// scanning each buffer to avoid mid-buffer sync pulses corrupting the
+	// phase reading at button-press time.
+	unsigned int lGlobalSamplesSinceSync;
+	// bSyncPulseReceived: set to true on the first sync pulse after
+	// instantiation.  Guards against the late-hit window firing at startup
+	// before any real sync pulse has arrived (calloc zeroes the struct, so
+	// lGlobalSamplesSinceSync would otherwise appear as a freshly-reset 0).
+	bool bSyncPulseReceived;
+	//------ albEnd ----------------------------------
 	
 	
 	/* Ports:

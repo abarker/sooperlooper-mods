@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program; if not, write to the Free Software
 // Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307  USA
-// ------------------------------------------------------------------------
+// ========================================================================
 
 
    This is still based on the original LADSPA plugin, yeah it's a mess.
@@ -44,6 +44,124 @@ using namespace std;
 
 using namespace SooperLooper;
 
+//====== albBegin ==================================================================================
+// Late-hit record window: constants, load probe, and debug logging
+// infrastructure added to support the late-hit correction feature.
+//
+// LATE_HIT_WINDOW_MS: if the user presses Record or Stop within this
+// many ms *after* a sync boundary, the hit is treated as belonging to that
+// boundary rather than waiting for the next one.
+//
+// SL_LoadProbe: C++ static initializer that fires when the binary loads
+// (before main) and writes a marker file to confirm the experimental build
+// is running.  Useful when slgui swallows stderr.
+//
+// sl_dbg_file / sl_dbg_open / SL_LOG: log-file infrastructure so debug
+// output goes to /tmp/sl_debug.log (or ~/sl_debug.log) regardless of how
+// the process was launched.
+//
+// SYNCWDEBUG / SYNCWDBG: per-press timing diagnostics.  Comment out the
+// #define SYNCWDEBUG line to suppress per-press messages while keeping
+// the startup banners.
+
+// Window size in milliseconds for late-hit record correction.
+// LATE_HIT_WINDOW_MS is the compile-time default and must remain defined
+// so it can be used as the initialiser for g_late_hit_window_ms below.
+#define LATE_HIT_WINDOW_MS 100.0f
+
+// Runtime value of the late-hit window.  Starts at the compile-time default
+// and may be overwritten by looper.cpp after reading the session file.
+//
+// IMPORTANT — non-standard config mechanism:
+// Every other engine parameter in this codebase is delivered through the
+// LADSPA port system: looper.cpp allocates a float, calls connect_port(),
+// and plugin.cc reads it via a pointer stored in SooperLooperI.  That
+// mechanism is the right choice for values that need OSC/GUI exposure or that
+// may change while the engine is running.
+//
+// g_late_hit_window_ms is intentionally NOT a LADSPA port.  It is a plain
+// file-scope global written by looper.cpp (via an extern declaration there)
+// during session load, before instantiate() is called.  This is acceptable
+// because:
+//   1. The value is a setup-time preference, not a real-time control.
+//   2. It is read at buffer-processing time but never changes mid-session.
+//   3. Keeping it out of the port system avoids touching looper.cpp's OSC
+//      dispatch, the LADSPA descriptor port table, and slgui.
+//
+// Consequence: this mechanism only works in the standalone build where
+// looper.cpp and plugin.cc share an address space.  When plugin.cc is loaded
+// as a true LADSPA plugin by a DAW host, looper.cpp is absent and the global
+// retains its LATE_HIT_WINDOW_MS default for the entire session.  That
+// is acceptable behaviour for the plugin case.
+//
+// Future: if the value ever needs GUI exposure, the correct path is to add a
+// LADSPA port (matching all the other parameters) and remove this global.
+float g_late_hit_window_ms = LATE_HIT_WINDOW_MS;
+
+// Compile-time safety switch for the Multiply-end late-hit correction.
+// Set to 0 to disable only the Multiply-end correction while leaving
+// the Record/Stop correction (which has more test history) unaffected.
+// The Insert-end correction (not yet implemented) will use the same flag.
+#define LATE_HIT_MULTIPLY_CORRECTION 1
+
+/*****************************************************************************/
+// Static initializer: runs when the binary/library is loaded, before any
+// plugin functions are called.  Writes to multiple locations so at least
+// one will be visible regardless of how the process is launched.
+static struct SL_LoadProbe {
+    SL_LoadProbe() {
+        // Write a sentinel file confirming the experimental build is loaded.
+        // The late-hit window value is NOT printed here: g_late_hit_window_ms
+        // has not yet been overwritten by the session file at binary-load time.
+        // The actual runtime value is logged by looper.cpp after session load.
+        FILE* f = fopen("/tmp/sl_loaded.txt", "w");
+        if (!f) {
+            const char* home = getenv("HOME");
+            if (home) {
+                char path[512];
+                snprintf(path, sizeof(path), "%s/sl_loaded.txt", home);
+                f = fopen(path, "w");
+            }
+        }
+        if (f) {
+            fprintf(f, "SooperLooper experimental binary (late-hit patch) loaded\n");
+            fclose(f);
+        }
+    }
+} sl_load_probe;
+
+/*****************************************************************************/
+// Debug log file for the experimental late-hit window patch.
+// Tries /tmp/sl_debug.log first, then ~/sl_debug.log, then falls back to stderr.
+static FILE* sl_dbg_file = NULL;
+
+static void sl_dbg_open() {
+    if (!sl_dbg_file) {
+        sl_dbg_file = fopen("/tmp/sl_debug.log", "w");  // "w" not "a": fresh file on each startup
+        if (!sl_dbg_file) {
+            // try home directory
+            const char* home = getenv("HOME");
+            if (home) {
+                char path[512];
+                snprintf(path, sizeof(path), "%s/sl_debug.log", home);
+                sl_dbg_file = fopen(path, "w");
+            }
+        }
+        if (!sl_dbg_file) {
+            sl_dbg_file = stderr;
+            fprintf(stderr, "SooperLooper: could not open log file, using stderr\n");
+        } else {
+            fprintf(sl_dbg_file, "SooperLooper: log file opened\n");
+            fflush(sl_dbg_file);
+        }
+    }
+}
+
+// Use SL_LOG(...) for messages that should always appear (banners etc.)
+// Use SYNCWDBG(SL_LOG(...)) for messages gated by the SYNCWDEBUG flag.
+#define SL_LOG(...) do { sl_dbg_open(); fprintf(sl_dbg_file, __VA_ARGS__); fflush(sl_dbg_file); } while(0)
+//====== albEnd ====================================================================================
+
 
 /*****************************************************************************/
 //#define LOOPDEBUG
@@ -53,6 +171,21 @@ using namespace SooperLooper;
 #else
 #define DBG(x)
 #endif
+
+//====== albBegin ==================================================================================
+// Separate debug flag for sync/timing diagnostics in the late-hit window code.
+// Comment out the #define below to suppress these messages.
+//
+// SYNCWDEBUG: per-press sync timing diagnostics.
+// Comment out #define SYNCWDEBUG to suppress per-press log messages.
+// SL_LOG startup banners are unaffected and always appear.
+#define SYNCWDEBUG
+#ifdef SYNCWDEBUG
+#define SYNCWDBG(x) x
+#else
+#define SYNCWDBG(x)
+#endif
+//====== albEnd ====================================================================================
 
 #define VERSION "1.6"
 
@@ -562,6 +695,12 @@ instantiateSooperLooper(const LADSPA_Descriptor * Descriptor,
    pLS->state = STATE_OFF;
    pLS->wasMuted = false;
    pLS->recSyncEnded = false;
+
+   //====== albBegin ==================================================================================
+   // Startup banner: always logged to confirm this is the experimental build.
+   // Appears once per loop instance during instantiation.
+   SL_LOG("SooperLooper [EXPERIMENTAL] instantiated -- late-hit patch active\n");
+   //====== albEnd ====================================================================================
    
    DBG(fprintf(stderr,"%u:%u  instantiated with buffersize: %lu\n", pLS->lLoopIndex, pLS->lChannelIndex, pLS->lBufferSize));
 
@@ -623,6 +762,13 @@ activateSooperLooper(LADSPA_Handle Instance) {
   //cerr << "Activate: " << pLS << endl;
 	 
   pLS->lLastMultiCtrl = -1;
+
+  //====== albBegin ==================================================================================
+  // Activation banner: always logged to confirm experimental build is active.
+  // Appears once per loop instance during activation.
+  SL_LOG("SooperLooper [EXPERIMENTAL] activating loop %u:%u -- late-hit patch active\n",
+      pLS->lLoopIndex, pLS->lChannelIndex);
+  //====== albEnd ====================================================================================
 
   pLS->lScratchSamples = 0;
   pLS->lTapTrigSamples = 0;
@@ -1966,6 +2112,31 @@ runSooperLooper(LADSPA_Handle Instance,
 	  : (pLS->lInputBufSize - (lInputLatency - pLS->lInputBufWritePos)) ;
   
 	  
+  //====== albBegin ==================================================================================
+  // Global sync counter: lGlobalSamplesSinceSync increments every sample in
+  // ALL states (including STATE_OFF and STATE_TRIG_START) and resets on each
+  // incoming sync pulse.  Unlike the existing lSamplesSinceSync, it is
+  // therefore valid to read at button-press time in MULTI_RECORD.
+  //
+  // lGlobalSyncAtButtonPress is a snapshot taken BEFORE scanning the current
+  // buffer.  LADSPA control events (button presses) are processed at buffer
+  // boundaries, so the button conceptually arrived at the start of this buffer,
+  // before any sync pulses it may contain.  Using the pre-scan snapshot avoids
+  // a bug where a mid-buffer sync pulse would reset the counter and make a
+  // genuinely-late press appear to be on-time (or vice versa).
+  unsigned int lGlobalSyncAtButtonPress = pLS->lGlobalSamplesSinceSync;
+
+  if (fSyncMode >= 1.0f) {
+	  for (unsigned long n = 0; n < SampleCount; ++n) {
+		  pLS->lGlobalSamplesSinceSync++;
+		  if (pfSyncInput[n] > 1.5f) {
+			  pLS->lGlobalSamplesSinceSync = 0;
+			  pLS->bSyncPulseReceived = true;
+		  }
+	  }
+  }
+  //====== albEnd ====================================================================================
+
   // transitions due to control triggering
   
   if (lMultiCtrl >= 0 && lMultiCtrl <= 127)
@@ -1989,7 +2160,7 @@ runSooperLooper(LADSPA_Handle Instance,
 	      case STATE_RECORD:
 		      
 		      if (fSyncMode == 0.0f && (fTrigThresh==0.0f) && !bRoundIntegerTempo) {
-			      // skip trig stop
+			      // no sync: stop immediately
 			      pLS->state = STATE_PLAY;
 			      pLS->wasMuted = false;
 			      pLS->fLoopFadeDelta = -1.0f / xfadeSamples;
@@ -2010,9 +2181,95 @@ runSooperLooper(LADSPA_Handle Instance,
 
 		      }
 		      else {
-			      pLS->state = STATE_TRIG_STOP;
-			      pLS->nextState = STATE_PLAY;
-			      DBG(fprintf(stderr,"%u:%u  Entering TRIG_STOP state\n", pLS->lLoopIndex, pLS->lChannelIndex));
+			      //====== albBegin ==================================================================================
+			      // Late-stop window check: when RECORD is pressed during STATE_RECORD
+			      // (i.e. to stop), check if stop arrived within LATE_HIT_WINDOW_MS
+			      // to anchor the loop end at the previous boundary (discarding the
+			      // overrun audio), then go directly to STATE_PLAY with dCurrPos set
+			      // identically to the normal STATE_TRIG_STOP path (lLoopLength + latency).
+			      // The trim alone corrects the loop length; no first-play offset needed.
+			      // check late-hit window for stop button
+			      unsigned long shiftSamples = (unsigned long)(g_late_hit_window_ms * 0.001f * pLS->fSampleRate);
+			      unsigned long T = lGlobalSyncAtButtonPress;
+			      // fSyncMode > 0 is the essential guard: it means an external
+			      // sync source is active and pfSyncInput carries real pulses,
+			      // so lGlobalSamplesSinceSync (T) has a meaningful value.
+			      // Quantize mode is NOT required: with external sync the snap
+			      // point is always the external pulse regardless of quantize;
+			      // Quantize only controls the subdivision for internal sync
+			      // and Rel Sync.  With no sync source (fSyncMode == 0) or when
+			      // no pulse has arrived (T is huge), the window never fires.
+			      bool stopWithinWindow = (T > 0
+			                               && T <= shiftSamples
+			                               && fSyncMode > 0.0f
+			                               && pLS->bSyncPulseReceived
+			                               && loop != NULL);
+
+			      SYNCWDBG(SL_LOG(
+					  "\n%u:%u  STOP button: lGlobalSyncAtButtonPress=%u  windowSamples=%lu"
+			          "  withinWindow=%d  (%.2f ms since boundary)  dCurrPos=%g\n",
+			          pLS->lLoopIndex, pLS->lChannelIndex,
+			          lGlobalSyncAtButtonPress, shiftSamples,
+			          (int)stopWithinWindow,
+			          T * 1000.0f / pLS->fSampleRate,
+					  loop ? loop->dCurrPos : -1.0));
+
+			      if (stopWithinWindow) {
+				      // trim T samples from the loop end and finalize immediately.
+				      // guard against underflow — require at least xfadeSamples.
+				      unsigned long trimmedLength = 0;
+				      if ((unsigned long)loop->dCurrPos > T + (unsigned long)xfadeSamples)
+					      trimmedLength = (unsigned long)(loop->dCurrPos - T);
+				      else {
+					      // too close to trim safely — fall through to normal path
+					      pLS->state = STATE_TRIG_STOP;
+					      pLS->nextState = STATE_PLAY;
+					      SYNCWDBG(SL_LOG(
+					          "%u:%u  Late-stop: T=%lu too large to trim safely"
+					          " (dCurrPos=%g), using TRIG_STOP\n",
+					          pLS->lLoopIndex, pLS->lChannelIndex,
+					          T, loop->dCurrPos));
+					      break;
+				      }
+
+				      loop->lLoopLength  = trimmedLength;
+				      loop->lCycleLength = trimmedLength;
+				      loop->lCycles = 1;
+
+				      SYNCWDBG(SL_LOG(
+				          "%u:%u  Late-stop: trimmed %lu samples (%.2f ms),"
+				          " lLoopLength=%lu\n",
+				          pLS->lLoopIndex, pLS->lChannelIndex,
+				          T, T * 1000.0f / pLS->fSampleRate,
+				          loop->lLoopLength));
+
+				      pLS->state = STATE_PLAY;
+				      pLS->wasMuted = false;
+				      pLS->fLoopFadeDelta   = -1.0f / xfadeSamples;
+				      pLS->fPlayFadeDelta   =  1.0f / xfadeSamples;
+				      pLS->fLoopSrcFadeDelta = -1.0f / xfadeSamples;
+				      pLS->fFeedSrcFadeDelta = -1.0f / xfadeSamples;
+
+				      pfSyncOutput[0] = 2.0f;
+
+				      // mirror STATE_TRIG_STOP latency compensation exactly,
+				      // then advance by T to compensate for entering STATE_PLAY
+				      // T_e samples late.  This shifts the first play T_e positions
+				      // ahead in content, exactly cancelling the T_e-late real-time
+				      // entry.  After the first natural wrap, position 0 plays at
+				      // exactly the same real time as a normal on-time loop — no
+				      // No rewind needed; the +T advance in dCurrPos fully corrects alignment.
+				      loop->dCurrPos = (double)loop->lLoopLength;
+				      loop->dCurrPos += (lOutputLatency + lInputLatency) * fRate;
+				      loop->dCurrPos += (double)T;
+				      pLS->lFramesUntilFilled = lOutputLatency + lInputLatency;
+
+			      } else {
+				      pLS->state = STATE_TRIG_STOP;
+				      pLS->nextState = STATE_PLAY;
+				      DBG(fprintf(stderr,"%u:%u  Entering TRIG_STOP state\n", pLS->lLoopIndex, pLS->lChannelIndex));
+			      }
+      		      //====== albEnd ====================================================================================
 		      }
 		      break;
 
@@ -2081,14 +2338,139 @@ runSooperLooper(LADSPA_Handle Instance,
 		 if (loop) {
 		    undoLoop(pLS, false);
 		 }
-		 
-		 pLS->state = STATE_TRIG_START;
-		 DBG(fprintf(stderr,"%u:%u  Entering TRIG_START state from DELAY\n", pLS->lLoopIndex, pLS->lChannelIndex));
-		 break;
+		 // fall through to default for late-hit / normal handling
 		 
 	      default:
-		 pLS->state = STATE_TRIG_START;
-		 DBG(fprintf(stderr,"%u:%u  Entering TRIG_START state\n", pLS->lLoopIndex, pLS->lChannelIndex));
+	      {
+		 //====== albBegin ==================================================================================
+		 // Late-start window check: when RECORD is first pressed (from any state
+		 // other than STATE_RECORD/STATE_MULTIPLY/etc.), check if the press arrived
+		 // within LATE_HIT_WINDOW_MS after the last sync boundary.
+		 // If yes: create the loop immediately, backfill T samples from the
+		 // continuous input buffer into [0..T) of the loop buffer so the loop is
+		 // anchored at the boundary, and enter STATE_RECORD with dCurrPos=T.
+		 // Backfill alone corrects the start; no per-play offset is needed.
+		 // If no: use normal STATE_TRIG_START and wait for the next boundary.
+		 // Check whether the button arrived within the late-hit window after
+		 // the last sync boundary.  If so, skip STATE_TRIG_START (which would
+		 // wait for the NEXT boundary) and begin recording immediately, backfilling
+		 // the missed samples from pInputBuf so the loop is anchored at the boundary.
+		 unsigned long shiftSamples = (unsigned long)(g_late_hit_window_ms * 0.001f * pLS->fSampleRate);
+		 unsigned long T = lGlobalSyncAtButtonPress;
+		 // fSyncMode > 0 is the essential guard: it means an external sync
+		 // source is active.  Quantize mode is NOT required: for external
+		 // sync the snap point is always the incoming pulse regardless of
+		 // quantize setting.  With no sync source (fSyncMode == 0) T grows
+		 // without bound and the window never fires.
+		 bool withinWindow = (T > 0
+		                      && T <= shiftSamples
+		                      && fSyncMode > 0.0f
+		                      && pLS->bSyncPulseReceived);
+
+		 SYNCWDBG(SL_LOG(
+		     "\n%u:%u  RECORD button: lGlobalSyncAtButtonPress=%u  windowSamples=%lu"
+		     "  withinWindow=%d  syncMode=%g  quantMode=%g"
+		     "  (%.2f ms since boundary, window=%.0f ms)\n",
+		     pLS->lLoopIndex, pLS->lChannelIndex,
+		     lGlobalSyncAtButtonPress, shiftSamples,
+		     (int)withinWindow, fSyncMode, fQuantizeMode,
+		     T * 1000.0f / pLS->fSampleRate,
+		     g_late_hit_window_ms));
+
+		 if (withinWindow) {
+			 loop = pushNewLoopChunk(pLS, 0, NULL);
+			 if (loop) {
+				 SYNCWDBG(SL_LOG(
+				     "%u:%u  Late-hit path: backfilling %lu samples (%.2f ms),"
+				     " lLoopStart=%lu, entering RECORD directly\n",
+				     pLS->lLoopIndex, pLS->lChannelIndex,
+				     T, T * 1000.0f / pLS->fSampleRate,
+				     loop->lLoopStart));
+				 DBG(fprintf(stderr, "%u:%u  Late-hit record: backfilling %lu samples, entering RECORD\n",
+				             pLS->lLoopIndex, pLS->lChannelIndex, T));
+				 pLS->state = STATE_RECORD;
+				 fRate = pLS->fCurrRate = 1.0f;
+				 loop->lLoopLength = 0;
+				 loop->lStartAdj = 0;
+				 loop->lEndAdj = 0;
+				 loop->dCurrPos = 0.0;
+				 loop->firsttime = 0;
+				 loop->lMarkL = loop->lMarkEndL = LONG_MAX;
+				 loop->frontfill = loop->backfill = 0;
+				 loop->lCycles = 1;
+				 loop->srcloop = NULL;
+				 pLS->nextState = -1;
+				 loop->dOrigFeedback = fFeedback;
+				 loop->lSyncOffset = 0;
+				 loop->lOrigSyncPos = loop->lSyncPos = 0;
+
+				 // Backfill T samples from the input latency buffer into the loop
+				 // buffer.  pLS->lInputBufWritePos points to the START of the current
+				 // block (not yet advanced).
+				 //
+				 // Normal recording reads from lInputBufWritePos - lInputLatency
+				 // (i.e. lInputLatency samples behind the write head).  To match,
+				 // the backfill must also go back lInputLatency from the boundary
+				 // moment, which was itself T samples ago:
+				 //
+				 //   readPos = lInputBufWritePos - T - lInputLatency
+				 //
+				 // This ensures seamless continuity: the T backfilled samples end
+				 // exactly where live recording (starting at lInputBufWritePos -
+				 // lInputLatency) picks up, producing the same result as an on-time
+				 // press.
+				 //
+				 // Constraint: T + lInputLatency must be < lInputBufSize (32768).
+				 // With T <= ~4410 (100ms at 44.1kHz) that allows lInputLatency up
+				 // to ~28000 samples (~630ms).  The modular arithmetic below handles
+				 // wrap-around correctly for all valid values.
+				 unsigned long backfillOffset = T + lInputLatency;
+				 unsigned long readPos = (pLS->lInputBufWritePos >= backfillOffset)
+					 ? (pLS->lInputBufWritePos - backfillOffset)
+					 : (pLS->lInputBufSize - (backfillOffset - pLS->lInputBufWritePos));
+				 SYNCWDBG(SL_LOG(
+				     "%u:%u  Backfill: lInputBufWritePos=%lu SampleCount=%lu"
+				     " T=%lu lInputLatency=%lu readPos=%lu\n",
+				     pLS->lLoopIndex, pLS->lChannelIndex,
+				     pLS->lInputBufWritePos, SampleCount,
+				     T, lInputLatency, readPos));
+				 for (unsigned long i = 0; i < T; ++i) {
+					 pLS->pSampleBuf[(loop->lLoopStart + i) & pLS->lBufferSizeMask] =
+						 pfInputLatencyBuf[(readPos + i) & pLS->lInputBufMask];
+				 }
+
+				 // position T samples in: backfill covers [0..T), live recording
+				 // continues from T onward until the next sync boundary.
+				 // Backfill fully anchors the loop at the boundary — no first-play
+				 // offset needed.  Any late-stop correction is handled separately
+				 // in the STATE_RECORD stop path via dCurrPos += T.
+				 loop->dCurrPos = (double)T;
+
+				 // fade setup (mirrors STATE_TRIG_START transition)
+				 pLS->fLoopFadeAtten = 0.0f;
+				 pLS->fLoopFadeDelta = 1.0f / xfadeSamples;
+				 pLS->fPlayFadeDelta = -1.0f / xfadeSamples;
+				 pLS->fLoopSrcFadeDelta = 1.0f / xfadeSamples;
+				 pLS->fFeedSrcFadeDelta = -1.0f / xfadeSamples;
+			 } else {
+				 DBG(fprintf(stderr, "%u:%u  out of memory in late-hit path, back to PLAY\n",
+				             pLS->lLoopIndex, pLS->lChannelIndex));
+				 pLS->state = STATE_PLAY;
+				 pLS->wasMuted = false;
+			 }
+		 } else {
+			 pLS->state = STATE_TRIG_START;
+			 SYNCWDBG(SL_LOG(
+			     "%u:%u  Normal path: entering TRIG_START, will wait for next sync"
+			     " (%.2f ms since last boundary, lGlobalSyncAtButtonPress=%u)\n",
+			     pLS->lLoopIndex, pLS->lChannelIndex,
+			     T * 1000.0f / pLS->fSampleRate,
+			     lGlobalSyncAtButtonPress));
+			 DBG(fprintf(stderr, "%u:%u  Entering TRIG_START state\n",
+			             pLS->lLoopIndex, pLS->lChannelIndex));
+		 }
+		 //====== albEnd ====================================================================================
+	      }
 	   }
 	} break;
 
@@ -2226,6 +2608,52 @@ runSooperLooper(LADSPA_Handle Instance,
 				      else {
 					      loop->mult_out = loop->lCycles;
 					      //fprintf(stderr, "mult out initiated\n");
+					      //====== albBegin -- multiply-end late-hit correction =============
+#if LATE_HIT_MULTIPLY_CORRECTION
+					      // T: samples elapsed since last sync pulse (same variable as
+					      // in the MULTI_RECORD paths; declared locally here because each
+					      // case block has its own scope).
+					      unsigned long T = lGlobalSyncAtButtonPress;
+					      // If this press arrived within the late-hit window after the
+					      // most recent sync boundary, correct it back to that boundary
+					      // instead of waiting for the next one.  The boundary T samples
+					      // ago already caused lCycles to increment, so we decrement it
+					      // back before calling endMultiply.  lLoopLength is corrected
+					      // too so endMultiply sees a consistent state regardless of
+					      // Round mode.
+					      //
+					      // Guard: lCycles >= 2 ensures we never decrement to 0.
+					      // Same g_late_hit_window_ms and T as the Record stop path.
+					      {
+						      unsigned long shiftSamples =
+							      (unsigned long)(g_late_hit_window_ms * 0.001f * pLS->fSampleRate);
+						      bool multStopInWindow = (T > 0
+							                              && T <= shiftSamples
+							                              && fSyncMode > 0.0f
+							                              && pLS->bSyncPulseReceived
+							                              && loop->lCycles >= 2);
+						      SYNCWDBG(SL_LOG(
+							      "%u:%u  MultiplyEnd: T=%lu shiftSamples=%lu lCycles=%lu"
+							      " withinWindow=%d syncMode=%g\n",
+							      pLS->lLoopIndex, pLS->lChannelIndex,
+							      T, shiftSamples, loop->lCycles,
+							      (int)multStopInWindow, fSyncMode));
+						      if (multStopInWindow) {
+							      loop->lCycles -= 1;
+							      loop->lLoopLength = loop->lCycles * loop->lCycleLength;
+							      loop->mult_out = loop->lCycles;
+							      SYNCWDBG(SL_LOG(
+								      "%u:%u  MultiplyEnd late-hit: trimmed to %lu cycles"
+								      " lLoopLength=%lu T=%lu\n",
+								      pLS->lLoopIndex, pLS->lChannelIndex,
+								      loop->lCycles, loop->lLoopLength, T));
+							      loop = endMultiply(pLS, loop, STATE_PLAY);
+							      pfSyncOutput[0] = 1.0f;
+							      break;
+						      }
+					      }
+#endif
+					      //====== albEnd =====================================================
 					      // loop = endMultiply(pLS, loop, STATE_PLAY);
 					      
 					      DBG(fprintf(stderr, "%u:%u  waiting for sync multi end\n", pLS->lLoopIndex, pLS->lChannelIndex));
@@ -4680,10 +5108,11 @@ runSooperLooper(LADSPA_Handle Instance,
 		 
 	      }
 
+
 	      // recenter around the mod
 	      lCurrPos = (unsigned int) fabs(fmod(loop->dCurrPos, loop->lLoopLength));
 	      
-	      loop->dCurrPos = lCurrPos + modf(loop->dCurrPos, &dDummy); 
+	      loop->dCurrPos = lCurrPos + modf(loop->dCurrPos, &dDummy);
 
 	      
 	   }

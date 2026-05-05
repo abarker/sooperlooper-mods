@@ -58,6 +58,7 @@ extern	void cleanup_sl_descriptor (LADSPA_Descriptor *);
 
 
 
+
 static const double MinResamplingRate = 0.25f;
 static const double MaxResamplingRate = 8.0f;
 static const int SrcAudioQuality = SRC_LINEAR;
@@ -1883,7 +1884,7 @@ Looper::get_state () const
 	}
 	
 	node->add_child_nocopy (*controls);
-	
+
 	return *node;
 }
 

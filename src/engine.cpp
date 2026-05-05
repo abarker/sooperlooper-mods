@@ -46,6 +46,14 @@ using namespace std;
 using namespace PBD;
 using namespace sigc;
 
+//------ albBegin ----------------------------------
+// Late-hit window (ms).  Defined and defaulted in plugin.cc; declared
+// extern here so engine.cpp can persist it in the Globals session node.
+// See the comment block in plugin.cc for the full rationale on why this
+// uses a plain global rather than a LADSPA port.
+extern float g_late_hit_window_ms;
+//------ albEnd ----------------------------------
+
 #define MAX_EVENTS 1024
 #define MAX_SYNC_EVENTS 1024
 
@@ -2863,6 +2871,23 @@ Engine::load_session (std::string fname, string * readstr)
 			sscanf (prop->value().c_str(), "%d", (int *) (&_sync_source));
 		}
 
+		//------ albBegin ----------------------------------
+		if ((prop = globals_node->property ("late_hit_window_ms")) != 0) {
+			float val = g_late_hit_window_ms;
+			if (sscanf (prop->value().c_str(), "%g", &val) == 1 && val > 0.0f) {
+				g_late_hit_window_ms = val;
+				fprintf(stderr, "SooperLooper: late_hit_window_ms loaded from session: %.4g ms\n",
+				        g_late_hit_window_ms);
+			} else {
+				fprintf(stderr, "SooperLooper: late_hit_window_ms in session file invalid (\"%s\"), using default %.4g ms\n",
+				        prop->value().c_str(), g_late_hit_window_ms);
+			}
+		} else {
+			fprintf(stderr, "SooperLooper: late_hit_window_ms not in session file, using default %.4g ms\n",
+			        g_late_hit_window_ms);
+		}
+		//------ albEnd ----------------------------------
+
 	}
 	
 	
@@ -2956,6 +2981,11 @@ Engine::save_session (std::string fname, bool write_audio, string * writestr)
 
 	snprintf(buf, sizeof(buf), "%d", (int)_smart_eighths ? 1 : 0);
 	globals_node->add_property ("smart_eighths", buf);
+
+	//------ albBegin ----------------------------------
+	snprintf(buf, sizeof(buf), "%.10g", g_late_hit_window_ms);
+	globals_node->add_property ("late_hit_window_ms", buf);
+	//------ albEnd ----------------------------------
 
 	
 	XMLNode * loopers_node = root_node->add_child ("Loopers");
