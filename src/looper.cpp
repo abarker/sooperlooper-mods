@@ -221,7 +221,9 @@ Looper::initialize (unsigned int index, unsigned int chan_count, float loopsecs,
 	
 	ports[RoundIntegerTempo] = 0;
 
-	_slave_sync_port = (_relative_sync && ports[Sync]) ? 2.0f : 1.0f;
+	// Initial value: matches the run() logic below.
+	// At construction ports[Sync]=0, so this is 0 (sync off) by default.
+	_slave_sync_port = (_relative_sync && ports[Sync]) ? 2.0f : ports[Sync];
 
 	// TODO: fix hack to specify loop length
 	char looptimestr[20];
@@ -1132,9 +1134,38 @@ Looper::run (nframes_t offset, nframes_t nframes)
 		ports[Sync] = 2.0f;
 		_slave_sync_port = 2.0;
 	}
+	//------ albBegin ----------------------------------
+	// Fix: _slave_sync_port must mirror the per-loop Sync setting
+	// (ports[Sync]) rather than being hardcoded to 1.0.
+	//
+	// The original code always wrote 1.0 here, which forced the slave
+	// channel (index > 0) of a stereo looper to have fSyncMode=1 even
+	// when the user had the per-loop Sync checkbox off.  This caused:
+	//   - The late-hit correction to fire on the slave channel only,
+	//     introducing a phase offset between stereo channels (L starts
+	//     at button-press time; R is backfilled to the sync boundary).
+	//   - The slave channel to wait for the next sync pulse on Stop
+	//     while the master stopped immediately, producing different
+	//     loop lengths per channel.
+	//
+	// Fix: use ports[Sync] so the slave mirrors the master exactly.
+	// The internal-sync branch above (own syncin/out buf) intentionally
+	// keeps _slave_sync_port=1 because in that mode channel 0 drives
+	// the sync signal and channel 1 must follow it regardless.
+	//
+	// Set SLAVE_SYNC_PORT_LEGACY_BEHAVIOR to 1 to restore the old
+	// hardcoded 1.0 behavior if regressions appear.
+#define SLAVE_SYNC_PORT_LEGACY_BEHAVIOR 0
+#if SLAVE_SYNC_PORT_LEGACY_BEHAVIOR
 	else {
 		_slave_sync_port = 1.0;
 	}
+#else
+	else {
+		_slave_sync_port = ports[Sync];
+	}
+#endif
+	//------ albEnd ----------------------------------
 
 	// do fixed peak meter falloff
 	_input_peak = flush_to_zero (f_clamp (DB_CO (CO_DB(_input_peak) - nframes * _falloff_per_sample), 0.0f, 20.0f));
