@@ -41,6 +41,16 @@
 #include "midi_bridge.hpp"
 #include "utils.hpp"
 
+//------ albBegin ----------------------------------
+// JACK MIDI port API.  jack.h provides jack_port_register and
+// jack_port_get_buffer; midiport.h adds the MIDI-specific helpers
+// (jack_midi_get_event_count, jack_midi_event_get, etc.).
+// Both are included explicitly since audio_driver.hpp now uses a
+// forward declaration rather than including jack/jack.h directly.
+#include <jack/jack.h>
+#include <jack/midiport.h>
+//------ albEnd ----------------------------------
+
 using namespace SooperLooper;
 using namespace std;
 using namespace PBD;
@@ -93,6 +103,11 @@ Engine::Engine ()
 	_auto_disable_latency = true;
 	_jack_timebase_master = false;
 	_loading = false;
+
+	//------ albBegin ----------------------------------
+	// Null the JACK MIDI port handle; properly registered in initialize().
+	_jack_midi_in_port = nullptr;
+	//------ albEnd ----------------------------------
 	_use_temp_input = true; // all the time for now
 	_ignore_quit = false;
 	_selected_loop = -1; // all
@@ -212,6 +227,41 @@ bool Engine::initialize(AudioDriver * driver, int buschans, int port, string pin
 	}
 
 	_driver->ConnectionsChanged.connect(mem_fun(*this, &Engine::connections_changed));
+
+	//------ albBegin ----------------------------------
+	// Register a direct JACK MIDI input port so that JACK MIDI clients
+	// (e.g. mididings with the jack-rt backend) can connect without going
+	// through an ALSA/a2jmidid bridge.
+	//
+	// Beyond eliminating the bridge, this path passes each event's JACK
+	// intra-block sample offset (jack_ev.time) as the framepos argument to
+	// inject_midi().  That value is stored in the Event via
+	// EventGenerator::createEvent(framepos), so FragmentPos() returns the
+	// exact sample within the block.  The existing event loop in process()
+	// already splits the audio buffer at FragmentPos(), so sub-block-
+	// accurate command triggering comes for free once this port is live.
+	//
+	// Requires AudioDriver::get_jack_client() to be implemented by the
+	// JackDriver subclass (see audio_driver.hpp and jack_driver.hpp).
+	// Non-JACK builds return nullptr and the block is skipped silently.
+	{
+		jack_client_t * jclient = _driver->get_jack_client();
+		if (jclient) {
+			_jack_midi_in_port = jack_port_register(
+				jclient,
+				"midi_in",
+				JACK_DEFAULT_MIDI_TYPE,
+				JackPortIsInput,
+				0);
+			if (_jack_midi_in_port) {
+				cerr << "SooperLooper: JACK MIDI input port 'midi_in' registered." << endl;
+			} else {
+				cerr << "SooperLooper: WARNING: jack_port_register() failed for "
+				     "'midi_in' — JACK MIDI input unavailable." << endl;
+			}
+		}
+	}
+	//------ albEnd ----------------------------------
 	
 	_ok = true;
 
@@ -782,6 +832,48 @@ Engine::process (nframes_t nframes)
 	Event * evt;
 	RingBuffer<Event>::rw_vector vec;
 	RingBuffer<Event>::rw_vector midivec;
+
+	//------ albBegin ----------------------------------
+	// Read any pending JACK MIDI events from the direct JACK MIDI input port
+	// and inject them into the MIDI event queue *before* the ring-buffer read
+	// vectors are snapshotted below, so they participate in this block's event
+	// loop.
+	//
+	// Each event is forwarded via MidiBridge::inject_midi() with its JACK
+	// intra-block sample offset (jack_ev.time, range 0..nframes-1) as the
+	// framepos argument.  EventGenerator::createEvent(framepos) stores this
+	// value, FragmentPos() returns it, and the engine's process() loop uses
+	// it to split the audio buffer at the exact sample of the command —
+	// giving sample-accurate trigger timing for JACK MIDI clients.
+	//
+	// Thread-safety note: on a correctly configured RT Linux system the
+	// process() callback runs at SCHED_FIFO priority and cannot be preempted
+	// by the non-RT ALSA MIDI thread, so there is at most one writer to
+	// _midi_event_queue at any given moment during this call.
+	if (_jack_midi_in_port && _midi_bridge) {
+		void * midi_buf = jack_port_get_buffer(_jack_midi_in_port, nframes);
+		if (midi_buf) {
+			uint32_t midi_ev_count = jack_midi_get_event_count(midi_buf);
+			for (uint32_t mi = 0; mi < midi_ev_count; ++mi) {
+				jack_midi_event_t jev;
+				if (jack_midi_event_get(&jev, midi_buf, mi) == 0
+				    && jev.size >= 1)
+				{
+					// Extract up to three MIDI bytes.  One- or two-byte
+					// messages leave the missing bytes as 0, which is harmless
+					// since MidiBridge ignores them for those message types.
+					// Running note-off bytes (0x80) are normalised to note-on
+					// with velocity 0 inside inject_midi() already.
+					uint8_t b0 = jev.buffer[0];
+					uint8_t b1 = (jev.size > 1) ? jev.buffer[1] : 0;
+					uint8_t b2 = (jev.size > 2) ? jev.buffer[2] : 0;
+					_midi_bridge->inject_midi(b0, b1, b2,
+					                          static_cast<long>(jev.time));
+				}
+			}
+		}
+	}
+	//------ albEnd ----------------------------------
 
 	// get available events
 	_event_queue->get_read_vector (&vec);

@@ -175,6 +175,17 @@ class Looper
 	nframes_t          _longpress_frames;
 	nframes_t          _doubletap_frames;
 	nframes_t          _running_frames;
+
+	//------ albBegin ----------------------------------
+	// Intra-block sample offset of the most recently queued command event.
+	// Set in do_event() from ev->FragmentPos().  Non-zero only when the
+	// command arrived via JACK MIDI with a valid sub-block timestamp
+	// (i.e. inject_midi() was called with a real jack_ev.time value).
+	// Zero for all ALSA MIDI and OSC commands, which carry no sub-block
+	// timing information.  Used in run() to zero TriggerLatency for the
+	// one block in which a precisely-timed JACK MIDI command fires.
+	nframes_t          _pending_event_offset;
+	//------ albEnd ----------------------------------
 	
 	nframes_t          _buffersize;
 	LADSPA_Data        * _our_syncin_buf;

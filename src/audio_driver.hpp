@@ -17,7 +17,6 @@
 **  
 */
 
-
 #ifndef __sooperlooper_audio_driver__
 #define __sooperlooper_audio_driver__
 
@@ -28,15 +27,23 @@
 
 #include <inttypes.h>
 
+//------ albBegin ----------------------------------
+// Forward-declare the JACK client handle type so audio_driver.hpp need
+// not include <jack/jack.h> directly.  Only a pointer is used in the
+// default get_jack_client() return type; the full JACK definition is
+// provided by files that include <jack/jack.h> (jack_audio_driver.hpp,
+// engine.cpp).  Non-JACK backends return nullptr and are unaffected.
+struct _jack_client;
+typedef struct _jack_client jack_client_t;
+//------ albEnd ----------------------------------
+
 namespace SooperLooper {
 
 typedef float sample_t;
 typedef uint32_t nframes_t;
 typedef uint32_t port_id_t;
-	
-	
-class Engine;
 
+class Engine;
 
 struct TransportInfo
 {
@@ -44,27 +51,29 @@ struct TransportInfo
 		ROLLING=1,
 		STOPPED
 	};
-       
+
 	nframes_t framepos;
 	nframes_t last_framepos;
 	double bpm;
 	State state;
-// future items
-// 	int32_t		bar;		/**< current bar */
-// 	int32_t		beat;		/**< current beat-within-bar */
-// 	int32_t		tick;		/**< current tick-within-beat */
-// 	double		bar_start_tick;            
-	
- 	float		beats_per_bar;	/**< time signature "numerator" */
- 	float		beat_type;	/**< time signature "denominator" */
-// 	double		ticks_per_beat;
-//      nframes_t	bbt_offset;	/**< frame offset for the BBT fields */
 
+	// future items
+	// int32_t bar;           /**< current bar */
+	// int32_t beat;          /**< current beat-within-bar */
+	// int32_t tick;          /**< current tick-within-beat */
+	// double bar_start_tick;
+	float beats_per_bar;  /**< time signature "numerator" */
+	float beat_type;      /**< time signature "denominator" */
+	// double ticks_per_beat;
+	// nframes_t bbt_offset; /**< frame offset for the BBT fields */
 };
-	
+
+
 class AudioDriver
+	: public sigc::trackable
 {
   public:
+
 	AudioDriver(std::string client_name="", std::string serv_name="");
 	virtual ~AudioDriver();
 
@@ -72,24 +81,24 @@ class AudioDriver
 	virtual bool activate() = 0;
 	virtual bool deactivate() = 0;
 
-	virtual bool  create_input_port (std::string name, port_id_t & port_id) = 0;
-	virtual bool  create_output_port (std::string name, port_id_t & port_id) = 0;
+	virtual bool create_input_port  (std::string name, port_id_t & port_id) = 0;
+	virtual bool create_output_port (std::string name, port_id_t & port_id) = 0;
 
-	virtual bool destroy_input_port (port_id_t portid) = 0;
+	virtual bool destroy_input_port  (port_id_t portid) = 0;
 	virtual bool destroy_output_port (port_id_t portid) = 0;
-	
-	virtual sample_t * get_input_port_buffer (port_id_t port, nframes_t nframes) = 0;
+
+	virtual sample_t * get_input_port_buffer  (port_id_t port, nframes_t nframes) = 0;
 	virtual sample_t * get_output_port_buffer (port_id_t port, nframes_t nframes) = 0;
 
-	virtual unsigned int get_input_port_count () = 0;
+	virtual unsigned int get_input_port_count  () = 0;
 	virtual unsigned int get_output_port_count () = 0;
 
-	virtual nframes_t get_input_port_latency (port_id_t portid) = 0;
+	virtual nframes_t get_input_port_latency  (port_id_t portid) = 0;
 	virtual nframes_t get_output_port_latency (port_id_t portid) = 0;
-	
+
 	virtual std::string get_name() { return _client_name; }
 
-	virtual void set_engine (Engine * engine) { _engine = engine; }
+	virtual void    set_engine (Engine * engine) { _engine = engine; }
 	virtual Engine * get_engine () { return _engine; }
 
 	virtual bool get_transport_info (TransportInfo &info) { return false; }
@@ -99,24 +108,34 @@ class AudioDriver
 	virtual bool get_timebase_master() { return false; }
 
 	virtual void reposition_transport(nframes_t framepos) {}
-	
+
 	virtual nframes_t get_samplerate() { return _samplerate; }
 	virtual nframes_t get_buffersize() { return _buffersize; }
 
+	//------ albBegin ----------------------------------
+	// Return the underlying JACK client handle, or nullptr if this driver
+	// is not a JACK implementation (e.g. CoreAudio AU build on macOS).
+	// Used by Engine::initialize() to register a direct JACK MIDI input
+	// port, giving JACK MIDI clients sample-accurate intra-block timestamps.
+	// The default returns nullptr so that non-JACK backends compile without
+	// change and the MIDI port registration is simply skipped.
+	virtual jack_client_t * get_jack_client () { return nullptr; }
+	//------ albEnd ----------------------------------
+
 	sigc::signal0<void> ConnectionsChanged;
-	
+
   protected:
 
 	std::string _client_name;
 	std::string _server_name;
 
-	Engine *    _engine;
+	Engine * _engine;
 
 	nframes_t _samplerate;
 	nframes_t _buffersize;
-	
 };
 
-};
+
+};  // SooperLooper namespace
 
 #endif

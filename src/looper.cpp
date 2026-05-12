@@ -58,7 +58,6 @@ extern	void cleanup_sl_descriptor (LADSPA_Descriptor *);
 
 
 
-
 static const double MinResamplingRate = 0.25f;
 static const double MaxResamplingRate = 8.0f;
 static const int SrcAudioQuality = SRC_LINEAR;
@@ -98,6 +97,11 @@ Looper::initialize (unsigned int index, unsigned int chan_count, float loopsecs,
 	requested_cmd = -1;
 	last_requested_cmd = -1;
 	request_pending = false;
+
+	//------ albBegin ----------------------------------
+	_pending_event_offset = 0;	// no JACK MIDI sub-block offset pending
+	//------ albEnd ----------------------------------
+
 	_input_ports = 0;
 	_output_ports = 0;
 	_instances = 0;
@@ -818,6 +822,16 @@ Looper::is_longpress (int cmd)
 void
 Looper::do_event (Event *ev)
 {
+	//------ albBegin ----------------------------------
+	// Record the intra-block sample position of this event.
+	// FragmentPos() returns 0 for ALSA MIDI and OSC events (no sub-block
+	// timing), and the original jack_ev.time value for events that arrived
+	// via the JACK MIDI port (where inject_midi() was called with a real
+	// frame offset).  run() reads this to decide whether TriggerLatency
+	// should be zeroed for the current block.
+	_pending_event_offset = static_cast<nframes_t>(ev->FragmentPos());
+	//------ albEnd ----------------------------------
+
 	if (ev->Type == Event::type_cmd_hit) {
 		Event::command_t cmd = ev->Command;
 		requested_cmd = cmd;
@@ -1059,11 +1073,17 @@ Looper::run (nframes_t offset, nframes_t nframes)
 
 	_running_frames += nframes;
 	
+	//------ albBegin ----------------------------------
 	if (request_pending) {
-		
+
 		if (ports[Multi] == requested_cmd) {
-			/* defer till next call */
+			// Same command still sitting in Multi from the previous block.
+			// Write -1 so plugin.cc sees a clear gap before the re-issue
+			// next block.  This deferral fires at block start next time, so
+			// reset _pending_event_offset to avoid incorrectly zeroing
+			// TriggerLatency on the deferred call.
 			ports[Multi] = -1;
+			_pending_event_offset = 0;
                         //fprintf(stderr,"Deferred to next run\n");
 		} else {
 			ports[Multi] = requested_cmd;
@@ -1084,6 +1104,7 @@ Looper::run (nframes_t offset, nframes_t nframes)
                 //fprintf(stderr,"Reset to -1\n");
 		//cerr << "reset to -1\n";
 	}
+	//------ albEnd ----------------------------------
 
 	// deal with any pending stretch ratio change from non-rt context
 	if (_pending_stretch) {
@@ -1118,10 +1139,32 @@ Looper::run (nframes_t offset, nframes_t nframes)
 	// do fixed peak meter falloff
 	_input_peak = flush_to_zero (f_clamp (DB_CO (CO_DB(_input_peak) - nframes * _falloff_per_sample), 0.0f, 20.0f));
 	_output_peak = flush_to_zero (f_clamp (DB_CO (CO_DB(_output_peak) - nframes * _falloff_per_sample), 0.0f, 20.0f));
-	
-	
-	
-	run_loops (offset, nframes);
+
+	//------ albBegin ----------------------------------
+	// If this command arrived via the JACK MIDI port with a valid intra-
+	// block timestamp, the engine has already called run() once for the
+	// pre-event frames in the old state (via the FragmentPos() split in
+	// process()).  This invocation covers the post-event frames in the new
+	// state starting at the exact sample of the command.  Setting
+	// TriggerLatency to zero prevents plugin.cc from applying its normal
+	// backward correction, which would over-correct by up to _buffersize
+	// samples.  The saved value is restored immediately after run_loops()
+	// so the port appears unchanged to recompute_latencies() and the GUI.
+	//
+	// For ALSA MIDI and OSC commands _pending_event_offset is always 0, so
+	// the existing TriggerLatency = _buffersize compensation is unchanged.
+	{
+		const float saved_trigger_latency = ports[TriggerLatency];
+		if (_pending_event_offset > 0) {
+			ports[TriggerLatency] = 0.0f;
+			_pending_event_offset = 0;
+		}
+
+		run_loops (offset, nframes);
+
+		// Restore — harmless no-op when _pending_event_offset was 0.
+		ports[TriggerLatency] = saved_trigger_latency;
+	}
 /*
 	if (ports[Rate] == 1.0f) {
 		run_loops (offset, nframes);
@@ -1133,7 +1176,9 @@ Looper::run (nframes_t offset, nframes_t nframes)
 		run_loops (offset, nframes);
 #endif		
 	}
-*/	
+*/
+	//------ albEnd ----------------------------------
+
 	ports[Sync] = oldsync;
 }
 
@@ -1884,7 +1929,7 @@ Looper::get_state () const
 	}
 	
 	node->add_child_nocopy (*controls);
-
+	
 	return *node;
 }
 

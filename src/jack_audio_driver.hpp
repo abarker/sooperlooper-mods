@@ -65,6 +65,12 @@ class JackAudioDriver
 	bool get_timebase_master() { return _timebase_master; }
 
 	void reposition_transport(nframes_t framepos);
+
+	//------ albBegin ----------------------------------
+	// Return the live JACK client handle so Engine::initialize() can
+	// register a direct JACK MIDI input port for sample-accurate timing.
+	virtual jack_client_t * get_jack_client () override { return _jack; }
+	//------ albEnd ----------------------------------
 	
   protected:
 

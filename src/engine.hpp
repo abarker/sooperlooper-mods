@@ -33,6 +33,15 @@
 #include "midi_bind.hpp"
 #include "command_map.hpp"
 
+//------ albBegin ----------------------------------
+// Forward-declare the JACK port handle type so engine.hpp need not
+// pull in <jack/jack.h> directly.  Only pointer-to-jack_port_t is used
+// as a member; the full definition is provided by engine.cpp which
+// includes <jack/midiport.h>.
+struct _jack_port;
+typedef struct _jack_port jack_port_t;
+//------ albEnd ----------------------------------
+
 namespace SooperLooper {
 
 class Looper;
@@ -317,6 +326,16 @@ class Engine
 	bool _loading;
 
 	SessionEvent* _load_sess_event;
+
+	//------ albBegin ----------------------------------
+	// Direct JACK MIDI input port.  Registered in initialize() so that
+	// mididings (and other JACK MIDI clients) can connect without going
+	// through an ALSA bridge.  Events are read in process() and injected
+	// via MidiBridge::inject_midi() with their sample-accurate intra-block
+	// timestamp, enabling sub-block buffer splitting in the event loop.
+	// nullptr on non-JACK platforms or if registration fails.
+	jack_port_t *	_jack_midi_in_port;
+	//------ albEnd ----------------------------------
 };
 
 
