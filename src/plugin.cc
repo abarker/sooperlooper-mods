@@ -2424,7 +2424,7 @@ runSooperLooper(LADSPA_Handle Instance,
 				 // With T <= ~4410 (100ms at 44.1kHz) that allows lInputLatency up
 				 // to ~28000 samples (~630ms).  The modular arithmetic below handles
 				 // wrap-around correctly for all valid values.
-				 unsigned long backfillOffset = T + lInputLatency;
+				 unsigned long backfillOffset = T ;//ALBDEBUG + lInputLatency;
 				 unsigned long readPos = (pLS->lInputBufWritePos >= backfillOffset)
 					 ? (pLS->lInputBufWritePos - backfillOffset)
 					 : (pLS->lInputBufSize - (backfillOffset - pLS->lInputBufWritePos));
@@ -2449,7 +2449,7 @@ runSooperLooper(LADSPA_Handle Instance,
 				 // lOutputLatency+lInputLatency) when setting the playback
 				 // start position, so that the first lInputLatency samples of
 				 // backfilled content are not delayed to after the first wrap.
-				 pLS->bLateStartPending = true;
+				 pLS->bLateStartPending = false;//ALBDEBUG true;
 
 				 // fade setup (mirrors STATE_TRIG_START transition)
 				 pLS->fLoopFadeAtten = 0.0f;
