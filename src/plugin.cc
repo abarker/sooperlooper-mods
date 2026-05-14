@@ -67,7 +67,7 @@ using namespace SooperLooper;
 // Window size in milliseconds for late-hit record correction.
 // LATE_HIT_WINDOW_MS is the compile-time default and must remain defined
 // so it can be used as the initialiser for g_late_hit_window_ms below.
-#define LATE_HIT_WINDOW_MS 50.0f
+#define LATE_HIT_WINDOW_MS 100.0f
 
 // Runtime value of the late-hit window.  Starts at the compile-time default
 // and may be overwritten by looper.cpp after reading the session file.
@@ -2445,6 +2445,11 @@ runSooperLooper(LADSPA_Handle Instance,
 				 // offset needed.  Any late-stop correction is handled separately
 				 // in the STATE_RECORD stop path via dCurrPos += T.
 				 loop->dCurrPos = (double)T;
+				 // Signal the TRIG_STOP path to use lOutputLatency only (not
+				 // lOutputLatency+lInputLatency) when setting the playback
+				 // start position, so that the first lInputLatency samples of
+				 // backfilled content are not delayed to after the first wrap.
+				 pLS->bLateStartPending = true;
 
 				 // fade setup (mirrors STATE_TRIG_START transition)
 				 pLS->fLoopFadeAtten = 0.0f;
@@ -3915,8 +3920,29 @@ runSooperLooper(LADSPA_Handle Instance,
 		      pLS->waitingForSync = 0;
 		      //jlc trig
 		      // we need to increment loop position by output latency (+ IL ?)
-		      loop->dCurrPos = loop->dCurrPos + ( lOutputLatency + lInputLatency ) * fRate;
-		      pLS->lFramesUntilFilled = lOutputLatency + lInputLatency;
+		      //====== albBegin -- late-start playback offset correction ========
+		      // When a late-start backfill correction was applied, the sync
+		      // boundary audio lands at position lInputLatency in the loop buffer
+		      // (not at position lOutputLatency+lInputLatency as in the normal
+		      // TRIG_START path).  Using the full latency offset would start
+		      // playback at lOutputLatency samples PAST the boundary, delaying
+		      // the first lInputLatency samples to after the first wrap.
+		      // Using lOutputLatency only starts playback at position lOutputLatency
+		      // (5ms before the boundary), so only 5ms of pre-boundary backfill
+		      // content is delayed to after the first wrap.
+		      if (pLS->bLateStartPending) {
+			      loop->dCurrPos = loop->dCurrPos + lOutputLatency * fRate;
+			      pLS->lFramesUntilFilled = lOutputLatency;
+			      pLS->bLateStartPending = false;
+			      SYNCWDBG(SL_LOG(
+				      "%u:%u  TRIG_STOP after late-start: dCurrPos=%.0f lOutputLatency=%lu\n",
+				      pLS->lLoopIndex, pLS->lChannelIndex,
+				      loop->dCurrPos, lOutputLatency));
+		      } else {
+			      loop->dCurrPos = loop->dCurrPos + ( lOutputLatency + lInputLatency ) * fRate;
+			      pLS->lFramesUntilFilled = lOutputLatency + lInputLatency;
+		      }
+		      //====== albEnd ===================================================
 		      
 		      pLS->fLoopSrcFadeDelta = -1.0f / xfadeSamples;
 		      

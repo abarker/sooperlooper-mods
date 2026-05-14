@@ -306,6 +306,13 @@ typedef struct {
 	// before any real sync pulse has arrived (calloc zeroes the struct, so
 	// lGlobalSamplesSinceSync would otherwise appear as a freshly-reset 0).
 	bool bSyncPulseReceived;
+	// bLateStartPending: set when a late-start backfill correction is
+	// applied.  Cleared in STATE_TRIG_STOP so the dCurrPos latency
+	// offset uses lOutputLatency only (not lOutputLatency+lInputLatency),
+	// restoring playback to position lOutputLatency after fmod.  This
+	// prevents the first lInputLatency samples of the loop (which contain
+	// valid backfilled content) from being delayed to after the first wrap.
+	bool bLateStartPending;
 	//------ albEnd ----------------------------------
 	
 	
