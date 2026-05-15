@@ -62,6 +62,7 @@ using namespace sigc;
 // See the comment block in plugin.cc for the full rationale on why this
 // uses a plain global rather than a LADSPA port.
 extern float g_late_hit_window_ms;
+extern float g_late_hit_max_8th_fraction; //------ albBegin/albEnd (same patch)
 //------ albEnd ----------------------------------
 
 #define MAX_EVENTS 1024
@@ -2978,6 +2979,20 @@ Engine::load_session (std::string fname, string * readstr)
 			fprintf(stderr, "SooperLooper: late_hit_window_ms not in session file, using default %.4g ms\n",
 			        g_late_hit_window_ms);
 		}
+		if ((prop = globals_node->property ("late_hit_max_8th_fraction")) != 0) {
+			float val = g_late_hit_max_8th_fraction;
+			if (sscanf (prop->value().c_str(), "%g", &val) == 1 && val >= 0.0f) {
+				g_late_hit_max_8th_fraction = val;
+				fprintf(stderr, "SooperLooper: late_hit_max_8th_fraction loaded from session: %.4g\n",
+				        g_late_hit_max_8th_fraction);
+			} else {
+				fprintf(stderr, "SooperLooper: late_hit_max_8th_fraction in session file invalid (\"%s\"), using default %.4g\n",
+				        prop->value().c_str(), g_late_hit_max_8th_fraction);
+			}
+		} else {
+			fprintf(stderr, "SooperLooper: late_hit_max_8th_fraction not in session file, using default %.4g\n",
+			        g_late_hit_max_8th_fraction);
+		}
 		//------ albEnd ----------------------------------
 
 	}
@@ -3077,6 +3092,8 @@ Engine::save_session (std::string fname, bool write_audio, string * writestr)
 	//------ albBegin ----------------------------------
 	snprintf(buf, sizeof(buf), "%.10g", g_late_hit_window_ms);
 	globals_node->add_property ("late_hit_window_ms", buf);
+	snprintf(buf, sizeof(buf), "%.10g", g_late_hit_max_8th_fraction);
+	globals_node->add_property ("late_hit_max_8th_fraction", buf);
 	//------ albEnd ----------------------------------
 
 	
