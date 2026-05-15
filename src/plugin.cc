@@ -111,6 +111,10 @@ float g_late_hit_window_ms = LATE_HIT_WINDOW_MS;
 //   Large g_late_hit_max_8th_fraction  →  only the ms cap matters.
 //   Large g_late_hit_window_ms         →  only the 8th-fraction cap matters.
 //
+// Setting EITHER parameter to zero makes the corresponding term zero, so the
+// minimum is zero and the late-hit window is disabled entirely, reverting to
+// stock SooperLooper behaviour.  Setting BOTH to zero has the same effect.
+//
 // The default (100.0 = 100 eighth notes) is intentionally absurd so that the
 // fraction term is always much larger than the ms term at any musical tempo,
 // giving the same behaviour as before this parameter was added.
@@ -124,15 +128,11 @@ float g_late_hit_window_ms = LATE_HIT_WINDOW_MS;
 // period is measured; the ms term therefore wins until real tempo data
 // arrives, regardless of the configured fraction.
 //
-// To expose this in the session config file, add to looper.cpp alongside the
-// existing g_late_hit_window_ms handling:
-//
-//   extern float g_late_hit_max_8th_fraction;
-//   g_late_hit_max_8th_fraction = config.get("late_hit_max_8th_fraction",
-//                                             LATE_HIT_MAX_8TH_FRACTION);
-//
-// Until that looper.cpp change is made the only way to override the default
-// is at compile time via LATE_HIT_MAX_8TH_FRACTION below.
+// Both globals are saved and loaded from the session file via looper.cpp's
+// get_state() / set_state() as the XML properties "late_hit_window_ms" and
+// "late_hit_max_8th_fraction" on each Looper node.  The compile-time
+// constants below are the fallback when loading a session that pre-dates
+// this patch.
 #define LATE_HIT_MAX_8TH_FRACTION 100.0f
 float g_late_hit_max_8th_fraction = LATE_HIT_MAX_8TH_FRACTION;
 

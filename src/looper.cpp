@@ -56,6 +56,14 @@ using namespace RubberBand;
 extern	LADSPA_Descriptor* create_sl_descriptor ();
 extern	void cleanup_sl_descriptor (LADSPA_Descriptor *);
 
+//====== albBegin ==================================================================================
+// Extern references to the late-hit globals defined in plugin.cc.
+// Both are written here (from session state) before any audio processing
+// starts, and read at buffer-processing time inside plugin.cc's run().
+extern float g_late_hit_window_ms;
+extern float g_late_hit_max_8th_fraction;
+//====== albEnd ====================================================================================
+
 
 
 static const double MinResamplingRate = 0.25f;
@@ -1960,7 +1968,17 @@ Looper::get_state () const
 	}
 	
 	node->add_child_nocopy (*controls);
-	
+
+	//====== albBegin ==================================================================================
+	// Late-hit globals are stored on every Looper node so the session file is
+	// self-contained even in single-looper sessions.  All instances share the
+	// same globals; writing from every instance is harmless.
+	snprintf(buf, sizeof(buf), "%.10g", g_late_hit_window_ms);
+	node->add_property ("late_hit_window_ms", buf);
+	snprintf(buf, sizeof(buf), "%.10g", g_late_hit_max_8th_fraction);
+	node->add_property ("late_hit_max_8th_fraction", buf);
+	//====== albEnd ====================================================================================
+
 	return *node;
 }
 
@@ -2117,6 +2135,18 @@ Looper::set_state (const XMLNode& node)
 			}
 		}
 	}
+
+	//====== albBegin ==================================================================================
+	// Late-hit globals: read from session state if present; keep compile-time
+	// defaults otherwise.  Written on every Looper node but shared across all
+	// instances, so the last instance to load wins — all wrote the same values.
+	if ((prop = node.property ("late_hit_window_ms")) != 0) {
+		sscanf (prop->value().c_str(), "%g", &g_late_hit_window_ms);
+	}
+	if ((prop = node.property ("late_hit_max_8th_fraction")) != 0) {
+		sscanf (prop->value().c_str(), "%g", &g_late_hit_max_8th_fraction);
+	}
+	//====== albEnd ====================================================================================
 
 	return 0;
 }
