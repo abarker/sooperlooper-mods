@@ -292,27 +292,31 @@ typedef struct {
 	unsigned int lSamplesSinceSync;
 
 	//------ albBegin ----------------------------------
-	// lGlobalSamplesSinceSync: continuously-running phase counter added for
-	// the late-hit window feature.  Incremented every sample in ALL states
-	// (including STATE_OFF and STATE_TRIG_START) and reset on each incoming
-	// sync pulse.  Unlike lSamplesSinceSync which only runs during recording,
-	// this is valid at button-press time in MULTI_RECORD.
-	// A pre-buffer snapshot (lGlobalSyncAtButtonPress) is taken before
-	// scanning each buffer to avoid mid-buffer sync pulses corrupting the
-	// phase reading at button-press time.
+	// lGlobalSamplesSinceSync: continuously-running phase counter for the
+	// late-hit window feature.  Incremented every sample in ALL states
+	// (including STATE_OFF and STATE_TRIG_START) and reset to 0 on each
+	// incoming sync pulse.  Unlike lSamplesSinceSync (which only runs
+	// during recording), this counter is valid at button-press time in
+	// MULTI_RECORD and gives the elapsed samples since the most recent
+	// sync boundary.
+	// A pre-buffer snapshot (lGlobalSyncAtButtonPress, taken before the
+	// sync-pulse scan each buffer) is used so that a sync pulse arriving
+	// mid-buffer does not corrupt the phase reading for button events
+	// processed at the buffer boundary.
 	unsigned int lGlobalSamplesSinceSync;
-	// bSyncPulseReceived: set to true on the first sync pulse after
+	// bSyncPulseReceived: set true on the first real sync pulse after
 	// instantiation.  Guards against the late-hit window firing at startup
-	// before any real sync pulse has arrived (calloc zeroes the struct, so
-	// lGlobalSamplesSinceSync would otherwise appear as a freshly-reset 0).
+	// before any sync has arrived: calloc() zeroes the struct, so
+	// lGlobalSamplesSinceSync would otherwise look like a freshly-reset 0
+	// and satisfy T <= shiftSamples spuriously.
 	bool bSyncPulseReceived;
-	// bLateStartPending: set when a late-start backfill correction is
-	// applied.  Cleared in STATE_TRIG_STOP so the dCurrPos latency
-	// offset uses lOutputLatency only (not lOutputLatency+lInputLatency),
-	// restoring playback to position lOutputLatency after fmod.  This
-	// prevents the first lInputLatency samples of the loop (which contain
-	// valid backfilled content) from being delayed to after the first wrap.
-	bool bLateStartPending;
+	// lLastSyncPeriodSamples: length of the most recently *completed* sync
+	// period, in samples.  Captured from lGlobalSamplesSinceSync
+	// immediately before each sync-pulse reset in the pre-buffer scan.
+	// Zero until a second pulse has been observed (one full period).
+	// Used together with eighthPerCycle by effectiveLateHitWindow() to
+	// apply an optional fraction-of-eighth cap that tracks live tempo.
+	unsigned long lLastSyncPeriodSamples;
 	//------ albEnd ----------------------------------
 	
 	

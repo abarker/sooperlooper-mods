@@ -98,6 +98,44 @@ using namespace SooperLooper;
 // LADSPA port (matching all the other parameters) and remove this global.
 float g_late_hit_window_ms = LATE_HIT_WINDOW_MS;
 
+// Maximum fraction of one eighth note that the late-hit window may span.
+// effectiveLateHitWindow() always evaluates both limits and returns the
+// smaller:
+//
+//     min( g_late_hit_window_ms * 0.001 * sampleRate,
+//          g_late_hit_max_8th_fraction * lLastSyncPeriodSamples / eighthPerCycle )
+//
+// Setting either parameter to a sufficiently large value renders that term
+// larger than any practical T, so the other term wins exclusively:
+//
+//   Large g_late_hit_max_8th_fraction  →  only the ms cap matters.
+//   Large g_late_hit_window_ms         →  only the 8th-fraction cap matters.
+//
+// The default (100.0 = 100 eighth notes) is intentionally absurd so that the
+// fraction term is always much larger than the ms term at any musical tempo,
+// giving the same behaviour as before this parameter was added.
+//
+// A value of 0.5 caps the window at 50 % of one measured eighth note, which
+// prevents a late press from snapping back to the *previous* boundary at fast
+// tempos where the ms window would otherwise span more than half an eighth.
+//
+// lLastSyncPeriodSamples is initialised to ULONG_MAX in activate() so that
+// the fraction term is effectively infinite before the first complete sync
+// period is measured; the ms term therefore wins until real tempo data
+// arrives, regardless of the configured fraction.
+//
+// To expose this in the session config file, add to looper.cpp alongside the
+// existing g_late_hit_window_ms handling:
+//
+//   extern float g_late_hit_max_8th_fraction;
+//   g_late_hit_max_8th_fraction = config.get("late_hit_max_8th_fraction",
+//                                             LATE_HIT_MAX_8TH_FRACTION);
+//
+// Until that looper.cpp change is made the only way to override the default
+// is at compile time via LATE_HIT_MAX_8TH_FRACTION below.
+#define LATE_HIT_MAX_8TH_FRACTION 100.0f
+float g_late_hit_max_8th_fraction = LATE_HIT_MAX_8TH_FRACTION;
+
 // Compile-time safety switch for the Multiply-end late-hit correction.
 // Set to 0 to disable only the Multiply-end correction while leaving
 // the Record/Stop correction (which has more test history) unaffected.
@@ -186,8 +224,38 @@ static void sl_dbg_open() {
 #define SYNCWDBG(x)
 #endif
 //====== albEnd ====================================================================================
+//====== albBegin ==================================================================================
+// effectiveLateHitWindow(): compute the late-hit window in samples.
+//
+// Always evaluates both limits and returns the smaller:
+//
+//     min( g_late_hit_window_ms * 0.001 * sampleRate,
+//          g_late_hit_max_8th_fraction * lLastSyncPeriodSamples / eighthPerCycle )
+//
+// The intermediate product is kept in double to handle the ULONG_MAX sentinel
+// that activate() stores in lLastSyncPeriodSamples before the first measured
+// sync period: the resulting fractionLimit is then much larger than any
+// practical msLimit, so the ms term wins until real tempo data is available.
+//
+// Division by zero (eighthPerCycle == 0) is the only case that cannot be
+// expressed via a "large value" convention; it is caught explicitly and falls
+// back to msLimit.
+static inline unsigned long effectiveLateHitWindow(const SooperLooperI *pLS,
+                                                    unsigned int eighthPerCycle) {
+    unsigned long msLimit =
+        (unsigned long)(g_late_hit_window_ms * 0.001f * pLS->fSampleRate);
+    if (eighthPerCycle == 0) return msLimit; // guard: cannot encode as large value
+    double fractionLimit = (double)g_late_hit_max_8th_fraction
+                           * (double)pLS->lLastSyncPeriodSamples
+                           / (double)eighthPerCycle;
+    // If fractionLimit >= msLimit the ms term wins; cast is safe because
+    // fractionLimit < msLimit guarantees it fits in unsigned long.
+    if (fractionLimit >= (double)msLimit) return msLimit;
+    return (unsigned long)fractionLimit;
+}
+//====== albEnd ====================================================================================
 
-#define VERSION "1.6"
+
 
 /* The maximum sample memory  (in seconds). */
 
@@ -700,6 +768,10 @@ instantiateSooperLooper(const LADSPA_Descriptor * Descriptor,
    // Startup banner: always logged to confirm this is the experimental build.
    // Appears once per loop instance during instantiation.
    SL_LOG("SooperLooper [EXPERIMENTAL] instantiated -- late-hit patch active\n");
+   // lLastSyncPeriodSamples starts as ULONG_MAX (calloc gives 0, which would
+   // make the fraction term evaluate to 0 before the first sync period is
+   // measured).  activate() also resets it to ULONG_MAX on each reset.
+   pLS->lLastSyncPeriodSamples = ULONG_MAX;
    //====== albEnd ====================================================================================
    
    DBG(fprintf(stderr,"%u:%u  instantiated with buffersize: %lu\n", pLS->lLoopIndex, pLS->lChannelIndex, pLS->lBufferSize));
@@ -824,6 +896,11 @@ activateSooperLooper(LADSPA_Handle Instance) {
   pLS->lFramesUntilInput = 0;
   pLS->lFramesUntilFilled = 0;
   memset (pLS->pInputBuf, 0, pLS->lInputBufSize * sizeof(LADSPA_Data));
+  //====== albBegin ======
+  pLS->lGlobalSamplesSinceSync = 0;
+  pLS->bSyncPulseReceived = false;
+  pLS->lLastSyncPeriodSamples = ULONG_MAX; // sentinel: no period measured yet
+  //====== albEnd ========
   
   clearLoopChunks(pLS);
 
@@ -2130,6 +2207,7 @@ runSooperLooper(LADSPA_Handle Instance,
 	  for (unsigned long n = 0; n < SampleCount; ++n) {
 		  pLS->lGlobalSamplesSinceSync++;
 		  if (pfSyncInput[n] > 1.5f) {
+			  pLS->lLastSyncPeriodSamples = pLS->lGlobalSamplesSinceSync; // capture before reset
 			  pLS->lGlobalSamplesSinceSync = 0;
 			  pLS->bSyncPulseReceived = true;
 		  }
@@ -2189,7 +2267,7 @@ runSooperLooper(LADSPA_Handle Instance,
 			      // identically to the normal STATE_TRIG_STOP path (lLoopLength + latency).
 			      // The trim alone corrects the loop length; no first-play offset needed.
 			      // check late-hit window for stop button
-			      unsigned long shiftSamples = (unsigned long)(g_late_hit_window_ms * 0.001f * pLS->fSampleRate);
+			      unsigned long shiftSamples = effectiveLateHitWindow(pLS, eighthPerCycle);
 			      unsigned long T = lGlobalSyncAtButtonPress;
 			      // fSyncMode > 0 is the essential guard: it means an external
 			      // sync source is active and pfSyncInput carries real pulses,
@@ -2355,7 +2433,7 @@ runSooperLooper(LADSPA_Handle Instance,
 		 // the last sync boundary.  If so, skip STATE_TRIG_START (which would
 		 // wait for the NEXT boundary) and begin recording immediately, backfilling
 		 // the missed samples from pInputBuf so the loop is anchored at the boundary.
-		 unsigned long shiftSamples = (unsigned long)(g_late_hit_window_ms * 0.001f * pLS->fSampleRate);
+		 unsigned long shiftSamples = effectiveLateHitWindow(pLS, eighthPerCycle);
 		 unsigned long T = lGlobalSyncAtButtonPress;
 		 // fSyncMode > 0 is the essential guard: it means an external sync
 		 // source is active.  Quantize mode is NOT required: for external
@@ -2405,26 +2483,39 @@ runSooperLooper(LADSPA_Handle Instance,
 				 loop->lOrigSyncPos = loop->lSyncPos = 0;
 
 				 // Backfill T samples from the input latency buffer into the loop
-				 // buffer.  pLS->lInputBufWritePos points to the START of the current
-				 // block (not yet advanced).
+				 // buffer.  lInputBufWritePos points to the START of the current
+				 // block (the current block has been written to the latency buffer
+				 // already, but lInputBufWritePos is not advanced until end of run).
 				 //
-				 // Normal recording reads from lInputBufWritePos - lInputLatency
-				 // (i.e. lInputLatency samples behind the write head).  To match,
-				 // the backfill must also go back lInputLatency from the boundary
-				 // moment, which was itself T samples ago:
+				 // STATE_RECORD writes pfInput[] directly to the loop buffer; it
+				 // does NOT read from pfInputLatencyBuf.  The latency buffer is
+				 // simply a verbatim ring-buffer copy of pfInput:
 				 //
-				 //   readPos = lInputBufWritePos - T - lInputLatency
+				 //   pfInputLatencyBuf[(lInputBufWritePos + m) & mask]
+				 //       == physical audio at JACK time (T_now - lInputLatency + m)
 				 //
-				 // This ensures seamless continuity: the T backfilled samples end
-				 // exactly where live recording (starting at lInputBufWritePos -
-				 // lInputLatency) picks up, producing the same result as an on-time
-				 // press.
+				 // Normal recording from the sync boundary (T_sync = T_now - T)
+				 // would have written:
 				 //
-				 // Constraint: T + lInputLatency must be < lInputBufSize (32768).
-				 // With T <= ~4410 (100ms at 44.1kHz) that allows lInputLatency up
-				 // to ~28000 samples (~630ms).  The modular arithmetic below handles
-				 // wrap-around correctly for all valid values.
-				 unsigned long backfillOffset = T ;//ALBDEBUG + lInputLatency;
+				 //   loop[i] = pfInput at T_sync + i
+				 //           = physical audio at T_sync - lInputLatency + i
+				 //           = physical audio at T_now  - lInputLatency + (i - T)
+				 //           = pfInputLatencyBuf[lInputBufWritePos + (i - T)]
+				 //           = pfInputLatencyBuf[lInputBufWritePos - T + i]
+				 //
+				 // Therefore:  readPos = lInputBufWritePos - T   (no lInputLatency term)
+				 //
+				 // Continuity check: the last backfill sample (i = T-1) reads from
+				 // lInputBufWritePos - 1, which is pfInput[SampleCount-1] of the
+				 // previous block = physical audio at T_now - lInputLatency - 1.
+				 // Live recording begins at pfInput[0] of the current block =
+				 // physical audio at T_now - lInputLatency.  The two streams are
+				 // perfectly adjacent with no gap or overlap.
+				 //
+				 // Constraint: T must be < lInputBufSize (32768).  With the default
+				 // 100 ms window, T <= ~4800 samples at 48 kHz.  The modular
+				 // arithmetic below handles ring-buffer wrap-around correctly.
+				 unsigned long backfillOffset = T;
 				 unsigned long readPos = (pLS->lInputBufWritePos >= backfillOffset)
 					 ? (pLS->lInputBufWritePos - backfillOffset)
 					 : (pLS->lInputBufSize - (backfillOffset - pLS->lInputBufWritePos));
@@ -2439,17 +2530,12 @@ runSooperLooper(LADSPA_Handle Instance,
 						 pfInputLatencyBuf[(readPos + i) & pLS->lInputBufMask];
 				 }
 
-				 // position T samples in: backfill covers [0..T), live recording
-				 // continues from T onward until the next sync boundary.
-				 // Backfill fully anchors the loop at the boundary — no first-play
-				 // offset needed.  Any late-stop correction is handled separately
-				 // in the STATE_RECORD stop path via dCurrPos += T.
+				 // Start recording from position T: backfill covers [0..T), live
+				 // recording continues from T onward to the next sync boundary.
+				 // The loop content is now identical to what an on-time press would
+				 // have produced, so the standard TRIG_STOP latency formula
+				 // (dCurrPos += lOutputLatency + lInputLatency) applies unchanged.
 				 loop->dCurrPos = (double)T;
-				 // Signal the TRIG_STOP path to use lOutputLatency only (not
-				 // lOutputLatency+lInputLatency) when setting the playback
-				 // start position, so that the first lInputLatency samples of
-				 // backfilled content are not delayed to after the first wrap.
-				 pLS->bLateStartPending = false;//ALBDEBUG true;
 
 				 // fade setup (mirrors STATE_TRIG_START transition)
 				 pLS->fLoopFadeAtten = 0.0f;
@@ -2630,8 +2716,7 @@ runSooperLooper(LADSPA_Handle Instance,
 					      // Guard: lCycles >= 2 ensures we never decrement to 0.
 					      // Same g_late_hit_window_ms and T as the Record stop path.
 					      {
-						      unsigned long shiftSamples =
-							      (unsigned long)(g_late_hit_window_ms * 0.001f * pLS->fSampleRate);
+						      unsigned long shiftSamples = effectiveLateHitWindow(pLS, eighthPerCycle);
 						      bool multStopInWindow = (T > 0
 							                              && T <= shiftSamples
 							                              && fSyncMode > 0.0f
@@ -3918,30 +4003,31 @@ runSooperLooper(LADSPA_Handle Instance,
 
 		      loop = transitionToNext (pLS, loop, pLS->nextState);
 		      pLS->waitingForSync = 0;
-		      //jlc trig
-		      // we need to increment loop position by output latency (+ IL ?)
-		      //====== albBegin -- late-start playback offset correction ========
-		      // When a late-start backfill correction was applied, the sync
-		      // boundary audio lands at position lInputLatency in the loop buffer
-		      // (not at position lOutputLatency+lInputLatency as in the normal
-		      // TRIG_START path).  Using the full latency offset would start
-		      // playback at lOutputLatency samples PAST the boundary, delaying
-		      // the first lInputLatency samples to after the first wrap.
-		      // Using lOutputLatency only starts playback at position lOutputLatency
-		      // (5ms before the boundary), so only 5ms of pre-boundary backfill
-		      // content is delayed to after the first wrap.
-		      if (pLS->bLateStartPending) {
-			      loop->dCurrPos = loop->dCurrPos + lOutputLatency * fRate;
-			      pLS->lFramesUntilFilled = lOutputLatency;
-			      pLS->bLateStartPending = false;
-			      SYNCWDBG(SL_LOG(
-				      "%u:%u  TRIG_STOP after late-start: dCurrPos=%.0f lOutputLatency=%lu\n",
-				      pLS->lLoopIndex, pLS->lChannelIndex,
-				      loop->dCurrPos, lOutputLatency));
-		      } else {
-			      loop->dCurrPos = loop->dCurrPos + ( lOutputLatency + lInputLatency ) * fRate;
-			      pLS->lFramesUntilFilled = lOutputLatency + lInputLatency;
-		      }
+		      //====== albBegin -- TRIG_STOP playback-start offset ==============
+		      // Advance dCurrPos so that rCurrPos starts at 0 on the first
+		      // STATE_PLAY sample.
+		      //
+		      // During playback:
+		      //   rCurrPos = dCurrPos - (lOutputLatency + lInputLatency)  (mod L)
+		      //
+		      // transitionToNext() is called above with dCurrPos == lLoopLength
+		      // (the sync pulse fires at exactly that position and finalises the
+		      // loop length).  Adding (lOutputLatency + lInputLatency) gives:
+		      //   rCurrPos = lLoopLength + lOutputLatency + lInputLatency
+		      //              - lOutputLatency - lInputLatency  (mod L)
+		      //            = lLoopLength  (mod L)  =  0
+		      //
+		      // This is correct for both on-time and late-start recordings.
+		      // In the late-start path the backfill writes exactly what pfInput
+		      // would have captured from the sync boundary onward (see the
+		      // MULTI_RECORD / default case for the derivation), so loop[0]
+		      // contains the same boundary audio as a normal on-time recording
+		      // and the same offset formula applies without modification.
+		      // lOutputLatency and lInputLatency appear symmetrically in the
+		      // record and playback paths, so this formula is valid for any
+		      // hardware latency combination.
+		      loop->dCurrPos = loop->dCurrPos + ( lOutputLatency + lInputLatency ) * fRate;
+		      pLS->lFramesUntilFilled = lOutputLatency + lInputLatency;
 		      //====== albEnd ===================================================
 		      
 		      pLS->fLoopSrcFadeDelta = -1.0f / xfadeSamples;
