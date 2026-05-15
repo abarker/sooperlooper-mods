@@ -2017,9 +2017,22 @@ runSooperLooper(LADSPA_Handle Instance,
 	  }
 
   }
-  
-  
-  lMultiCtrl = (int) *(pLS->pfMultiCtrl);
+
+  //====== albBegin ==================================================================================
+  // Seed lLastSyncPeriodSamples from the tempo-derived syncSamples whenever no
+  // real inter-pulse measurement has been taken yet (sentinel == ULONG_MAX).
+  // syncSamples is > 0 only when fTempo > 0 and the quantize mode is
+  // QUANT_CYCLE, QUANT_LOOP, or QUANT_8TH; the guard handles all other cases
+  // gracefully by leaving the sentinel unchanged.
+  //
+  // Once the second sync pulse arrives it overwrites this estimate with the
+  // actual measured interval and the guard never fires again.  The net effect:
+  // the fraction cap in effectiveLateHitWindow() is active from the very first
+  // buffer, not only after two pulses have been observed.
+  if (pLS->lLastSyncPeriodSamples == ULONG_MAX && syncSamples > 0) {
+      pLS->lLastSyncPeriodSamples = syncSamples;
+  }
+  //====== albEnd ====================================================================================
 
   useFeedbackPlay = (bool) *(pLS->pfUseFeedbackPlay);
   
