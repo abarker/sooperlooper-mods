@@ -2977,8 +2977,9 @@ Engine::load_session (std::string fname, string * readstr)
 				g_late_hit_max_8th_fraction = val;
 			}
 		}
-		cerr << "SooperLooper: late-hit window: " << g_late_hit_window_ms
-		     << " ms, 8th-fraction cap: " << g_late_hit_max_8th_fraction << endl;
+		fprintf(stderr, "SooperLooper: late_hit_window_ms loaded from session: %.4g ms"
+		                " (8th_fraction cap: %.4g)\n",
+		                g_late_hit_window_ms, g_late_hit_max_8th_fraction);
 		//------ albEnd ----------------------------------
 
 	}
