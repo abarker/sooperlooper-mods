@@ -2034,6 +2034,8 @@ runSooperLooper(LADSPA_Handle Instance,
   }
   //====== albEnd ====================================================================================
 
+  lMultiCtrl = (int) *(pLS->pfMultiCtrl);
+
   useFeedbackPlay = (bool) *(pLS->pfUseFeedbackPlay);
   
   fTapTrig = *(pLS->pfTapCtrl);
