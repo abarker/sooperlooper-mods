@@ -211,6 +211,13 @@ bool Engine::initialize(AudioDriver * driver, int buschans, int port, string pin
 	// reserve space in instance vectors to try to be RT safe
 	_instances.reserve(128);
 	_rt_instances.reserve(128);
+	//------ albBegin ----------------------------------
+	// _rt_instances is mutated only from the RT callback (via the lock-free
+	// _loop_manage_to_rt_queue), so iterating it in the RT callback is safe.
+	// The reserve(128) above is load-bearing for that safety: it prevents
+	// push_back from reallocating the backing store during RT execution.
+	// If the loop count ever approaches 128 this assumption must be revisited.
+	//------ albEnd ----------------------------------
 	
 	_internal_sync_buf = new float[driver->get_buffersize()];
 	memset(_internal_sync_buf, 0, sizeof(float) * driver->get_buffersize());
@@ -2606,8 +2613,15 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 
 						set_tempo(ntempo, true);
 						_tempo_changed = true;
-						// wake up mainloop safely
-						pthread_cond_signal (&_event_cond);
+						//------ albBegin ----------------------------------
+						// pthread_cond_signal removed from RT callback.
+						// The main loop uses pthread_cond_timedwait, so it
+						// wakes periodically and will see _tempo_changed
+						// without needing a signal from the RT thread.
+						// Signalling from here caused priority inversion and
+						// xruns on transport locate events.
+						// pthread_cond_signal (&_event_cond);
+						//------ albEnd ----------------------------------
 					}
 
 					_quarter_counter = - ((double)usedframes);
@@ -2663,12 +2677,29 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 		if (_driver->get_transport_info(info)) {
 
 			
-			if (TEMPO_DIFF(_tempo,info.bpm)) {
+			//------ albBegin ----------------------------------
+			// Guard: only update tempo from JACK when transport is actually
+			// rolling.  During JackTransportStarting (locate) info.bpm can
+			// be zero or unreliable, triggering set_tempo() unnecessarily.
+			// set_tempo() calls tempo_clock_update() which is not RT-safe,
+			// and may also call JACK transport APIs if _jack_timebase_master
+			// is set.  Lines 2695 and 2717 already gate sync generation on
+			// ROLLING; this makes the tempo update consistent with those.
+			// Original (ungated): if (TEMPO_DIFF(_tempo,info.bpm)) {
+			if (info.state == TransportInfo::ROLLING && TEMPO_DIFF(_tempo,info.bpm)) {
+			//------ albEnd ----------------------------------
 				set_tempo(info.bpm, true);
 				calculate_tempo_frames ();
 				_tempo_changed = true;
-				// wake up mainloop safely
-				pthread_cond_signal (&_event_cond);
+				//------ albBegin ----------------------------------
+				// pthread_cond_signal removed from RT callback.
+				// The main loop uses pthread_cond_timedwait, so it
+				// wakes periodically and will see _tempo_changed
+				// without needing a signal from the RT thread.
+				// Signalling from here caused priority inversion and
+				// xruns on transport locate events.
+				// pthread_cond_signal (&_event_cond);
+				//------ albEnd ----------------------------------
 			}
 
 			if (_tempo_frames > 0.0 && info.state == TransportInfo::ROLLING) {
@@ -2734,8 +2765,15 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				set_tempo(ntempo, true);
 				calculate_tempo_frames ();
 				_tempo_changed = true;
-				// wake up mainloop safely
-				pthread_cond_signal (&_event_cond);
+				//------ albBegin ----------------------------------
+				// pthread_cond_signal removed from RT callback.
+				// The main loop uses pthread_cond_timedwait, so it
+				// wakes periodically and will see _tempo_changed
+				// without needing a signal from the RT thread.
+				// Signalling from here caused priority inversion and
+				// xruns on transport locate events.
+				// pthread_cond_signal (&_event_cond);
+				//------ albEnd ----------------------------------
 			}
 			
 			// just calculate quarter note beats for update
