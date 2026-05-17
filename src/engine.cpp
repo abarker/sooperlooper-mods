@@ -65,6 +65,35 @@ extern float g_late_hit_window_ms;
 extern float g_late_hit_max_8th_fraction; //------ albBegin/albEnd (same patch)
 //------ albEnd ----------------------------------
 
+//------ albBegin ----------------------------------
+// ALB_TEMPO_ONLY_WHEN_ROLLING: compile-time toggle for the behaviour change
+// that skips JACK-tempo updates when transport is not rolling.
+//
+// WHEN DEFINED (default): tempo is only updated from JACK Transport during
+// cycles where info.state == TransportInfo::ROLLING.  During JackTransportStarting
+// (i.e. after a locate) the existing _tempo is preserved until rolling resumes.
+// This prevents set_tempo() — which calls tempo_clock_update() and is not RT-safe —
+// from firing during the locate transition, reducing xrun probability.
+//
+// WHEN NOT DEFINED: original stock behaviour — tempo is updated on every cycle
+// regardless of transport state, including during locate and while stopped.
+// Restore this if tempo changes made while transport is stopped must take
+// immediate effect.
+#define ALB_TEMPO_ONLY_WHEN_ROLLING
+
+// ALB_RT_SAFE_COND_SIGNAL: compile-time toggle that suppresses the three
+// pthread_cond_signal() calls we found in generate_sync()'s tempo-change
+// paths (MIDI sync, JackSync, and loop-sync).  In stock SooperLooper those
+// calls fire from the JACK RT callback, which can cause priority inversion
+// and xruns on transport locate events.  The main event loop already uses
+// pthread_cond_timedwait, so it wakes periodically and picks up _tempo_changed
+// without a signal.
+//
+// WHEN DEFINED (default): signals suppressed — RT-safe, reduces locate xruns.
+// WHEN NOT DEFINED: original stock behaviour — signals fire from RT callback.
+#define ALB_RT_SAFE_COND_SIGNAL
+//------ albEnd ----------------------------------
+
 #define MAX_EVENTS 1024
 #define MAX_SYNC_EVENTS 1024
 
@@ -2614,13 +2643,11 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 						set_tempo(ntempo, true);
 						_tempo_changed = true;
 						//------ albBegin ----------------------------------
-						// pthread_cond_signal removed from RT callback.
-						// The main loop uses pthread_cond_timedwait, so it
-						// wakes periodically and will see _tempo_changed
-						// without needing a signal from the RT thread.
-						// Signalling from here caused priority inversion and
-						// xruns on transport locate events.
-						// pthread_cond_signal (&_event_cond);
+						// Original: pthread_cond_signal (&_event_cond);
+						// Suppressed when ALB_RT_SAFE_COND_SIGNAL is defined (see top of file).
+#ifndef ALB_RT_SAFE_COND_SIGNAL
+						pthread_cond_signal (&_event_cond);
+#endif
 						//------ albEnd ----------------------------------
 					}
 
@@ -2685,20 +2712,23 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 			// and may also call JACK transport APIs if _jack_timebase_master
 			// is set.  Lines 2695 and 2717 already gate sync generation on
 			// ROLLING; this makes the tempo update consistent with those.
+			// Controlled by ALB_TEMPO_ONLY_WHEN_ROLLING (see top of file).
 			// Original (ungated): if (TEMPO_DIFF(_tempo,info.bpm)) {
+#ifdef ALB_TEMPO_ONLY_WHEN_ROLLING
 			if (info.state == TransportInfo::ROLLING && TEMPO_DIFF(_tempo,info.bpm)) {
+#else
+			if (TEMPO_DIFF(_tempo,info.bpm)) {
+#endif
 			//------ albEnd ----------------------------------
 				set_tempo(info.bpm, true);
 				calculate_tempo_frames ();
 				_tempo_changed = true;
 				//------ albBegin ----------------------------------
-				// pthread_cond_signal removed from RT callback.
-				// The main loop uses pthread_cond_timedwait, so it
-				// wakes periodically and will see _tempo_changed
-				// without needing a signal from the RT thread.
-				// Signalling from here caused priority inversion and
-				// xruns on transport locate events.
-				// pthread_cond_signal (&_event_cond);
+				// Original: pthread_cond_signal (&_event_cond);
+				// Suppressed when ALB_RT_SAFE_COND_SIGNAL is defined (see top of file).
+#ifndef ALB_RT_SAFE_COND_SIGNAL
+				pthread_cond_signal (&_event_cond);
+#endif
 				//------ albEnd ----------------------------------
 			}
 
@@ -2766,13 +2796,11 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				calculate_tempo_frames ();
 				_tempo_changed = true;
 				//------ albBegin ----------------------------------
-				// pthread_cond_signal removed from RT callback.
-				// The main loop uses pthread_cond_timedwait, so it
-				// wakes periodically and will see _tempo_changed
-				// without needing a signal from the RT thread.
-				// Signalling from here caused priority inversion and
-				// xruns on transport locate events.
-				// pthread_cond_signal (&_event_cond);
+				// Original: pthread_cond_signal (&_event_cond);
+				// Suppressed when ALB_RT_SAFE_COND_SIGNAL is defined (see top of file).
+#ifndef ALB_RT_SAFE_COND_SIGNAL
+				pthread_cond_signal (&_event_cond);
+#endif
 				//------ albEnd ----------------------------------
 			}
 			
@@ -3015,9 +3043,20 @@ Engine::load_session (std::string fname, string * readstr)
 				g_late_hit_max_8th_fraction = val;
 			}
 		}
-		fprintf(stderr, "SooperLooper: late_hit_window_ms loaded from session: %.4g ms"
-		                " (8th_fraction cap: %.4g)\n",
-		                g_late_hit_window_ms, g_late_hit_max_8th_fraction);
+		fprintf(stderr,
+		        "SooperLooper: late_hit_window_ms loaded from session: %.4g ms"
+		        " (8th_fraction cap: %.4g)"
+#ifdef ALB_RT_SAFE_COND_SIGNAL
+		        "  rt_safe_cond_signal: ON"
+#else
+		        "  rt_safe_cond_signal: OFF"
+#endif
+#ifdef ALB_TEMPO_ONLY_WHEN_ROLLING
+		        "  tempo_only_when_rolling: ON\n",
+#else
+		        "  tempo_only_when_rolling: OFF\n",
+#endif
+		        g_late_hit_window_ms, g_late_hit_max_8th_fraction);
 		//------ albEnd ----------------------------------
 
 	}
