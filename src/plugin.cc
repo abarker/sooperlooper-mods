@@ -2300,11 +2300,12 @@ runSooperLooper(LADSPA_Handle Instance,
 
 			      SYNCWDBG(SL_LOG(
 					  "\n%u:%u  STOP button: lGlobalSyncAtButtonPress=%u  windowSamples=%lu"
-			          "  withinWindow=%d  (%.2f ms since boundary)  dCurrPos=%g\n",
+			          "  withinWindow=%d  (%.2f ms since boundary, window=%.1f ms)  dCurrPos=%g\n",
 			          pLS->lLoopIndex, pLS->lChannelIndex,
 			          lGlobalSyncAtButtonPress, shiftSamples,
 			          (int)stopWithinWindow,
 			          T * 1000.0f / pLS->fSampleRate,
+			          shiftSamples * 1000.0f / pLS->fSampleRate,
 					  loop ? loop->dCurrPos : -1.0));
 
 			      if (stopWithinWindow) {
@@ -2463,12 +2464,12 @@ runSooperLooper(LADSPA_Handle Instance,
 		 SYNCWDBG(SL_LOG(
 		     "\n%u:%u  RECORD button: lGlobalSyncAtButtonPress=%u  windowSamples=%lu"
 		     "  withinWindow=%d  syncMode=%g  quantMode=%g"
-		     "  (%.2f ms since boundary, window=%.0f ms)\n",
+		     "  (%.2f ms since boundary, window=%.1f ms)\n",
 		     pLS->lLoopIndex, pLS->lChannelIndex,
 		     lGlobalSyncAtButtonPress, shiftSamples,
 		     (int)withinWindow, fSyncMode, fQuantizeMode,
 		     T * 1000.0f / pLS->fSampleRate,
-		     g_late_hit_window_ms));
+		     shiftSamples * 1000.0f / pLS->fSampleRate));
 
 		 if (withinWindow) {
 			 loop = pushNewLoopChunk(pLS, 0, NULL);
