@@ -342,8 +342,13 @@ class Engine
 	jack_port_t *	_jack_midi_out_port;
 	// Phase accumulator for JACK MIDI clock generation: fractional frames
 	// remaining until the next tick, carried across buffer boundaries.
-	// Initialised to 0.0; reset to 0.0 when _tempo drops to zero.
+	// Initialised to 0.0; reset to 0.0 when transport starts or tempo is zero.
 	double          _jack_clock_tick_phase;
+	// Transport rolling state captured in generate_sync() (JackSync branch)
+	// each buffer so that process() can detect rolling transitions without a
+	// second jack_transport_query() call.
+	bool            _jack_transport_rolling;
+	bool            _jack_last_rolling;
 	//------ albEnd ----------------------------------
 };
 

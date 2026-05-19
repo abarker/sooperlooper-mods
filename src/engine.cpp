@@ -136,9 +136,11 @@ Engine::Engine ()
 
 	//------ albBegin ----------------------------------
 	// Null the JACK MIDI port handles; properly registered in initialize().
-	_jack_midi_in_port  = nullptr;
-	_jack_midi_out_port = nullptr;
-	_jack_clock_tick_phase = 0.0;
+	_jack_midi_in_port      = nullptr;
+	_jack_midi_out_port     = nullptr;
+	_jack_clock_tick_phase  = 0.0;
+	_jack_transport_rolling = false;
+	_jack_last_rolling      = false;
 	//------ albEnd ----------------------------------
 	_use_temp_input = true; // all the time for now
 	_ignore_quit = false;
@@ -941,25 +943,42 @@ Engine::process (nframes_t nframes)
 	generate_sync (0, nframes);
 
 	//------ albBegin ----------------------------------
-	// Generate 24-ppqn MIDI clock on the direct JACK MIDI output port.
+	// Generate MIDI clock and transport messages on the direct JACK MIDI
+	// output port, in parallel with the ALSA clock thread in MidiBridge.
 	//
-	// Phase accumulator: _jack_clock_tick_phase holds the fractional-frame
-	// offset from the start of the *next* buffer to the next tick.  This
-	// preserves sample-accurate tick positions regardless of buffer size or
-	// tempo, and correctly handles tempos where ticks do not fall on whole
-	// frame boundaries.
+	// Rolling transitions (detected via _jack_transport_rolling set in the
+	// JackSync branch of generate_sync()):
+	//   stopped → rolling : MIDI Start (0xFA) at frame 0; tick phase reset
+	//   rolling → stopped : MIDI Stop  (0xFC) at frame 0
+	// Start/Stop are only emitted in JackSync mode; for other sync sources
+	// _jack_transport_rolling stays false and no transition is detected.
 	//
-	// Only clock bytes (0xF8) are emitted.  MIDI Start (0xFA) and Stop
-	// (0xFC) are not emitted here — adding them requires tracking transport
-	// rolling transitions in generate_sync() and is deferred to a future
-	// iteration.
+	// Clock ticks (0xF8): generated whenever _tempo > 0, regardless of
+	// rolling state (matching the ALSA clock thread's behaviour of sending
+	// continuous clock when tempo is known).  A phase accumulator carries
+	// fractional-frame position across buffer boundaries for sample-accurate
+	// tick placement at all tempos and buffer sizes.
 	//
-	// This runs in parallel with the ALSA clock thread in MidiBridge;
-	// neither replaces the other, and MidiBridge is not modified.
+	// MidiBridge is not modified; the ALSA output is completely unaffected.
 	if (_jack_midi_out_port) {
 		void *midi_out_buf = jack_port_get_buffer(_jack_midi_out_port, nframes);
 		if (midi_out_buf) {
 			jack_midi_clear_buffer(midi_out_buf);
+
+			uint8_t msg;
+
+			if (_jack_transport_rolling && !_jack_last_rolling) {
+				// transport just started: MIDI Start + phase reset
+				msg = 0xfa;
+				jack_midi_event_write(midi_out_buf, 0, &msg, 1);
+				_jack_clock_tick_phase = 0.0;
+			} else if (!_jack_transport_rolling && _jack_last_rolling) {
+				// transport just stopped: MIDI Stop
+				msg = 0xfc;
+				jack_midi_event_write(midi_out_buf, 0, &msg, 1);
+			}
+			_jack_last_rolling = _jack_transport_rolling;
+
 			if (_tempo > 0.0) {
 				// frames per tick = sampleRate × 60 / (tempo × 24)
 				const double tpf =
@@ -968,8 +987,7 @@ Engine::process (nframes_t nframes)
 				double phase = _jack_clock_tick_phase;
 				while (phase < (double)nframes) {
 					jack_nframes_t offset = (jack_nframes_t)phase;
-					// clamp: phase is always < nframes here, but guard
-					// against floating-point edge cases
+					// clamp against float edge cases
 					if (offset >= nframes) offset = nframes - 1;
 					jack_midi_event_write(midi_out_buf, offset,
 					                      &clock_byte, 1);
@@ -977,7 +995,7 @@ Engine::process (nframes_t nframes)
 				}
 				_jack_clock_tick_phase = phase - (double)nframes;
 			} else {
-				_jack_clock_tick_phase = 0.0; // reset when tempo is zero
+				_jack_clock_tick_phase = 0.0;
 			}
 		}
 	}
@@ -2760,7 +2778,15 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 		TransportInfo info;
 		if (_driver->get_transport_info(info)) {
 
-			
+			//------ albBegin ----------------------------------
+			// Capture the rolling state once per buffer so process() can
+			// detect stopped→rolling and rolling→stopped transitions and
+			// emit MIDI Start / Stop without a second transport query.
+			// Only updated in the JackSync branch; for other sync sources
+			// _jack_transport_rolling stays false and no Start/Stop is sent.
+			_jack_transport_rolling = (info.state == TransportInfo::ROLLING);
+			//------ albEnd ----------------------------------
+
 			//------ albBegin ----------------------------------
 			// Guard: only update tempo from JACK when transport is actually
 			// rolling.  During JackTransportStarting (locate) info.bpm can
