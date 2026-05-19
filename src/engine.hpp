@@ -335,6 +335,15 @@ class Engine
 	// timestamp, enabling sub-block buffer splitting in the event loop.
 	// nullptr on non-JACK platforms or if registration fails.
 	jack_port_t *	_jack_midi_in_port;
+	// Direct JACK MIDI output port.  Registered alongside _jack_midi_in_port.
+	// process() generates 24-ppqn MIDI clock ticks using a phase accumulator
+	// that preserves sub-buffer accuracy across buffer boundaries.  Runs in
+	// parallel with the ALSA clock thread; neither replaces the other.
+	jack_port_t *	_jack_midi_out_port;
+	// Phase accumulator for JACK MIDI clock generation: fractional frames
+	// remaining until the next tick, carried across buffer boundaries.
+	// Initialised to 0.0; reset to 0.0 when _tempo drops to zero.
+	double          _jack_clock_tick_phase;
 	//------ albEnd ----------------------------------
 };
 

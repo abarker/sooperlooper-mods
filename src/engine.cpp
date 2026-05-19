@@ -135,8 +135,10 @@ Engine::Engine ()
 	_loading = false;
 
 	//------ albBegin ----------------------------------
-	// Null the JACK MIDI port handle; properly registered in initialize().
-	_jack_midi_in_port = nullptr;
+	// Null the JACK MIDI port handles; properly registered in initialize().
+	_jack_midi_in_port  = nullptr;
+	_jack_midi_out_port = nullptr;
+	_jack_clock_tick_phase = 0.0;
 	//------ albEnd ----------------------------------
 	_use_temp_input = true; // all the time for now
 	_ignore_quit = false;
@@ -266,21 +268,20 @@ bool Engine::initialize(AudioDriver * driver, int buschans, int port, string pin
 	_driver->ConnectionsChanged.connect(mem_fun(*this, &Engine::connections_changed));
 
 	//------ albBegin ----------------------------------
-	// Register a direct JACK MIDI input port so that JACK MIDI clients
-	// (e.g. mididings with the jack-rt backend) can connect without going
-	// through an ALSA/a2jmidid bridge.
+	// Register direct JACK MIDI input and output ports so that JACK MIDI
+	// clients can connect without an ALSA/a2jmidid bridge.
 	//
-	// Beyond eliminating the bridge, this path passes each event's JACK
-	// intra-block sample offset (jack_ev.time) as the framepos argument to
-	// inject_midi().  That value is stored in the Event via
-	// EventGenerator::createEvent(framepos), so FragmentPos() returns the
-	// exact sample within the block.  The existing event loop in process()
-	// already splits the audio buffer at FragmentPos(), so sub-block-
-	// accurate command triggering comes for free once this port is live.
+	// Input: events are read in process() and injected via
+	//   MidiBridge::inject_midi() with their JACK intra-block sample offset
+	//   as framepos, giving sample-accurate trigger timing.
+	//
+	// Output: process() generates 24-ppqn MIDI clock using a phase
+	//   accumulator, running in parallel with the ALSA clock thread.
+	//   Neither replaces the other.
 	//
 	// Requires AudioDriver::get_jack_client() to be implemented by the
-	// JackDriver subclass (see audio_driver.hpp and jack_driver.hpp).
-	// Non-JACK builds return nullptr and the block is skipped silently.
+	// JackDriver subclass. Non-JACK builds return nullptr and the block is
+	// skipped silently.
 	{
 		jack_client_t * jclient = _driver->get_jack_client();
 		if (jclient) {
@@ -295,6 +296,19 @@ bool Engine::initialize(AudioDriver * driver, int buschans, int port, string pin
 			} else {
 				cerr << "SooperLooper: WARNING: jack_port_register() failed for "
 				     "'midi_in' — JACK MIDI input unavailable." << endl;
+			}
+
+			_jack_midi_out_port = jack_port_register(
+				jclient,
+				"midi_out",
+				JACK_DEFAULT_MIDI_TYPE,
+				JackPortIsOutput,
+				0);
+			if (_jack_midi_out_port) {
+				cerr << "SooperLooper: JACK MIDI output port 'midi_out' registered." << endl;
+			} else {
+				cerr << "SooperLooper: WARNING: jack_port_register() failed for "
+				     "'midi_out' — JACK MIDI output unavailable." << endl;
 			}
 		}
 	}
@@ -925,7 +939,50 @@ Engine::process (nframes_t nframes)
 	// update internal sync
 	calculate_tempo_frames ();
 	generate_sync (0, nframes);
-	
+
+	//------ albBegin ----------------------------------
+	// Generate 24-ppqn MIDI clock on the direct JACK MIDI output port.
+	//
+	// Phase accumulator: _jack_clock_tick_phase holds the fractional-frame
+	// offset from the start of the *next* buffer to the next tick.  This
+	// preserves sample-accurate tick positions regardless of buffer size or
+	// tempo, and correctly handles tempos where ticks do not fall on whole
+	// frame boundaries.
+	//
+	// Only clock bytes (0xF8) are emitted.  MIDI Start (0xFA) and Stop
+	// (0xFC) are not emitted here — adding them requires tracking transport
+	// rolling transitions in generate_sync() and is deferred to a future
+	// iteration.
+	//
+	// This runs in parallel with the ALSA clock thread in MidiBridge;
+	// neither replaces the other, and MidiBridge is not modified.
+	if (_jack_midi_out_port) {
+		void *midi_out_buf = jack_port_get_buffer(_jack_midi_out_port, nframes);
+		if (midi_out_buf) {
+			jack_midi_clear_buffer(midi_out_buf);
+			if (_tempo > 0.0) {
+				// frames per tick = sampleRate × 60 / (tempo × 24)
+				const double tpf =
+					_driver->get_samplerate() * 60.0 / (_tempo * 24.0);
+				const uint8_t clock_byte = 0xf8; // MIDI timing clock
+				double phase = _jack_clock_tick_phase;
+				while (phase < (double)nframes) {
+					jack_nframes_t offset = (jack_nframes_t)phase;
+					// clamp: phase is always < nframes here, but guard
+					// against floating-point edge cases
+					if (offset >= nframes) offset = nframes - 1;
+					jack_midi_event_write(midi_out_buf, offset,
+					                      &clock_byte, 1);
+					phase += tpf;
+				}
+				_jack_clock_tick_phase = phase - (double)nframes;
+			} else {
+				_jack_clock_tick_phase = 0.0; // reset when tempo is zero
+			}
+		}
+	}
+	//------ albEnd ----------------------------------
+
 	// clear common output buffers
 	prepare_buffers (nframes);
 
