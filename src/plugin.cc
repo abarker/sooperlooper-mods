@@ -195,9 +195,17 @@ static void sl_dbg_open() {
     }
 }
 
-// Use SL_LOG(...) for messages that should always appear (banners etc.)
-// Use SYNCWDBG(SL_LOG(...)) for messages gated by the SYNCWDEBUG flag.
+// Use SL_LOG(...) for messages that should always appear (banners etc.); non-RT only.
+// Use SYNCWDBG(SL_LOG_RT(...)) for per-press diagnostics inside the RT callback.
+// SL_LOG_RT omits fopen/fflush and is safe to call from the JACK RT callback.
 #define SL_LOG(...) do { sl_dbg_open(); fprintf(sl_dbg_file, __VA_ARGS__); fflush(sl_dbg_file); } while(0)
+// SL_LOG_RT: RT-callable version — no fopen(), no fflush().
+// Writes to sl_dbg_file only if already open (set during instantiate/activate,
+// which always run before the JACK RT callback starts).  Safe to call from the
+// RT thread: no blocking, no memory allocation.  stdio buffering means output
+// may not appear immediately after a crash; acceptable for timing diagnostics.
+// Use SL_LOG (with fflush) for startup banners and all non-RT messages only.
+#define SL_LOG_RT(...) do { if (sl_dbg_file) fprintf(sl_dbg_file, __VA_ARGS__); } while(0)
 //====== albEnd ====================================================================================
 
 
@@ -2298,7 +2306,7 @@ runSooperLooper(LADSPA_Handle Instance,
 			                               && pLS->bSyncPulseReceived
 			                               && loop != NULL);
 
-			      SYNCWDBG(SL_LOG(
+			      SYNCWDBG(SL_LOG_RT(
 					  "\n%u:%u  STOP button: lGlobalSyncAtButtonPress=%u  windowSamples=%lu"
 			          "  withinWindow=%d  (%.2f ms since boundary, window=%.1f ms)  dCurrPos=%g\n",
 			          pLS->lLoopIndex, pLS->lChannelIndex,
@@ -2318,7 +2326,7 @@ runSooperLooper(LADSPA_Handle Instance,
 					      // too close to trim safely — fall through to normal path
 					      pLS->state = STATE_TRIG_STOP;
 					      pLS->nextState = STATE_PLAY;
-					      SYNCWDBG(SL_LOG(
+					      SYNCWDBG(SL_LOG_RT(
 					          "%u:%u  Late-stop: T=%lu too large to trim safely"
 					          " (dCurrPos=%g), using TRIG_STOP\n",
 					          pLS->lLoopIndex, pLS->lChannelIndex,
@@ -2330,7 +2338,7 @@ runSooperLooper(LADSPA_Handle Instance,
 				      loop->lCycleLength = trimmedLength;
 				      loop->lCycles = 1;
 
-				      SYNCWDBG(SL_LOG(
+				      SYNCWDBG(SL_LOG_RT(
 				          "%u:%u  Late-stop: trimmed %lu samples (%.2f ms),"
 				          " lLoopLength=%lu\n",
 				          pLS->lLoopIndex, pLS->lChannelIndex,
@@ -2461,7 +2469,7 @@ runSooperLooper(LADSPA_Handle Instance,
 		                      && fSyncMode > 0.0f
 		                      && pLS->bSyncPulseReceived);
 
-		 SYNCWDBG(SL_LOG(
+		 SYNCWDBG(SL_LOG_RT(
 		     "\n%u:%u  RECORD button: lGlobalSyncAtButtonPress=%u  windowSamples=%lu"
 		     "  withinWindow=%d  syncMode=%g  quantMode=%g"
 		     "  (%.2f ms since boundary, window=%.1f ms)\n",
@@ -2474,7 +2482,7 @@ runSooperLooper(LADSPA_Handle Instance,
 		 if (withinWindow) {
 			 loop = pushNewLoopChunk(pLS, 0, NULL);
 			 if (loop) {
-				 SYNCWDBG(SL_LOG(
+				 SYNCWDBG(SL_LOG_RT(
 				     "%u:%u  Late-hit path: backfilling %lu samples (%.2f ms),"
 				     " lLoopStart=%lu, entering RECORD directly\n",
 				     pLS->lLoopIndex, pLS->lChannelIndex,
@@ -2535,7 +2543,7 @@ runSooperLooper(LADSPA_Handle Instance,
 				 unsigned long readPos = (pLS->lInputBufWritePos >= backfillOffset)
 					 ? (pLS->lInputBufWritePos - backfillOffset)
 					 : (pLS->lInputBufSize - (backfillOffset - pLS->lInputBufWritePos));
-				 SYNCWDBG(SL_LOG(
+				 SYNCWDBG(SL_LOG_RT(
 				     "%u:%u  Backfill: lInputBufWritePos=%lu SampleCount=%lu"
 				     " T=%lu lInputLatency=%lu readPos=%lu\n",
 				     pLS->lLoopIndex, pLS->lChannelIndex,
@@ -2560,14 +2568,19 @@ runSooperLooper(LADSPA_Handle Instance,
 				 pLS->fLoopSrcFadeDelta = 1.0f / xfadeSamples;
 				 pLS->fFeedSrcFadeDelta = -1.0f / xfadeSamples;
 			 } else {
-				 DBG(fprintf(stderr, "%u:%u  out of memory in late-hit path, back to PLAY\n",
+				 // Bug fix (albBegin): entering STATE_PLAY with loop==NULL crashes the DSP
+				 // loop dispatcher (srcloop = loop->srcloop is the first dereference).
+				 // pushNewLoopChunk returned NULL here (OOM or LoopChunk pool exhausted);
+				 // the local loop variable is therefore NULL.  STATE_OFF passes audio
+				 // through without looping — safe graceful degradation on allocation failure.
+				 DBG(fprintf(stderr, "%u:%u  out of memory in late-hit path, entering STATE_OFF\n",
 				             pLS->lLoopIndex, pLS->lChannelIndex));
-				 pLS->state = STATE_PLAY;
+				 pLS->state = STATE_OFF;
 				 pLS->wasMuted = false;
 			 }
 		 } else {
 			 pLS->state = STATE_TRIG_START;
-			 SYNCWDBG(SL_LOG(
+			 SYNCWDBG(SL_LOG_RT(
 			     "%u:%u  Normal path: entering TRIG_START, will wait for next sync"
 			     " (%.2f ms since last boundary, lGlobalSyncAtButtonPress=%u)\n",
 			     pLS->lLoopIndex, pLS->lChannelIndex,
@@ -2738,7 +2751,7 @@ runSooperLooper(LADSPA_Handle Instance,
 							                              && fSyncMode > 0.0f
 							                              && pLS->bSyncPulseReceived
 							                              && loop->lCycles >= 2);
-						      SYNCWDBG(SL_LOG(
+						      SYNCWDBG(SL_LOG_RT(
 							      "%u:%u  MultiplyEnd: T=%lu shiftSamples=%lu lCycles=%lu"
 							      " withinWindow=%d syncMode=%g\n",
 							      pLS->lLoopIndex, pLS->lChannelIndex,
@@ -2748,7 +2761,7 @@ runSooperLooper(LADSPA_Handle Instance,
 							      loop->lCycles -= 1;
 							      loop->lLoopLength = loop->lCycles * loop->lCycleLength;
 							      loop->mult_out = loop->lCycles;
-							      SYNCWDBG(SL_LOG(
+							      SYNCWDBG(SL_LOG_RT(
 								      "%u:%u  MultiplyEnd late-hit: trimmed to %lu cycles"
 								      " lLoopLength=%lu T=%lu\n",
 								      pLS->lLoopIndex, pLS->lChannelIndex,

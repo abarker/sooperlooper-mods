@@ -1185,29 +1185,40 @@ Looper::run (nframes_t offset, nframes_t nframes)
 	// For ALSA MIDI and OSC commands _pending_event_offset is always 0, so
 	// the existing TriggerLatency = _buffersize compensation is unchanged.
 	{
+		// Save/restore TriggerLatency so the GUI and recompute_latencies() always
+		// see the real port value.  When _pending_event_offset > 0 a genuine sub-block
+		// split has already occurred in Engine::process() (the engine called run() once
+		// for the pre-event frames and once for the post-event frames); zeroing
+		// TriggerLatency for this second call prevents plugin.cc from applying its
+		// normal backward correction, which would otherwise over-correct by up to
+		// _buffersize samples.  Applies to both the normal and resampled paths since
+		// both read TriggerLatency each block and would otherwise over-correct equally.
 		const float saved_trigger_latency = ports[TriggerLatency];
 		if (_pending_event_offset > 0) {
 			ports[TriggerLatency] = 0.0f;
 			_pending_event_offset = 0;
 		}
 
-		run_loops (offset, nframes);
+		// Restore the original rate dispatch so that Rate != 1.0 still routes
+		// through run_loops_resampled (libsamplerate SRC).  Previously this dispatch
+		// was accidentally commented out when adding the TriggerLatency wrapper,
+		// silently bypassing SRC and falling back to the plain run_loops() path for
+		// all rate settings.  Restored here inside the wrapper so TriggerLatency
+		// save/restore applies correctly to both paths.
+		if (ports[Rate] == 1.0f) {
+			run_loops (offset, nframes);
+		}
+		else {
+#ifdef HAVE_SAMPLERATE
+			run_loops_resampled (offset, nframes);
+#else
+			run_loops (offset, nframes);
+#endif
+		}
 
 		// Restore — harmless no-op when _pending_event_offset was 0.
 		ports[TriggerLatency] = saved_trigger_latency;
 	}
-/*
-	if (ports[Rate] == 1.0f) {
-		run_loops (offset, nframes);
-	}
-	else {
-#ifdef HAVE_SAMPLERATE
-		run_loops_resampled (offset, nframes);
-#else
-		run_loops (offset, nframes);
-#endif		
-	}
-*/
 	//------ albEnd ----------------------------------
 
 	ports[Sync] = oldsync;
