@@ -303,7 +303,7 @@ typedef struct {
 	// sync-pulse scan each buffer) is used so that a sync pulse arriving
 	// mid-buffer does not corrupt the phase reading for button events
 	// processed at the buffer boundary.
-	unsigned int lGlobalSamplesSinceSync;
+	unsigned long long lGlobalSamplesSinceSync;
 	// bSyncPulseReceived: set true on the first real sync pulse after
 	// instantiation.  Guards against the late-hit window firing at startup
 	// before any sync has arrived: calloc() zeroes the struct, so

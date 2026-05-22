@@ -2040,6 +2040,27 @@ runSooperLooper(LADSPA_Handle Instance,
   if (pLS->lLastSyncPeriodSamples == ULONG_MAX && syncSamples > 0) {
       pLS->lLastSyncPeriodSamples = syncSamples;
   }
+  // C1 fix: when fTempo is known and sync is active, override
+  // lLastSyncPeriodSamples with the authoritative tempo-derived value.
+  // The pulse scanner (BLOCK 8) can be polluted by loop-coordination 2.0f
+  // events that arrive in quick succession at state transitions (recording
+  // end, undo, etc.) and can leave lLastSyncPeriodSamples at a tiny value
+  // that effectively disables the late-hit window for subsequent presses.
+  // Computing directly from fTempo is immune to this and tracks live
+  // tempo changes automatically (runs every buffer).
+  //
+  // Formula: eighthSamples * eighthPerCycle (full cycle period, matching
+  // what the pulse scanner measures between cycle boundaries).  Note: NOT
+  // divided by 2 — syncSamples uses /2 for quantize-period purposes, but
+  // lLastSyncPeriodSamples must be the full cycle for effectiveLateHitWindow
+  // to compute fractionLimit = g_late_hit_max_8th_fraction * one_eighth_note.
+  //
+  // Gated on fSyncMode: completely inactive when sync is disabled.  This
+  // means zero impact on JACK-mode usage without the sync checkbox.
+  if (fSyncMode >= 1.0f && fTempo > 0.0f && eighthPerCycle > 0) {
+      pLS->lLastSyncPeriodSamples =
+          (unsigned long)(pLS->fSampleRate * 30.0f / fTempo * (float)eighthPerCycle);
+  }
   //====== albEnd ====================================================================================
 
   lMultiCtrl = (int) *(pLS->pfMultiCtrl);
@@ -2224,15 +2245,30 @@ runSooperLooper(LADSPA_Handle Instance,
   // before any sync pulses it may contain.  Using the pre-scan snapshot avoids
   // a bug where a mid-buffer sync pulse would reset the counter and make a
   // genuinely-late press appear to be on-time (or vice versa).
-  unsigned int lGlobalSyncAtButtonPress = pLS->lGlobalSamplesSinceSync;
+  // C5 fix: widened from unsigned int to avoid 32-bit wrap-around at ~25h
+  // (2^32 samples / 48000 Hz = 89478 s).  lGlobalSyncAtButtonPress must
+  // match so T comparisons remain consistent.
+  unsigned long long lGlobalSyncAtButtonPress = pLS->lGlobalSamplesSinceSync;
 
   if (fSyncMode >= 1.0f) {
+	  // Sanity floor for period capture (C1 defence-in-depth).
+	  // Reject inter-pulse intervals shorter than one 32nd note at 300 BPM
+	  // (~1200 samples at 48 kHz).  Pulses arriving faster than this are
+	  // almost certainly loop-coordination 2.0f events at state transitions
+	  // (recording end, undo, etc.), not true tempo-clock boundaries.  The
+	  // floor prevents those from corrupting lLastSyncPeriodSamples.
+	  // When fTempo > 0 the authoritative value set in BLOCK 7 supersedes
+	  // anything written here, so the floor only matters when fTempo == 0.
+	  const unsigned long lMinPlausiblePeriod =
+	      (unsigned long)(pLS->fSampleRate / 40.0f);
 	  for (unsigned long n = 0; n < SampleCount; ++n) {
 		  pLS->lGlobalSamplesSinceSync++;
 		  if (pfSyncInput[n] > 1.5f) {
-			  pLS->lLastSyncPeriodSamples = pLS->lGlobalSamplesSinceSync; // capture before reset
-			  pLS->lGlobalSamplesSinceSync = 0;
-			  pLS->bSyncPulseReceived = true;
+			  if (pLS->lGlobalSamplesSinceSync >= lMinPlausiblePeriod) {
+				  pLS->lLastSyncPeriodSamples = pLS->lGlobalSamplesSinceSync;
+			  }
+			  pLS->lGlobalSamplesSinceSync = 0; // always reset on any pulse
+			  pLS->bSyncPulseReceived = true;   // always set on any pulse
 		  }
 	  }
   }
@@ -2307,7 +2343,7 @@ runSooperLooper(LADSPA_Handle Instance,
 			                               && loop != NULL);
 
 			      SYNCWDBG(SL_LOG_RT(
-					  "\n%u:%u  STOP button: lGlobalSyncAtButtonPress=%u  windowSamples=%lu"
+					  "\n%u:%u  STOP button: lGlobalSyncAtButtonPress=%llu  windowSamples=%lu"
 			          "  withinWindow=%d  (%.2f ms since boundary, window=%.1f ms)  dCurrPos=%g\n",
 			          pLS->lLoopIndex, pLS->lChannelIndex,
 			          lGlobalSyncAtButtonPress, shiftSamples,
@@ -2470,7 +2506,7 @@ runSooperLooper(LADSPA_Handle Instance,
 		                      && pLS->bSyncPulseReceived);
 
 		 SYNCWDBG(SL_LOG_RT(
-		     "\n%u:%u  RECORD button: lGlobalSyncAtButtonPress=%u  windowSamples=%lu"
+		     "\n%u:%u  RECORD button: lGlobalSyncAtButtonPress=%llu  windowSamples=%lu"
 		     "  withinWindow=%d  syncMode=%g  quantMode=%g"
 		     "  (%.2f ms since boundary, window=%.1f ms)\n",
 		     pLS->lLoopIndex, pLS->lChannelIndex,
@@ -2582,7 +2618,7 @@ runSooperLooper(LADSPA_Handle Instance,
 			 pLS->state = STATE_TRIG_START;
 			 SYNCWDBG(SL_LOG_RT(
 			     "%u:%u  Normal path: entering TRIG_START, will wait for next sync"
-			     " (%.2f ms since last boundary, lGlobalSyncAtButtonPress=%u)\n",
+			     " (%.2f ms since last boundary, lGlobalSyncAtButtonPress=%llu)\n",
 			     pLS->lLoopIndex, pLS->lChannelIndex,
 			     T * 1000.0f / pLS->fSampleRate,
 			     lGlobalSyncAtButtonPress));

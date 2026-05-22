@@ -1199,22 +1199,12 @@ Looper::run (nframes_t offset, nframes_t nframes)
 			_pending_event_offset = 0;
 		}
 
-		// Restore the original rate dispatch so that Rate != 1.0 still routes
-		// through run_loops_resampled (libsamplerate SRC).  Previously this dispatch
-		// was accidentally commented out when adding the TriggerLatency wrapper,
-		// silently bypassing SRC and falling back to the plain run_loops() path for
-		// all rate settings.  Restored here inside the wrapper so TriggerLatency
-		// save/restore applies correctly to both paths.
-		if (ports[Rate] == 1.0f) {
-			run_loops (offset, nframes);
-		}
-		else {
-#ifdef HAVE_SAMPLERATE
-			run_loops_resampled (offset, nframes);
-#else
-			run_loops (offset, nframes);
-#endif
-		}
+		// Note: run_loops_resampled (Rate != 1.0 SRC path) is not present in
+		// this build of looper.cpp; calling it causes a linker error.  The
+		// unconditional run_loops() call handles all Rate settings via dCurrPos
+		// stepping without SRC interpolation.  See item D3 in
+		// live_performance_review for the known-limitation note.
+		run_loops (offset, nframes);
 
 		// Restore — harmless no-op when _pending_event_offset was 0.
 		ports[TriggerLatency] = saved_trigger_latency;
