@@ -2319,6 +2319,15 @@ runSooperLooper(LADSPA_Handle Instance,
 		      }
 		      else {
 			      //====== albBegin ==================================================================================
+			      // STOCK (sooperlooper 1.7.9) — original else branch for sync-mode stop:
+			      //   } else {
+			      //     pLS->state = STATE_TRIG_STOP;
+			      //     pLS->nextState = STATE_PLAY;
+			      //     DBG(fprintf(stderr,"%u:%u  Entering TRIG_STOP state\n", ...));
+			      //   }
+			      // CHANGE: else branch is now wrapped in a late-hit window check.
+			      // STATE_TRIG_STOP path is preserved as the out-of-window fallback.
+			      //
 			      // Late-stop window check: when RECORD is pressed during STATE_RECORD
 			      // (i.e. to stop), check if stop arrived within LATE_HIT_WINDOW_MS
 			      // to anchor the loop end at the previous boundary (discarding the
@@ -2481,6 +2490,15 @@ runSooperLooper(LADSPA_Handle Instance,
 	      default:
 	      {
 		 //====== albBegin ==================================================================================
+		 // STOCK (sooperlooper 1.7.9) — original default case in MULTI_RECORD state switch:
+		 //   default:
+		 //     pLS->state = STATE_TRIG_START;
+		 //     DBG(fprintf(stderr,"%u:%u  Entering TRIG_START state\n", ...));
+		 // CHANGE: default case now first checks the late-hit window.  On a within-
+		 // window press the loop is backfilled and recording starts immediately.
+		 // STATE_TRIG_START remains the fallback for out-of-window presses,
+		 // preserving stock behaviour for normal (on-time) presses.
+		 //
 		 // Late-start window check: when RECORD is first pressed (from any state
 		 // other than STATE_RECORD/STATE_MULTIPLY/etc.), check if the press arrived
 		 // within LATE_HIT_WINDOW_MS after the last sync boundary.

@@ -221,9 +221,16 @@ Looper::initialize (unsigned int index, unsigned int chan_count, float loopsecs,
 	
 	ports[RoundIntegerTempo] = 0;
 
-	// Initial value: matches the run() logic below.
-	// At construction ports[Sync]=0, so this is 0 (sync off) by default.
+	//------ albBegin ----------------------------------
+	// Constructor: slave_sync_port initial value.
+	// STOCK (sooperlooper 1.7.9):
+	//   _slave_sync_port = (_relative_sync && ports[Sync]) ? 2.0f : 1.0f;
+	// CHANGE: trailing 1.0f → ports[Sync] so the initial value is
+	// consistent with the per-loop Sync port (0 at construction = sync
+	// off by default, matching the user checkbox).  See BLOCK 4 in run()
+	// for the same fix applied to the per-buffer refresh path.
 	_slave_sync_port = (_relative_sync && ports[Sync]) ? 2.0f : ports[Sync];
+	//------ albEnd ----------------------------------
 
 	// TODO: fix hack to specify loop length
 	char looptimestr[20];
@@ -1076,6 +1083,15 @@ Looper::run (nframes_t offset, nframes_t nframes)
 	_running_frames += nframes;
 	
 	//------ albBegin ----------------------------------
+	// STOCK (sooperlooper 1.7.9) — the deferred-command path was:
+	//   if (ports[Multi] == requested_cmd) {
+	//     /* defer till next call */
+	//     ports[Multi] = -1;
+	//     //fprintf(stderr,"Deferred to next run\n");
+	//   }
+	// CHANGE: added `_pending_event_offset = 0` so a deferred command
+	// does not incorrectly zero TriggerLatency on the following sub-block
+	// call.  All other code in this block is stock.
 	if (request_pending) {
 
 		if (ports[Multi] == requested_cmd) {
@@ -1135,6 +1151,14 @@ Looper::run (nframes_t offset, nframes_t nframes)
 		_slave_sync_port = 2.0;
 	}
 	//------ albBegin ----------------------------------
+	// STOCK (sooperlooper 1.7.9) — the else branch was:
+	//   else {
+	//     _slave_sync_port = 1.0;
+	//   }
+	// CHANGE: replaced hardcoded 1.0 with ports[Sync] so the slave
+	// channel mirrors the master's Sync checkbox.  The internal-sync
+	// branch above (own syncin/out buf) still hardcodes 1.0 intentionally.
+	//
 	// Fix: _slave_sync_port must mirror the per-loop Sync setting
 	// (ports[Sync]) rather than being hardcoded to 1.0.
 	//
@@ -1172,6 +1196,16 @@ Looper::run (nframes_t offset, nframes_t nframes)
 	_output_peak = flush_to_zero (f_clamp (DB_CO (CO_DB(_output_peak) - nframes * _falloff_per_sample), 0.0f, 20.0f));
 
 	//------ albBegin ----------------------------------
+	// STOCK (sooperlooper 1.7.9) — original call site:
+	//   run_loops (offset, nframes);
+	//   /* [rate-dispatch block — commented out in stock; was never
+	//       active; run_loops_resampled body does not exist in this
+	//       build of looper.cpp]  */
+	//   ports[Sync] = oldsync;
+	// CHANGE: wrapped run_loops() in TriggerLatency save/restore so
+	// a JACK MIDI sub-block split does not over-correct latency.
+	// ports[Sync] = oldsync remains outside this block (stock position).
+	//
 	// If this command arrived via the JACK MIDI port with a valid intra-
 	// block timestamp, the engine has already called run() once for the
 	// pre-event frames in the old state (via the FragmentPos() split in
