@@ -69,8 +69,19 @@ struct TransportInfo
 };
 
 
+//------ albBegin ----------------------------------
+// STOCK (sooperlooper 1.7.9):
+//   class AudioDriver
+//   {
+// CHANGE: added sigc::trackable base class so that sigc++ slot
+// connections to AudioDriver-derived objects are automatically
+// cleaned up on destruction.  The stock class had no base; adding
+// sigc::trackable is a safe, source-compatible change since it
+// adds no data members and the existing ConnectionsChanged signal
+// member already benefits from it.
 class AudioDriver
 	: public sigc::trackable
+//------ albEnd ----------------------------------
 {
   public:
 

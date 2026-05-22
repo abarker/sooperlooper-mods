@@ -2488,7 +2488,6 @@ runSooperLooper(LADSPA_Handle Instance,
 		 // fall through to default for late-hit / normal handling
 		 
 	      default:
-	      {
 		 //====== albBegin ==================================================================================
 		 // STOCK (sooperlooper 1.7.9) — original default case in MULTI_RECORD state switch:
 		 //   default:
@@ -2498,7 +2497,9 @@ runSooperLooper(LADSPA_Handle Instance,
 		 // window press the loop is backfilled and recording starts immediately.
 		 // STATE_TRIG_START remains the fallback for out-of-window presses,
 		 // preserving stock behaviour for normal (on-time) presses.
-		 //
+		 // NOTE: the { on the next line adds the scope that BLOCK 10 requires
+		 // for its local variables.  Stock default: had no surrounding brace.
+		 {
 		 // Late-start window check: when RECORD is first pressed (from any state
 		 // other than STATE_RECORD/STATE_MULTIPLY/etc.), check if the press arrived
 		 // within LATE_HIT_WINDOW_MS after the last sync boundary.
@@ -2643,8 +2644,8 @@ runSooperLooper(LADSPA_Handle Instance,
 			 DBG(fprintf(stderr, "%u:%u  Entering TRIG_START state\n",
 			             pLS->lLoopIndex, pLS->lChannelIndex));
 		 }
+		 }
 		 //====== albEnd ====================================================================================
-	      }
 	   }
 	} break;
 
