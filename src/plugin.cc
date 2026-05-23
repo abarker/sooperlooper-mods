@@ -908,6 +908,7 @@ activateSooperLooper(LADSPA_Handle Instance) {
   pLS->lGlobalSamplesSinceSync = 0;
   pLS->bSyncPulseReceived = false;
   pLS->lLastSyncPeriodSamples = ULONG_MAX; // sentinel: no period measured yet
+  pLS->bLateHitBypassed = false;           // C2 fix: set each buffer by Looper::run()
   //====== albEnd ========
   
   clearLoopChunks(pLS);
@@ -2345,11 +2346,14 @@ runSooperLooper(LADSPA_Handle Instance,
 			      // Quantize only controls the subdivision for internal sync
 			      // and Rel Sync.  With no sync source (fSyncMode == 0) or when
 			      // no pulse has arrived (T is huge), the window never fires.
+			      // C2 fix: bLateHitBypassed prevents late-hit firing on slave
+			      // channels in internal sync mode; see Looper::run() BLOCK 5.
 			      bool stopWithinWindow = (T > 0
 			                               && T <= shiftSamples
 			                               && fSyncMode > 0.0f
 			                               && pLS->bSyncPulseReceived
-			                               && loop != NULL);
+			                               && loop != NULL
+			                               && !pLS->bLateHitBypassed);
 
 			      SYNCWDBG(SL_LOG_RT(
 					  "\n%u:%u  STOP button: lGlobalSyncAtButtonPress=%llu  windowSamples=%lu"
@@ -2519,10 +2523,13 @@ runSooperLooper(LADSPA_Handle Instance,
 		 // sync the snap point is always the incoming pulse regardless of
 		 // quantize setting.  With no sync source (fSyncMode == 0) T grows
 		 // without bound and the window never fires.
+		 // C2 fix: bLateHitBypassed prevents late-hit firing on slave
+		 // channels in internal sync mode; see Looper::run() BLOCK 5.
 		 bool withinWindow = (T > 0
 		                      && T <= shiftSamples
 		                      && fSyncMode > 0.0f
-		                      && pLS->bSyncPulseReceived);
+		                      && pLS->bSyncPulseReceived
+		                      && !pLS->bLateHitBypassed);
 
 		 SYNCWDBG(SL_LOG_RT(
 		     "\n%u:%u  RECORD button: lGlobalSyncAtButtonPress=%llu  windowSamples=%lu"
@@ -2801,11 +2808,14 @@ runSooperLooper(LADSPA_Handle Instance,
 					      // Same g_late_hit_window_ms and T as the Record stop path.
 					      {
 						      unsigned long shiftSamples = effectiveLateHitWindow(pLS, eighthPerCycle);
+						      // C2 fix: bLateHitBypassed prevents late-hit firing on slave
+						      // channels in internal sync mode; see Looper::run() BLOCK 5.
 						      bool multStopInWindow = (T > 0
 							                              && T <= shiftSamples
 							                              && fSyncMode > 0.0f
 							                              && pLS->bSyncPulseReceived
-							                              && loop->lCycles >= 2);
+							                              && loop->lCycles >= 2
+							                              && !pLS->bLateHitBypassed);
 						      SYNCWDBG(SL_LOG_RT(
 							      "%u:%u  MultiplyEnd: T=%lu shiftSamples=%lu lCycles=%lu"
 							      " withinWindow=%d syncMode=%g\n",

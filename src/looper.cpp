@@ -1191,6 +1191,44 @@ Looper::run (nframes_t offset, nframes_t nframes)
 #endif
 	//------ albEnd ----------------------------------
 
+	//------ albBegin ----------------------------------
+	// C2 fix: set bLateHitBypassed on each plugin instance before
+	// run_loops() is called.  In internal sync mode (this loop uses its
+	// own sync buffers), the master channel (index 0) has fSyncMode=0
+	// (ports[Sync] forced to 0.0f above) and always takes the immediate
+	// start/stop path.  Slave channels (index > 0) have fSyncMode=1
+	// (_slave_sync_port = 1.0f) and the late-hit window check can fire,
+	// causing the slave to be backfilled to the previous sync boundary
+	// while the master already started at the press time.  The result is
+	// L/R divergence of up to g_late_hit_window_ms on the stereo pair.
+	//
+	// Fix: when in internal sync mode, set bLateHitBypassed=true on all
+	// slave instances so the withinWindow checks in BLOCKS 9, 10, 11 of
+	// plugin.cc evaluate to false.  Both channels then take the immediate
+	// path — identical to stock SooperLooper behaviour, which already
+	// achieves sample-accurate alignment via the master's pfSyncOutput
+	// pulse on STATE_RECORD entry.
+	//
+	// This flag is always false in JACK sync mode because the internal
+	// sync condition (_use_sync_buf == _our_syncin_buf ||_our_syncout_buf)
+	// is never true there: zero JACK regression risk.
+	//
+	// looper.cpp already includes plugin.hpp (for port-index enums), so
+	// the cast from LADSPA_Handle to SooperLooperI* is safe and avoids
+	// the need for a new LADSPA port or cross-file accessor function.
+	// ORIGINAL STOCK CODE AT THIS LOCATION: none — purely additive.
+	{
+		const bool inInternalSync =
+			(_use_sync_buf == _our_syncin_buf ||
+			 _use_sync_buf == _our_syncout_buf);
+		for (unsigned int i = 0; i < _chan_count; ++i) {
+			SooperLooperI* pLS =
+				static_cast<SooperLooperI*>(_instances[i]);
+			pLS->bLateHitBypassed = inInternalSync && (i > 0);
+		}
+	}
+	//------ albEnd ----------------------------------
+
 	// do fixed peak meter falloff
 	_input_peak = flush_to_zero (f_clamp (DB_CO (CO_DB(_input_peak) - nframes * _falloff_per_sample), 0.0f, 20.0f));
 	_output_peak = flush_to_zero (f_clamp (DB_CO (CO_DB(_output_peak) - nframes * _falloff_per_sample), 0.0f, 20.0f));

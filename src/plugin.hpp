@@ -318,8 +318,21 @@ typedef struct {
 	// apply an optional fraction-of-eighth cap that tracks live tempo.
 	unsigned long lLastSyncPeriodSamples;
 	//------ albEnd ----------------------------------
-	
-	
+
+	//------ albBegin ----------------------------------
+	// C2 fix: per-channel bypass flag set by Looper::run() each buffer.
+	// True on slave channels (index > 0) when the loop uses its own
+	// sync buffers (internal sync mode).  Gates the three withinWindow
+	// checks in BLOCKS 9, 10, 11 of plugin.cc: when true, the late-hit
+	// correction is skipped, preventing stereo divergence between a
+	// master channel (fSyncMode=0, always immediate) and its slave
+	// (fSyncMode=1, late-hit could otherwise fire).
+	// In JACK sync mode this flag is always false: zero JACK regression
+	// risk.  calloc() zeroes the struct so default is false; BLOCK 6
+	// in plugin.cc also sets it explicitly for clarity.
+	bool bLateHitBypassed;
+	//------ albEnd ----------------------------------
+
 	/* Ports:
 	   ------ */
 
