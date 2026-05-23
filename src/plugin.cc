@@ -225,7 +225,7 @@ static void sl_dbg_open() {
 // SYNCWDEBUG: per-press sync timing diagnostics.
 // Comment out #define SYNCWDEBUG to suppress per-press log messages.
 // SL_LOG startup banners are unaffected and always appear.
-#define SYNCWDEBUG
+//#define SYNCWDEBUG
 #ifdef SYNCWDEBUG
 #define SYNCWDBG(x) x
 #else
