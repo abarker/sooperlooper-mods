@@ -39,6 +39,18 @@ this codebase.  Recommendations are stated as direction, not as code.
 Executive summary
 ==================
 
+**Status at a glance** (most recent revision)::
+
+  C1  ✓ DONE    C2  ✓ DONE    C3  DEFERRED  C4  N/A      C5  ✓ DONE
+  C6  OPEN      C7  OPEN      C8  OPEN       C9  OPEN     C10 OPEN
+  C1a OPEN
+
+  H1  OPEN      H2  N/A       H3  N/A        H4  OPEN (small fix)
+
+  R1  ACCEPTED  R2  OPEN      R3  OPEN        R4  OPEN     R5  OPEN
+
+  D1  OPEN      D2  OPEN      D3  N/A         D4  OPEN     D5  ✓ DONE
+
 The modifications fall into three families.  Each family has distinct
 risk characteristics:
 
@@ -96,6 +108,8 @@ C1: ``lLastSyncPeriodSamples`` pollution by loop-coordination pulses
 --------------------------------------------------------------------
 
 **Severity**: CRITICAL.  **Live impact**: 5.  **Confidence**: HIGH (observed).
+
+**Status**: ✓ IMPLEMENTED — see section for implementation details.
 
 **Where**: plugin.cc BLOCK 8 (sync-pulse scanner) and BLOCK 3
 (``effectiveLateHitWindow``).
@@ -189,6 +203,8 @@ C1a: BLOCK 7 / BLOCK 8 ordering refinement (follow-up to C1)
 
 **Severity**: LOW.  **Live impact**: 1 (narrow within-buffer race).
 **Confidence**: HIGH.
+
+**Status**: OPEN — one-condition wrap, zero risk; deferred.
 
 **Where**: plugin.cc BLOCK 8 (pulse-period capture).
 
@@ -298,6 +314,8 @@ C3: JACK client disconnect / reconnect — no handling
 **Severity**: CRITICAL.  **Live impact**: 5 (if JACK restarts during
 a gig).  **Confidence**: HIGH.
 
+**Status**: DEFERRED — peer apps crash similarly on JACK restart; error reporting deemed sufficient.
+
 **Where**: engine.cpp BLOCK 7 (port registration in ``initialize()``).
 No teardown / re-registration code anywhere.
 
@@ -343,6 +361,8 @@ C4: JACK MIDI events silently dropped on binding-lock contention
 **Severity**: LOW (analysed and dropped from active work).
 **Live impact**: effectively 0 in normal use.  **Confidence**: HIGH.
 
+**Status**: N/A — analysed and removed from active list; see section.
+
 **Original concern**: ``MidiBridge::inject_midi()`` in the RT callback
 uses a ``TentativeLockMonitor`` on ``_bindings_lock``.  If the main
 thread holds the lock (binding modification), a MIDI event is silently
@@ -383,6 +403,8 @@ C5: ``lGlobalSamplesSinceSync`` overflow after ~25 hours
 
 **Severity**: CRITICAL.  **Live impact**: 1–2 (long rehearsals / festival
 all-day sessions only).  **Confidence**: HIGH.
+
+**Status**: ✓ IMPLEMENTED — widened to ``unsigned long long``.
 
 **Where**: plugin.hpp (field type ``unsigned int``) and plugin.cc
 BLOCK 8 (increment site).
@@ -434,6 +456,8 @@ C6: ``bSyncPulseReceived`` never reset on sync-source change
 
 **Severity**: HIGH.  **Live impact**: 2.  **Confidence**: MEDIUM.
 
+**Status**: OPEN.
+
 **Where**: plugin.cc BLOCK 8 sets the flag; BLOCK 6 resets it only in
 ``activate()``.  No path resets it on sync-source change.
 
@@ -465,6 +489,8 @@ C7: ``_pending_event_offset`` ordering vs. multiple events per buffer
 
 **Severity**: HIGH.  **Live impact**: 2 (only with multiple MIDI events
 per buffer).  **Confidence**: MEDIUM.
+
+**Status**: OPEN.
 
 **Where**: looper.cpp BLOCK 2 sets ``_pending_event_offset`` in
 ``do_event()``.  Engine calls ``do_event()`` once per dequeued event,
@@ -506,6 +532,8 @@ C8: ``pushNewLoopChunk`` failure recovery is silent
 **Severity**: HIGH.  **Live impact**: 2–3 (only on memory exhaustion).
 **Confidence**: HIGH.
 
+**Status**: OPEN.
+
 **Where**: plugin.cc BLOCK 10 (late-start failure path) — now goes to
 ``STATE_OFF`` instead of crashing.
 
@@ -532,6 +560,8 @@ C9: Backfill audio is stale if input was silent before press
 -------------------------------------------------------------
 
 **Severity**: MEDIUM.  **Live impact**: 2.  **Confidence**: HIGH.
+
+**Status**: OPEN.
 
 **Where**: plugin.cc BLOCK 10 (backfill loop reads from
 ``pfInputLatencyBuf``).
@@ -570,6 +600,8 @@ C10: ``loop->lLoopStart + i`` aliasing concern in backfill
 
 **Severity**: MEDIUM.  **Live impact**: 1.  **Confidence**: MEDIUM.
 
+**Status**: OPEN.
+
 **Where**: plugin.cc BLOCK 10 backfill copy loop.
 
 **Mechanism**: the backfill writes ``T`` samples into
@@ -604,6 +636,8 @@ H1: MIDI Start and first Clock at the same frame offset
 
 **Severity**: HIGH.  **Live impact**: 2.  **Confidence**: HIGH.
 
+**Status**: OPEN.
+
 **Where**: engine.cpp BLOCK 9 (JACK MIDI output generation).
 
 **Mechanism**: when transport transitions from stopped to rolling:
@@ -633,52 +667,47 @@ and skip the first clock tick of the buffer entirely.
 H2: Clock continues firing when transport is stopped
 -----------------------------------------------------
 
-**Severity**: HIGH.  **Live impact**: 2–3.  **Confidence**: HIGH.
+**Severity**: N/A — confirmed intentional, matching ALSA.
+**Status**: analysed and closed.
 
-**Where**: engine.cpp BLOCK 9.
+The JACK clock path (BLOCK 9) generates ticks whenever ``_tempo > 0``,
+regardless of transport rolling state.  This was noted as a possible
+issue and marked for verification against the ALSA clock thread.
 
-**Mechanism**: the clock-tick generation is gated by
-``if (_tempo > 0.0)`` only.  When transport is stopped, ``_tempo``
-typically remains non-zero (the engine remembers the last tempo).
-So clock ticks continue to be emitted to ``midi_out`` even though
-no MIDI Start is active.
+**Verification result**: the ALSA clock thread in ``MidiBridge`` runs
+continuously at whatever tempo was last given to it via
+``tempo_clock_update()``.  It has no awareness of JACK transport state
+and does not gate on rolling.  When JACK transport stops, the
+``ALB_TEMPO_ONLY_WHEN_ROLLING`` guard (engine.cpp BLOCK 11) prevents
+a new ``set_tempo()`` call from the JackSync branch, so the MidiBridge
+thread simply continues clocking at the last known tempo — exactly
+what the JACK path does.
 
-The comment in the block says this "matches the ALSA clock thread's
-behaviour".  That's worth verifying — many DAWs only emit MIDI clock
-between Start and Stop messages, and downstream devices often expect
-that protocol.
+Both paths are continuous clock when tempo is known.  The comment in
+BLOCK 9 ("matching the ALSA clock thread's behaviour") is accurate.
 
-**Why it matters live**: an external arpeggiator clocked from
-SooperLooper may "free-run" when the performer expects everything
-to stop.
+**One genuine JACK-only addition**: the JACK path sends MIDI Stop
+(0xFC) on transport stop transitions.  The ALSA path does not (it has
+no concept of transport state).  This makes the JACK output *more*
+correct than ALSA with respect to the MIDI spec, not less.
 
-**Direction for fix**: gate the clock generation on
-``_jack_transport_rolling`` (or equivalent "play-active" state) in
-addition to ``_tempo > 0``.  If the ALSA path really does free-run
-clock, leave a configurable switch.
+No action required.
 
 ------
 
 H3: ``_jack_clock_tick_phase`` not reset on transport stop
 -----------------------------------------------------------
 
-**Severity**: HIGH.  **Live impact**: 1 (only if H2 is fixed).
-**Confidence**: HIGH.
+**Severity**: N/A — non-issue given H2 analysis.  **Status**: closed.
 
-**Where**: engine.cpp BLOCK 9.
+Since the clock runs continuously (H2 confirmed), not resetting phase
+on stop is correct and consistent.  An explicit ``= 0.0`` on stop
+would be harmless but serves no purpose while the clock is running.
+The asymmetry (start resets phase, stop does not) is intentional: the
+phase carries across the stop/start gap so that downstream devices
+which continue to count ticks stay in phase.
 
-**Mechanism**: phase resets to 0 on start, not on stop.  If clocks
-are gated to rolling-only (H2 fix), the next start should reset
-phase to 0 again — already done on start.  If clocks continue while
-stopped (current behaviour), no reset is needed.
-
-Today this is essentially a no-op concern, listed only because the
-state machine is asymmetric: start does X, stop does not do anti-X.
-Asymmetry is a smell that pays off if a future change subtly relies
-on phase being zero "after a stop".
-
-**Direction for fix**: explicit ``= 0.0`` on stop transition.  One
-line, defensive only.
+No action required.
 
 ------
 
@@ -687,20 +716,44 @@ H4: ``jack_midi_event_write`` return value never checked
 
 **Severity**: MEDIUM.  **Live impact**: 1.  **Confidence**: HIGH.
 
-**Where**: engine.cpp BLOCK 9.
+**Status**: OPEN — small fix recommended (explicit buffer-size ``#define``); see below.
 
-**Mechanism**: ``jack_midi_event_write`` returns non-zero if the
-buffer is full.  The current code ignores this.  In practice the
-JACK MIDI output buffer (~4 KB default) holds hundreds of one-byte
-events, and clock generation produces at most 5–10 events per buffer
-at extreme tempos — so the buffer never fills in any plausible scenario.
+**Where**: engine.cpp BLOCK 9 (clock write loop) and BLOCK 6 (port
+registration).
 
-The concern is hygiene: silent drop with no log is bad practice and
-could surface as a confusing bug if future changes blast many events
-per buffer (e.g. controller feedback streams).
+**Mechanism**: ``jack_midi_event_write`` returns non-zero if the MIDI
+output buffer is full.  The current code ignores this.  In practice the
+JACK MIDI buffer holds far more data than the clock path ever produces:
+at the most demanding realistic case (300 BPM, 512-sample buffer,
+48 kHz) the clock loop emits about 5 one-byte events per buffer.  Each
+JACK MIDI event consumes approximately 9 bytes of buffer space (JACK's
+internal framing overhead + 1 byte of data), so the maximum usage is
+~45 bytes per buffer.  The default JACK MIDI buffer is typically 4 KB,
+giving ~90× headroom.
 
-**Direction for fix**: check the return; on non-zero, increment a
-drop counter and log once.  Optional.
+**Direction for fix**: make the buffer capacity explicit rather than
+relying on the JACK default.  Add a ``#define`` at the top of the BLOCK
+6 area in engine.cpp and pass it to ``jack_port_register``::
+
+    #ifndef SL_JACK_MIDI_OUT_BUFSIZE
+    #define SL_JACK_MIDI_OUT_BUFSIZE 4096
+    #endif
+    // ...
+    _jack_midi_out_port = jack_port_register(jclient, "midi_out",
+                                             JACK_DEFAULT_MIDI_TYPE,
+                                             JackPortIsOutput,
+                                             SL_JACK_MIDI_OUT_BUFSIZE);
+
+With an explicit 4096-byte request and a documented worst-case usage
+of ~45 bytes, the return value check becomes a formal no-op and can
+be added as a debug assertion without cluttering the live path::
+
+    if (jack_midi_event_write(buf, offset, &byte, 1) != 0) {
+        // should never happen with SL_JACK_MIDI_OUT_BUFSIZE bytes
+    }
+
+A warning to the debug log is not worth the effort for the expected
+failure rate of zero.
 
 
 High-priority issues — RT safety
@@ -709,42 +762,31 @@ High-priority issues — RT safety
 R1: ``SL_LOG_RT`` still uses ``fprintf`` to a buffered ``FILE *``
 -----------------------------------------------------------------
 
-**Severity**: MEDIUM.  **Live impact**: 1–2.  **Confidence**: HIGH.
+**Severity**: MEDIUM.  **Live impact**: 0 in release builds, 1–2 in
+debug builds.  **Confidence**: HIGH (xruns confirmed in testing).
+
+**Status**: ACCEPTED — confirmed xrun source in ``SYNCWDEBUG`` debug
+builds.  Accepted as the known cost of enabling debug output.  Zero
+impact in release builds (``SYNCWDEBUG`` undefined).
 
 **Where**: plugin.cc BLOCK 1 (``SL_LOG_RT`` macro), called from
 inside ``SYNCWDBG(...)`` in BLOCKS 9, 10, 11.
 
-**Mechanism**: ``fflush`` was removed, which fixes the worst case.
-But ``fprintf`` itself is not RT-safe in any technical sense:
+**Mechanism**: ``fprintf`` is not RT-safe — it acquires a per-``FILE``
+lock (``flockfile``) and eventually triggers a ``write()`` syscall when
+the stdio buffer fills.  Both can block the RT thread.  Xruns were
+observed and confirmed to disappear when ``SYNCWDEBUG`` was commented
+out.
 
-- It takes a per-``FILE`` lock (most libc implementations use
-  ``flockfile``).  Under normal use this lock is uncontested, but if
-  another thread is reading the file (e.g. ``tail -f``), it could
-  block briefly.
-- The stdio buffer (typically 8 KB) eventually fills and triggers a
-  ``write()`` syscall, which is unbounded.
+The truly safe fix (SPSC ring buffer drained by a non-RT thread,
+~60 lines) was evaluated and consciously declined: the effort is
+disproportionate to the benefit since the issue only manifests in
+debug builds.
 
-In practice on Linux with this codebase (no other writers, single
-RT thread, infrequent log lines), the syscall fires once every
-~hundreds of calls and completes in microseconds.  Real-world xrun
-risk is very low — far below the original ``fflush`` cost.
+**Accepted state**: comment out ``#define SYNCWDEBUG`` or undefine
+it at compile time for any performance build.  The macro is a
+compile-time switch with zero cost when off.
 
-The truly safe fix is a lock-free ring buffer drained by a non-RT
-thread.  Worth doing only if observed xruns trace back to logging,
-which (per recent testing) they don't.
-
-**Direction for fix**:
-
-a) **Accept the current state**: ``SL_LOG_RT`` is a debug-only macro
-   and ``SYNCWDEBUG`` is intended to be ``#undef``'d for release.
-   Document this in the build configuration.
-
-b) **Lock-free path**: replace ``fprintf`` with ``snprintf`` into a
-   pre-allocated SPSC ring buffer; spawn a non-RT thread to drain.
-   Higher engineering cost; reserve for if R1 becomes a measured xrun
-   cause.
-
-------
 
 R2: ``sl_dbg_open`` data race (residual)
 -----------------------------------------
@@ -752,6 +794,8 @@ R2: ``sl_dbg_open`` data race (residual)
 **Severity**: LOW.  **Live impact**: 1.  **Confidence**: HIGH.
 
 **Where**: plugin.cc BLOCK 1.
+
+**Status**: OPEN — one-line fix (``std::call_once``); low priority.
 
 **Mechanism**: the previously identified two-channel race on
 ``sl_dbg_open()`` is reduced by ``SL_LOG_RT`` (which doesn't call
@@ -773,6 +817,8 @@ R3: ``ALB_RT_SAFE_COND_SIGNAL`` suppresses signal — main-loop responsiveness d
 ------------------------------------------------------------------------------------------------
 
 **Severity**: MEDIUM.  **Live impact**: 2.  **Confidence**: MEDIUM.
+
+**Status**: OPEN.
 
 **Where**: engine.cpp BLOCKS 10, 13, 14 (signal sites);
 ``pthread_cond_timedwait`` in the main event loop (stock code).
@@ -806,6 +852,8 @@ R4: ``ALB_TEMPO_ONLY_WHEN_ROLLING`` skips tempo updates when stopped
 
 **Severity**: MEDIUM.  **Live impact**: 2.  **Confidence**: HIGH.
 
+**Status**: OPEN — needs confirmation; may already work.
+
 **Where**: engine.cpp BLOCK 12.
 
 **Mechanism**: when transport is stopped, ``set_tempo()`` is not
@@ -836,6 +884,8 @@ R5: ``Engine`` constructor null-init of JACK members not atomic
 
 **Severity**: LOW.  **Live impact**: 1.  **Confidence**: MEDIUM.
 
+**Status**: OPEN — one-line comment; lowest priority.
+
 **Where**: engine.cpp BLOCK 5 (constructor init).
 
 **Mechanism**: the constructor sets ``_jack_midi_in_port = nullptr``
@@ -860,6 +910,8 @@ D1: ``g_late_hit_window_ms`` as a file-scope global
 
 **Severity**: LOW.  **Live impact**: 1.  **Confidence**: HIGH.
 
+**Status**: OPEN — future enhancement.
+
 **Where**: plugin.cc BLOCK 1.
 
 The handoff documents the rationale: avoid the LADSPA port system
@@ -880,6 +932,8 @@ D2: ``SYNCWDEBUG`` is compile-time, not runtime
 
 **Severity**: LOW.  **Live impact**: 1.  **Confidence**: HIGH.
 
+**Status**: OPEN — future enhancement.
+
 **Where**: plugin.cc BLOCK 2.
 
 Toggling debug verbosity requires recompile + restart.  For a
@@ -897,6 +951,8 @@ D3: Rate ≠ 1.0 playback uses ``run_loops`` without SRC interpolation
 
 **Severity**: LOW (stock behaviour).  **Live impact**: 1.
 **Confidence**: HIGH.
+
+**Status**: N/A — confirmed stock behaviour; not a regression.
 
 **Where**: looper.cpp BLOCK 5; original stock ``Looper::run()``.
 
@@ -954,6 +1010,8 @@ D4: No regression test infrastructure
 **Severity**: LOW.  **Live impact**: 1 (compounds future changes).
 **Confidence**: HIGH.
 
+**Status**: OPEN — future work.
+
 There are no automated tests for any of the new behaviour: late-hit,
 JACK MIDI in/out, TriggerLatency zeroing, slave sync.  Each change
 has been validated by hand-testing.  This is appropriate for the
@@ -970,6 +1028,8 @@ D5: ``albBegin``/``albEnd`` blocks mix new and modified code
 -------------------------------------------------------------
 
 **Severity**: LOW.  **Live impact**: 0.  **Confidence**: HIGH.
+
+**Status**: ✓ IMPLEMENTED across all eight modified files.
 
 The block convention is good for marking patch surface but
 inconsistent in practice — some blocks contain only new code (clean
@@ -1055,19 +1115,22 @@ down are appropriate for the next maintenance cycle.
    match; format specifiers updated.
 7. **C6** — reset late-hit state on sync-source change.  Affects
    set-change workflows.
-8. **H1**, **H2**, **H3** — JACK MIDI clock ordering and gating.
-   Affects any setup feeding external clock-driven devices.
-9. **R4** — verify OSC tempo changes propagate when transport is
-   stopped (may already work, just needs confirmation).
+8. **H1** — MIDI Start + first clock at same offset.  Still open;
+   small one-line fix in engine.cpp BLOCK 9.
+   **H2** N/A — confirmed matches ALSA continuous-clock behaviour.
+   **H3** N/A — follows H2; no action needed.
+9. **H4** — make MIDI out buffer size explicit via
+   ``#define SL_JACK_MIDI_OUT_BUFSIZE 4096`` passed to
+   ``jack_port_register``; documents the safety margin.  Small change.
+10. **R4** — verify OSC tempo changes propagate when transport is
+    stopped (may already work, just needs confirmation).
 
 **Maintenance / hygiene**:
 
-10. **C1a** — gate BLOCK 8 period capture on ``fTempo == 0.0f`` so
-    BLOCK 7 and BLOCK 8 are mutually exclusive (follow-up to C1).
-11. **C7** — audit ``do_event`` / ``run`` pairing assumption.
-12. **C9** — input-non-silent tracking for backfill.
-13. **C10** — backfill safety comment.
-14. **H4** — check ``jack_midi_event_write`` returns.
+11. **C1a** — gate BLOCK 8 period capture on ``fTempo == 0.0f``.
+12. **C7** — audit ``do_event`` / ``run`` pairing assumption.
+13. **C9** — input-non-silent tracking for backfill.
+14. **C10** — backfill safety comment.
 15. **R2** — ``std::call_once`` for ``sl_dbg_open``.
 16. **R5** — engine constructor lifecycle comment.
 
@@ -1085,8 +1148,12 @@ down are appropriate for the next maintenance cycle.
     base-class addition in ``audio_driver.hpp`` was wrapped.  The trailing-
     space removal in ``plugin.cc`` is whitespace-only; eleven whitespace-
     normalisation lines in ``audio_driver.hpp`` are semantic no-ops.
-22. **R1** — lock-free log buffer (only if logging shows up as a
-    measured xrun source).
+22. **R1** — lock-free log buffer: confirmed xrun source.  ``SL_LOG_RT``
+    uses ``fprintf`` which acquires the C stdio mutex and makes a kernel
+    ``write()`` syscall — both can block the RT thread.  The ring-buffer
+    fix (~60 lines, engine.cpp drain) was evaluated and consciously
+    deferred: ``SYNCWDEBUG`` is a compile-time flag, so xruns only occur
+    in debug builds.  Accepted as the known cost of enabling that mode.
 
 ------
 
