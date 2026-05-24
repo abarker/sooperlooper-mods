@@ -284,16 +284,6 @@ bool Engine::initialize(AudioDriver * driver, int buschans, int port, string pin
 	// Requires AudioDriver::get_jack_client() to be implemented by the
 	// JackDriver subclass. Non-JACK builds return nullptr and the block is
 	// skipped silently.
-	//
-	// H4 fix: explicit MIDI output buffer size so the safety margin is
-	// documented.  Worst case: ~5 one-byte clock events per buffer at
-	// extreme tempo (300 BPM / 512 samples / 48 kHz) = ~45 bytes used.
-	// 4096 bytes gives ~90x headroom.  JACK ignores buffer_size for
-	// input ports, so midi_in keeps the original 0 (default).
-	// STOCK: 0 (JACK default) for both ports.
-#ifndef SL_JACK_MIDI_OUT_BUFSIZE
-#  define SL_JACK_MIDI_OUT_BUFSIZE 4096
-#endif
 	{
 		jack_client_t * jclient = _driver->get_jack_client();
 		if (jclient) {
@@ -315,7 +305,7 @@ bool Engine::initialize(AudioDriver * driver, int buschans, int port, string pin
 				"midi_out",
 				JACK_DEFAULT_MIDI_TYPE,
 				JackPortIsOutput,
-				SL_JACK_MIDI_OUT_BUFSIZE);
+				0);
 			if (_jack_midi_out_port) {
 				cerr << "SooperLooper: JACK MIDI output port 'midi_out' registered." << endl;
 			} else {
@@ -2383,7 +2373,18 @@ void Engine::update_sync_source ()
 	
 	for (Instances::iterator i = _instances.begin(); i != _instances.end(); ++i)
 	{
+		//------ albBegin ----------------------------------
+		// STOCK (sooperlooper 1.7.9):
+		//   (*i)->use_sync_buf (sync_buf);
+		// C6 fix: also reset late-hit state so stale period measurements
+		// and pulse flags from the old sync source do not affect the first
+		// presses after a sync-source change.  reset_late_hit_state() is a
+		// no-op on the three fields that only exist in the patched build;
+		// it does not touch any stock state.  Safe: this function is always
+		// called from non-RT context (event loop or initialize()).
 		(*i)->use_sync_buf (sync_buf);
+		(*i)->reset_late_hit_state();
+		//------ albEnd ----------------------------------
 	}
 
 	_quarter_counter = 0;

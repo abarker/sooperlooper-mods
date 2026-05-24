@@ -42,7 +42,7 @@ Executive summary
 **Status at a glance** (most recent revision)::
 
   C1  ✓ DONE    C2  ✓ DONE    C3  DEFERRED  C4  N/A      C5  ✓ DONE
-  C6  OPEN      C7  N/A       C8  N/A        C9  OPEN     C10 OPEN
+  C6  ✓ DONE    C7  N/A       C8  N/A        C9  OPEN     C10 OPEN
   C1a OPEN
 
   H1  OPEN      H2  N/A       H3  N/A        H4  ✓ DONE
@@ -454,33 +454,33 @@ codebase but should be noted if 32-bit support is ever required.
 C6: ``bSyncPulseReceived`` never reset on sync-source change
 ------------------------------------------------------------
 
-**Severity**: HIGH.  **Live impact**: 2.  **Confidence**: MEDIUM.
+**Severity**: MEDIUM.  **Live impact**: 2.  **Confidence**: HIGH.
 
-**Status**: OPEN.
+**Status**: ✓ IMPLEMENTED — ``reset_late_hit_state()`` called from
+``Engine::update_sync_source()``.  See looper.cpp albBegin block and
+engine.cpp BLOCK in ``update_sync_source()``.
 
-**Where**: plugin.cc BLOCK 8 sets the flag; BLOCK 6 resets it only in
-``activate()``.  No path resets it on sync-source change.
+**Introduced by**: the late-hit patch entirely.  All three fields
+(``bSyncPulseReceived``, ``lGlobalSamplesSinceSync``,
+``lLastSyncPeriodSamples``) are patch-only additions; the stock code
+had no late-hit state to reset.
 
-**Mechanism**: the flag exists to prevent late-hit from firing before
-any real sync has been observed (since calloc-zeroed state would
-otherwise satisfy ``T <= shiftSamples`` spuriously).  If the user
-switches sync source mid-session (e.g. from JackSync to internal Loop 1,
-or to NoSync and back), the flag stays true.  ``lLastSyncPeriodSamples``
-carries over from the previous sync source.  ``lGlobalSamplesSinceSync``
-keeps running on its old value.
+**Fix**: ``Looper::reset_late_hit_state()`` (new method, additive):
 
-The next late-hit decision uses period data from the *old* sync source,
-which may be wildly wrong for the new one.
+- Sets ``lGlobalSamplesSinceSync = 0`` — T = 0 on first press after
+  source change; no correction fires.
+- Sets ``bSyncPulseReceived = false`` — ``withinWindow`` stays false
+  until a real pulse from the new source arrives.
+- Sets ``lLastSyncPeriodSamples = ULONG_MAX`` — sentinel; BLOCK 7
+  reseeds from ``fTempo`` on the very next buffer.
 
-**Why it matters live**: the performer changes sync source between
-songs (jam mode vs. metronome mode).  The first few presses after the
-switch can fire the late-hit incorrectly.
+``bLateHitBypassed`` is not reset here — BLOCK 5 in ``run()``
+overwrites it unconditionally every buffer; it self-corrects within
+one buffer period.
 
-**Direction for fix**: hook the sync-source change event (engine.cpp
-has ``update_sync_source()``) and call into each loop to reset
-``bSyncPulseReceived``, ``lGlobalSamplesSinceSync``, and
-``lLastSyncPeriodSamples`` (back to ULONG_MAX sentinel).  A
-straightforward additional path in engine.cpp.
+Called from ``update_sync_source()`` which is always non-RT (event
+loop or ``initialize()``).  Zero regression risk when sync source is
+stable: the method is never called if the source does not change.
 
 ------
 
@@ -1150,8 +1150,10 @@ down are appropriate for the next maintenance cycle.
 6. **C5** ✓ COMPLETED — ``lGlobalSamplesSinceSync`` widened to
    ``unsigned long long``; ``lGlobalSyncAtButtonPress`` widened to
    match; format specifiers updated.
-7. **C6** — reset late-hit state on sync-source change.  Affects
-   set-change workflows.
+7. **C6** ✓ COMPLETED — ``Looper::reset_late_hit_state()`` added;
+   called from ``Engine::update_sync_source()``.  Stale period data
+   and pulse flags from old sync source are cleared on every
+   sync-source change.
 8. **H1** — MIDI Start + first clock at same offset.  Still open;
    small one-line fix in engine.cpp BLOCK 9.
    **H2** N/A — confirmed matches ALSA continuous-clock behaviour.

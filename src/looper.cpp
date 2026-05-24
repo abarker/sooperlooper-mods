@@ -1297,6 +1297,38 @@ Looper::run (nframes_t offset, nframes_t nframes)
 }
 
 
+//------ albBegin ----------------------------------
+// C6 fix: reset the three late-hit state fields that are owned by the
+// patch (all introduced in plugin.hpp albBegin blocks; absent from
+// stock).  Called by Engine::update_sync_source() whenever the user
+// changes sync source so that period measurements and pulse flags
+// from the old source cannot affect the first presses on the new one.
+//
+// Safety: update_sync_source() is always called from non-RT context
+// (event-loop or initialize()); the JACK process callback is not
+// running concurrently.  No lock needed.
+//
+// After the reset:
+//   bSyncPulseReceived  = false  -> withinWindow stays false until a
+//                                   real pulse from the new source arrives
+//   lGlobalSamplesSinceSync = 0  -> T = 0 on first press; no correction
+//   lLastSyncPeriodSamples  = ULONG_MAX  -> sentinel; BLOCK 7 reseeds
+//                                   from fTempo on the very next buffer
+// bLateHitBypassed is NOT reset here: BLOCK 5 in run() overwrites it
+// unconditionally on every buffer, so it self-corrects within 10 ms.
+void
+Looper::reset_late_hit_state()
+{
+	for (unsigned int ci = 0; ci < _chan_count; ++ci) {
+		SooperLooperI * pLS = static_cast<SooperLooperI *>(_instances[ci]);
+		pLS->lGlobalSamplesSinceSync  = 0;
+		pLS->bSyncPulseReceived       = false;
+		pLS->lLastSyncPeriodSamples   = ULONG_MAX;
+	}
+}
+//------ albEnd ----------------------------------
+
+
 void
 Looper::run_loops (nframes_t offset, nframes_t nframes)
 {

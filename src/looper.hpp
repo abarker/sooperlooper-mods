@@ -102,6 +102,13 @@ class Looper
 	bool get_disable_latency_compensation () const { return _disable_latency; }
 
 	void set_samples_since_sync(nframes_t ssync);
+	//------ albBegin ----------------------------------
+	// C6 fix: reset late-hit state when the sync source changes so that
+	// stale period measurements and pulse flags from the old source do
+	// not affect the first few presses on the new source.
+	// Called from Engine::update_sync_source() — always non-RT.
+	void reset_late_hit_state();
+	//------ albEnd ----------------------------------
 	void set_replace_quantized(bool flag);
 
 	// called when some loop instance is being soloed, index says which instance (may not be us)
