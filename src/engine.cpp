@@ -135,7 +135,15 @@ Engine::Engine ()
 	_loading = false;
 
 	//------ albBegin ----------------------------------
-	// Null the JACK MIDI port handles; properly registered in initialize().
+	// Null-init the JACK MIDI members added by this patch.
+	// Lifecycle invariant: the JACK process callback is registered inside
+	// initialize() via jack_set_process_callback().  Between construction
+	// and the return of initialize() the RT thread is not yet running, so
+	// there is no concurrent reader of these fields during this window.
+	// The null values are therefore safe by construction, not by locking.
+	// If a future refactor registers the callback before initialize()
+	// completes, the nulls prevent crashes but MIDI output will be silently
+	// absent until the ports are registered — an acceptable fail-safe.
 	_jack_midi_in_port      = nullptr;
 	_jack_midi_out_port     = nullptr;
 	_jack_clock_tick_phase  = 0.0;

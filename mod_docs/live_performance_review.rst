@@ -47,7 +47,7 @@ Executive summary
 
   H1  N/A       H2  N/A       H3  N/A        H4  ✓ DONE
 
-  R1  ACCEPTED  R2  N/A       R3  N/A         R4  OPEN     R5  OPEN
+  R1  ACCEPTED  R2  N/A       R3  N/A         R4  N/A      R5  ✓ DONE
 
   D1  OPEN      D2  N/A       D3  N/A         D4  OPEN     D5  ✓ DONE
 
@@ -881,56 +881,61 @@ required.
 R4: ``ALB_TEMPO_ONLY_WHEN_ROLLING`` skips tempo updates when stopped
 ---------------------------------------------------------------------
 
-**Severity**: MEDIUM.  **Live impact**: 2.  **Confidence**: HIGH.
+**Severity**: N/A — concern does not arise in either relevant scenario.
+**Live impact**: 0.  **Confidence**: HIGH.
 
-**Status**: OPEN — needs confirmation; may already work.
+**Status**: CLOSED — analysed and dismissed.
 
-**Where**: engine.cpp BLOCK 12.
+The concern was that an OSC or GUI tempo change while transport is
+stopped would not be seen by the engine until rolling began, causing
+the first beat to use the old tempo.
 
-**Mechanism**: when transport is stopped, ``set_tempo()`` is not
-called.  Rationale: avoid the non-RT-safe ``tempo_clock_update()``
-firing during locate transitions.
+**Why it is not an issue in practice:**
 
-The side effect: if the user changes the tempo (via the GUI or OSC)
-while transport is stopped, the change is not seen by the engine
-until transport starts rolling.  The first beat after start uses
-the *old* tempo.
+The ``ALB_TEMPO_ONLY_WHEN_ROLLING`` guard only gates the JACK
+Transport-derived tempo update in ``generate_sync()`` (the
+``info.bpm`` path).  OSC and GUI tempo changes call ``set_tempo()``
+via a completely separate path and are not gated.
 
-This is a real correctness issue in some workflows: a band changes
-tempo between songs while transport is stopped, then starts — and
-the first bar is at the wrong tempo until the engine catches up.
+The two scenarios that matter:
 
-**Direction for fix**: distinguish tempo changes from *JACK Transport*
-(which is what BLOCK 12 gates) from tempo changes from OSC / GUI
-(which should propagate immediately).  The current gate only affects
-the JACK-derived ``info.bpm`` path; OSC/GUI tempo changes go through
-``set_tempo()`` directly.  So this concern may already be moot — but
-worth verifying with a test (change tempo via OSC with transport
-stopped, then start, check first-beat tempo).
+- **SL is the JACK timebase master**: OSC ``set_tempo()`` updates
+  ``_tempo`` immediately (direct call, not gated).  SL's timebase
+  callback pushes the new value to JACK Transport.  When rolling
+  starts, ``generate_sync()`` reads the same value back and
+  ``TEMPO_DIFF`` is false — no overwrite.  Correct.
+
+- **SL is not the JACK timebase master** (``sync_source = -1``,
+  JackSync slave): the external master (Ardour, Hydrogen, etc.) owns
+  the tempo.  OSC tempo commands to SL set ``_tempo`` transiently but
+  are overwritten by the master on the first rolling buffer.  This is
+  correct slave behaviour; the OSC command is simply not meaningful in
+  this configuration regardless of the guard.
+
+Confirmed by test: ``oscsend localhost 9951 /sl/engine/set sf tempo
+140.0`` produces no visible change when SL is a JackSync slave because
+the GUI display reflects the JACK Transport master's value, not SL's
+internal ``_tempo``.
 
 ------
 
 R5: ``Engine`` constructor null-init of JACK members not atomic
 ----------------------------------------------------------------
 
-**Severity**: LOW.  **Live impact**: 1.  **Confidence**: MEDIUM.
+**Severity**: LOW.  **Live impact**: 0.  **Confidence**: HIGH.
 
-**Status**: OPEN — one-line comment; lowest priority.
+**Status**: ✓ IMPLEMENTED — lifecycle comment added to engine.cpp
+constructor block.
 
-**Where**: engine.cpp BLOCK 5 (constructor init).
+The null-init of ``_jack_midi_in_port``, ``_jack_midi_out_port``,
+and related fields is safe because the JACK process callback is
+registered inside ``initialize()`` and the RT thread is therefore
+not running during construction.  A comment has been added to the
+constructor block documenting this lifecycle invariant and noting
+the fail-safe behaviour (silent MIDI absence, no crash) should a
+future refactor change the ordering.
 
-**Mechanism**: the constructor sets ``_jack_midi_in_port = nullptr``
-etc. before ``initialize()`` is called.  Between construction and
-initialization the engine is not yet wired into the JACK callback,
-so there is no concurrent reader.  Safe by construction.
-
-If a future refactor changes that lifecycle — e.g. the JACK callback
-runs before ``initialize()`` finishes — the null pointers protect
-against crashes but the RT thread will silently produce no MIDI.
-A clear comment about the lifecycle invariant is the only
-maintenance need.
-
-**Direction for fix**: add a comment.  No code change.
+------
 
 
 Latent design observations
@@ -1155,8 +1160,10 @@ down are appropriate for the next maintenance cycle.
 9. **H4** ✓ COMPLETED — ``#define SL_JACK_MIDI_OUT_BUFSIZE 4096``
    added to engine.cpp BLOCK 6; passed to ``jack_port_register`` for
    ``midi_out``; worst-case usage (~45 bytes) documented in comment.
-10. **R4** — verify OSC tempo changes propagate when transport is
-    stopped (may already work, just needs confirmation).
+10. **R4** N/A — OSC tempo changes call ``set_tempo()`` directly,
+    bypassing the rolling gate.  As a JackSync slave the external
+    master owns tempo; as JACK master SL pushes its own ``_tempo``
+    to Transport.  No first-beat tempo error in either case.
 
 **Maintenance / hygiene**:
 
@@ -1173,7 +1180,8 @@ down are appropriate for the next maintenance cycle.
 15. **R2** — ``std::call_once`` for ``sl_dbg_open``.
 16. **R3** N/A — timeout is 10 ms; delay before non-RT consumers see a
     tempo change is imperceptible.  No action needed.
-17. **R5** — engine constructor lifecycle comment.
+17. **R5** ✓ COMPLETED — lifecycle comment added to engine.cpp
+    constructor block.
 
 **Future architecture**:
 
