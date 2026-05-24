@@ -42,7 +42,7 @@ Executive summary
 **Status at a glance** (most recent revision)::
 
   C1  ✓ DONE    C2  ✓ DONE    C3  DEFERRED  C4  N/A      C5  ✓ DONE
-  C6  OPEN      C7  N/A       C8  OPEN       C9  OPEN     C10 OPEN
+  C6  OPEN      C7  N/A       C8  N/A        C9  OPEN     C10 OPEN
   C1a OPEN
 
   H1  OPEN      H2  N/A       H3  N/A        H4  OPEN (small fix)
@@ -534,32 +534,59 @@ change needed.
 C8: ``pushNewLoopChunk`` failure recovery is silent
 ---------------------------------------------------
 
-**Severity**: HIGH.  **Live impact**: 2–3 (only on memory exhaustion).
-**Confidence**: HIGH.
+**Severity**: LOW — theoretical only; triggering condition cannot occur
+at runtime.  **Live impact**: 0.  **Confidence**: HIGH.
 
-**Status**: OPEN.
+**Status**: CLOSED — existing STATE_OFF fix is correct and sufficient;
+no further action required.
 
-**Where**: plugin.cc BLOCK 10 (late-start failure path) — now goes to
-``STATE_OFF`` instead of crashing.
+**Reclassification from original assessment**
 
-**Mechanism**: the recent fix correctly avoids the
-``loop == NULL && state == STATE_PLAY`` crash by entering ``STATE_OFF``.
-But ``STATE_OFF`` is silent — the performer pressed RECORD, nothing
-happened, no LED feedback, no OSC notification.  They keep playing,
-unaware no recording happened.
+The original HIGH severity assumed this path could fire on mid-session
+memory exhaustion.  Code audit shows this is not the case.
 
-**Why it matters live**: a missed loop attempt mid-performance is
-catastrophic.  The performer needs an *immediate* indication that the
-attempt failed.
+**Memory model**: SooperLooper pre-allocates all storage at plugin
+instantiation via ``calloc``, in two fixed blocks:
 
-**Direction for fix**: emit a state-change event the GUI / OSC clients
-can subscribe to.  The existing event mechanism likely already supports
-this (the ``State`` output port changes); ensure that downstream
-clients distinguish "intended STATE_OFF (user pressed undo)" from
-"unexpected STATE_OFF (OOM)".  Adding a separate ``Error`` output port
-is heavier but unambiguous.
+- ``pSampleBuf``: the circular audio sample buffer.
+  Size = next power of 2 above ``SampleRate × fTotalSecs``.  Default
+  ``fTotalSecs = SAMPLE_MEMORY = 80.0`` seconds.  At 48 kHz:
+  ``2^22 = 4,194,304`` samples = **16 MB per channel** (32 MB for a
+  stereo pair).  No dynamic allocation ever occurs during recording.
 
-------
+- ``pLoopChunks``: a pre-allocated pool of ``MAX_LOOPS = 512``
+  ``LoopChunk`` structs (~200 bytes each, ~100 KB total).  This is a
+  **circular** pool — when the head reaches the last slot it wraps back
+  to the start, overwriting the oldest undo entry.  It cannot be
+  exhausted.
+
+**When does ``pushNewLoopChunk`` return NULL?**
+``ensureLoopSpace``, called with a NULL first argument (the only path
+``pushNewLoopChunk`` takes), picks the next slot from the circular pool
+and always returns it.  The only NULL return in ``ensureLoopSpace`` is
+in an unrelated branch (extending an existing loop beyond
+``lBufferSize``), which ``pushNewLoopChunk`` never enters.
+
+The sole condition under which ``pushNewLoopChunk`` could return NULL
+is if ``pLoopChunks`` itself is NULL — meaning the startup ``calloc``
+failed.  This is already detected at instantiation::
+
+    pLS->pLoopChunks = (LoopChunk *) calloc(MAX_LOOPS, sizeof(LoopChunk));
+    if (pLS->pLoopChunks == NULL) {
+        // plugin fails to load; error printed; descriptor returns NULL
+    }
+
+A machine that loaded SooperLooper successfully has already allocated
+all ~32 MB.  The failure path in BLOCK 10 is **unreachable at runtime
+under any realistic condition**.
+
+**Existing fix is correct**: entering ``STATE_OFF`` instead of
+``STATE_PLAY`` (which would crash on ``loop->srcloop`` with a NULL
+``loop``) is the right defensive response.  If the condition were
+somehow reached, ``STATE_OFF`` passes audio through without looping —
+safe graceful degradation.  A GUI notification would be nice but
+serves no practical purpose for an event that cannot occur.
+
 
 C9: Backfill audio is stale if input was silent before press
 -------------------------------------------------------------
@@ -1119,8 +1146,9 @@ down are appropriate for the next maintenance cycle.
 3. **C2** ✓ COMPLETED — ``bLateHitBypassed`` flag; slave late-hit
    disabled in internal sync mode; consistent with stock behaviour.
 4. **C4** N/A — analysed and dropped; see C4 section.
-5. **C8** — surface ``STATE_OFF`` recovery to the GUI so failed
-   recordings don't look like silent successes.
+5. **C8** N/A — reclassified.  ``pushNewLoopChunk`` cannot return NULL
+   at runtime; all memory is pre-allocated at startup.  The
+   ``STATE_OFF`` fix is correct and sufficient.  See C8 section.
 
 **Should-fix before extended use**:
 
