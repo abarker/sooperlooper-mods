@@ -45,11 +45,11 @@ Executive summary
   C6  OPEN      C7  N/A       C8  N/A        C9  OPEN     C10 OPEN
   C1a OPEN
 
-  H1  OPEN      H2  N/A       H3  N/A        H4  OPEN (small fix)
+  H1  OPEN      H2  N/A       H3  N/A        H4  ✓ DONE
 
   R1  ACCEPTED  R2  OPEN      R3  N/A         R4  OPEN     R5  OPEN
 
-  D1  OPEN      D2  OPEN      D3  N/A         D4  OPEN     D5  ✓ DONE
+  D1  OPEN      D2  N/A       D3  N/A         D4  OPEN     D5  ✓ DONE
 
 The modifications fall into three families.  Each family has distinct
 risk characteristics:
@@ -748,7 +748,8 @@ H4: ``jack_midi_event_write`` return value never checked
 
 **Severity**: MEDIUM.  **Live impact**: 1.  **Confidence**: HIGH.
 
-**Status**: OPEN — small fix recommended (explicit buffer-size ``#define``); see below.
+**Status**: ✓ IMPLEMENTED — explicit buffer size passed to
+``jack_port_register``; see engine.cpp BLOCK 6.
 
 **Where**: engine.cpp BLOCK 9 (clock write loop) and BLOCK 6 (port
 registration).
@@ -971,19 +972,13 @@ control port is the standard path.
 D2: ``SYNCWDEBUG`` is compile-time, not runtime
 ------------------------------------------------
 
-**Severity**: LOW.  **Live impact**: 1.  **Confidence**: HIGH.
+**Severity**: LOW.  **Live impact**: 0.  **Confidence**: HIGH.
 
-**Status**: OPEN — future enhancement.
+**Status**: N/A — not worth doing.
 
-**Where**: plugin.cc BLOCK 2.
-
-Toggling debug verbosity requires recompile + restart.  For a
-performance workflow, this is friction.
-
-**Direction**: replace ``#ifdef SYNCWDEBUG`` with a runtime boolean
-(possibly settable via OSC or session file).  The performance cost
-of an always-evaluated ``if (g_syncwdebug)`` guard around each call
-is negligible compared to the ``fprintf`` itself.
+Debugging at performance time is unlikely, and a recompile is fast
+when it is needed.  A runtime toggle adds complexity for negligible
+benefit.  The compile-time ``#define`` is the right mechanism.  Closed.
 
 ------
 
@@ -1161,9 +1156,9 @@ down are appropriate for the next maintenance cycle.
    small one-line fix in engine.cpp BLOCK 9.
    **H2** N/A — confirmed matches ALSA continuous-clock behaviour.
    **H3** N/A — follows H2; no action needed.
-9. **H4** — make MIDI out buffer size explicit via
-   ``#define SL_JACK_MIDI_OUT_BUFSIZE 4096`` passed to
-   ``jack_port_register``; documents the safety margin.  Small change.
+9. **H4** ✓ COMPLETED — ``#define SL_JACK_MIDI_OUT_BUFSIZE 4096``
+   added to engine.cpp BLOCK 6; passed to ``jack_port_register`` for
+   ``midi_out``; worst-case usage (~45 bytes) documented in comment.
 10. **R4** — verify OSC tempo changes propagate when transport is
     stopped (may already work, just needs confirmation).
 
@@ -1184,7 +1179,8 @@ down are appropriate for the next maintenance cycle.
 
 17. **D1** — promote ``g_late_hit_window_ms`` to a real port if
     runtime tuning is wanted.
-18. **D2** — runtime ``SYNCWDEBUG`` toggle.
+18. **D2** N/A — runtime ``SYNCWDEBUG`` toggle not worth the complexity;
+    recompile is fast enough when debug output is needed.
 19. **D3** — Rate ≠ 1.0 without SRC is stock SooperLooper behaviour,
     not a regression.  If SRC-quality rate shifting is wanted, it
     requires implementing ``run_loops_resampled`` from scratch.
