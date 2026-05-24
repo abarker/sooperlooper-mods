@@ -42,12 +42,12 @@ Executive summary
 **Status at a glance** (most recent revision)::
 
   C1  ✓ DONE    C2  ✓ DONE    C3  DEFERRED  C4  N/A      C5  ✓ DONE
-  C6  OPEN      C7  OPEN      C8  OPEN       C9  OPEN     C10 OPEN
+  C6  OPEN      C7  N/A       C8  OPEN       C9  OPEN     C10 OPEN
   C1a OPEN
 
   H1  OPEN      H2  N/A       H3  N/A        H4  OPEN (small fix)
 
-  R1  ACCEPTED  R2  OPEN      R3  OPEN        R4  OPEN     R5  OPEN
+  R1  ACCEPTED  R2  OPEN      R3  N/A         R4  OPEN     R5  OPEN
 
   D1  OPEN      D2  OPEN      D3  N/A         D4  OPEN     D5  ✓ DONE
 
@@ -487,42 +487,47 @@ straightforward additional path in engine.cpp.
 C7: ``_pending_event_offset`` ordering vs. multiple events per buffer
 ----------------------------------------------------------------------
 
-**Severity**: HIGH.  **Live impact**: 2 (only with multiple MIDI events
-per buffer).  **Confidence**: MEDIUM.
+**Severity**: N/A — verified safe by code audit.  **Live impact**: 0.
+**Confidence**: HIGH.
 
-**Status**: OPEN.
+**Status**: CLOSED — invariant holds; comment added to looper.cpp.
 
-**Where**: looper.cpp BLOCK 2 sets ``_pending_event_offset`` in
-``do_event()``.  Engine calls ``do_event()`` once per dequeued event,
-followed by one ``run()`` for that segment.
+**Verification**
 
-**Mechanism**: the engine event loop processes events in
-``FragmentPos()`` order and calls ``run()`` for each sub-block.  But
-the looper member ``_pending_event_offset`` is overwritten on each
-``do_event()`` call.  If two events fire in the same buffer with the
-same ``FragmentPos``, the second overwrites the first — fine.  But if
-the engine batches events (e.g. groups consecutive events at the same
-position), the offset reflects only the last one.
+The concern was that ``_pending_event_offset`` (set in ``do_event()``)
+might not be consumed by a subsequent ``run()`` before the end of the
+buffer, or might leak into the next callback and incorrectly zero
+``TriggerLatency`` for an ALSA event.
 
-More subtly: ``_pending_event_offset`` is reset to 0 inside
-``run()`` after use.  If ``do_event()`` is called *between* sub-blocks
-but the engine doesn't immediately call ``run()``, the offset persists
-across the next ``run()`` and may zero ``TriggerLatency`` for an
-ALSA-routed event (which should have used the full buffer correction).
+Audit of ``Engine::process()`` shows the invariant is structurally
+guaranteed:
 
-The handoff document claims the engine always calls ``run()`` after
-``do_event()`` for each event, but this needs verification — the
-behaviour is correctness-critical for trigger timing.
+1. For each event at ``fragpos = N``, the engine calls
+   ``run(usedframes, N - usedframes)`` **before** ``do_event(evt)``
+   (not after).  ``do_event()`` sets ``_pending_event_offset = N``.
 
-**Why it matters live**: rapid multi-press scenarios (e.g.
-double-tapping a foot switch to mute + record) could mis-time one
-of the events by up to one full buffer.
+2. After the last event, the engine unconditionally fires a final
+   ``run(usedframes, nframes - usedframes)`` for all instances — even
+   if ``nframes - usedframes == 0``.  That zero-length run still enters
+   BLOCK 5, which resets ``_pending_event_offset = 0``.
 
-**Direction for fix**: audit ``Engine::process()`` to confirm the
-``do_event() → run()`` pairing is strictly serial per event.  If it
-is, add a comment in looper.cpp documenting the invariant.  If it's
-not, the offset needs to be carried via the Event struct rather than
-stored on the Looper.
+3. ALSA/OSC events always have ``FragmentPos() == 0``, so
+   ``_pending_event_offset = 0`` after their ``do_event()``.  BLOCK 5's
+   gate (``if (_pending_event_offset > 0)``) is dormant; ``TriggerLatency``
+   is never incorrectly zeroed for ALSA events regardless of ordering.
+
+4. Multiple events at the same ``fragpos = N``: the intermediate
+   zero-length run between them resets ``_pending_event_offset = 0``, and
+   the following ``do_event()`` sets it back to ``N`` (same value).
+   Result is identical to a single event at that position.
+
+5. The "lingering offset contaminating next buffer" scenario cannot occur
+   because the unconditional final run always resets the value before the
+   JACK callback returns.
+
+**Action taken**: an invariant comment added to looper.cpp BLOCK 2
+(``do_event``) documenting items 1–5 and citing this analysis.  No code
+change needed.
 
 ------
 
@@ -816,34 +821,43 @@ channels concurrently from multiple threads.  Not the case here.
 R3: ``ALB_RT_SAFE_COND_SIGNAL`` suppresses signal — main-loop responsiveness depends on timeout
 ------------------------------------------------------------------------------------------------
 
-**Severity**: MEDIUM.  **Live impact**: 2.  **Confidence**: MEDIUM.
+**Severity**: N/A — timeout verified as 10 ms; delay is imperceptible.
+**Live impact**: 0.  **Confidence**: HIGH.
 
-**Status**: OPEN.
+**Status**: CLOSED — timeout confirmed, effect is negligible.
 
-**Where**: engine.cpp BLOCKS 10, 13, 14 (signal sites);
-``pthread_cond_timedwait`` in the main event loop (stock code).
+**Verification**
 
-**Mechanism**: signal suppression is correct for RT-safety, but
-makes the main event loop's polling interval (the ``timedwait``
-timeout) the upper bound on how fast tempo changes propagate to
-non-RT consumers (GUI, OSC replies, MIDI clock).
+The concern was that suppressing ``pthread_cond_signal`` would leave
+the main event loop waiting for its ``timedwait`` timeout before
+processing tempo changes, potentially causing noticeable GUI lag.
 
-If the timeout is short (~10–50 ms), this is invisible.  If long
-(~250 ms+), the user may see GUI lag after a tempo change.
+The actual timeout is **10 ms**, stated explicitly in the stock code::
 
-The actual timeout value is in stock code (``Engine::mainloop()``).
-Worth verifying before considering this fixed.
+    // wake up every 10 ms for servicing auto-update parameters
+    const long up_interval = AUTO_UPDATE_STEP * 1000; // 10ms
 
-**Direction for fix**:
+So the maximum delay from signal suppression before the main loop
+wakes is one timeout cycle: **10 ms**.
 
-a) **Verify the timeout** is short enough that suppression doesn't
-   add perceptible latency.  If it's not, shorten it.
+**What is delayed by up to 10 ms** (non-RT consumers):
 
-b) **Move signaling to a non-RT path**: when the RT thread detects
-   a tempo change, set ``_tempo_changed``; a non-RT thread polls
-   it (it already does via ``timedwait``).  This is exactly what's
-   already happening; the only question is the responsiveness of
-   the poll.
+- GUI OSC auto-update messages (tempo, loop state, positions).  The
+  GUI likely polls at 50–100 ms anyway; 10 ms jitter is invisible.
+- ALSA clock thread ``tempo_clock_update()`` call.  For a JACK sync
+  user this is secondary.
+- OSC replies to tempo queries.
+
+**What is completely unaffected** (RT-generated):
+
+- JACK MIDI clock output (BLOCK 9, generated in the RT process
+  callback at exact sample accuracy).
+- Sync pulses to the looper (``generate_sync()``, RT).
+- All loop recording, playback, and state-machine transitions.
+
+A 10 ms delay before the GUI tempo display updates after a tempo
+change is imperceptible and has no effect on performance.  No action
+required.
 
 ------
 
@@ -1128,11 +1142,15 @@ down are appropriate for the next maintenance cycle.
 **Maintenance / hygiene**:
 
 11. **C1a** — gate BLOCK 8 period capture on ``fTempo == 0.0f``.
-12. **C7** — audit ``do_event`` / ``run`` pairing assumption.
+12. **C7** N/A — verified: ``do_event()`` → ``run()`` invariant holds;
+    ``_pending_event_offset`` always reset before buffer end.  Comment
+    added to looper.cpp BLOCK 2.
 13. **C9** — input-non-silent tracking for backfill.
 14. **C10** — backfill safety comment.
 15. **R2** — ``std::call_once`` for ``sl_dbg_open``.
-16. **R5** — engine constructor lifecycle comment.
+16. **R3** N/A — timeout is 10 ms; delay before non-RT consumers see a
+    tempo change is imperceptible.  No action needed.
+17. **R5** — engine constructor lifecycle comment.
 
 **Future architecture**:
 

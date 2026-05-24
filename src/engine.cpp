@@ -284,6 +284,16 @@ bool Engine::initialize(AudioDriver * driver, int buschans, int port, string pin
 	// Requires AudioDriver::get_jack_client() to be implemented by the
 	// JackDriver subclass. Non-JACK builds return nullptr and the block is
 	// skipped silently.
+	//
+	// H4 fix: explicit MIDI output buffer size so the safety margin is
+	// documented.  Worst case: ~5 one-byte clock events per buffer at
+	// extreme tempo (300 BPM / 512 samples / 48 kHz) = ~45 bytes used.
+	// 4096 bytes gives ~90x headroom.  JACK ignores buffer_size for
+	// input ports, so midi_in keeps the original 0 (default).
+	// STOCK: 0 (JACK default) for both ports.
+#ifndef SL_JACK_MIDI_OUT_BUFSIZE
+#  define SL_JACK_MIDI_OUT_BUFSIZE 4096
+#endif
 	{
 		jack_client_t * jclient = _driver->get_jack_client();
 		if (jclient) {
@@ -305,7 +315,7 @@ bool Engine::initialize(AudioDriver * driver, int buschans, int port, string pin
 				"midi_out",
 				JACK_DEFAULT_MIDI_TYPE,
 				JackPortIsOutput,
-				0);
+				SL_JACK_MIDI_OUT_BUFSIZE);
 			if (_jack_midi_out_port) {
 				cerr << "SooperLooper: JACK MIDI output port 'midi_out' registered." << endl;
 			} else {

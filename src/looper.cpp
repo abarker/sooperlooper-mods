@@ -838,6 +838,16 @@ Looper::do_event (Event *ev)
 	// via the JACK MIDI port (where inject_midi() was called with a real
 	// frame offset).  run() reads this to decide whether TriggerLatency
 	// should be zeroed for the current block.
+	//
+	// Invariant: the engine ALWAYS calls run() after every do_event().
+	// Engine::process() runs events in FragmentPos order; for each event
+	// it calls run(usedframes, fragpos - usedframes) BEFORE do_event(),
+	// then unconditionally fires a final run(usedframes, nframes - usedframes)
+	// after the last event — even if that trailing slice is zero length.
+	// That final run() always consumes and resets _pending_event_offset to 0
+	// (BLOCK 5), so the value cannot leak into the next JACK callback.
+	// Verified by audit of Engine::process() — see C7 in
+	// live_performance_review for the full analysis.
 	_pending_event_offset = static_cast<nframes_t>(ev->FragmentPos());
 	//------ albEnd ----------------------------------
 
