@@ -42,7 +42,7 @@ Executive summary
 **Status at a glance** (most recent revision)::
 
   C1  ✓ DONE    C2  ✓ DONE    C3  DEFERRED  C4  N/A      C5  ✓ DONE
-  C6  ✓ DONE    C7  N/A       C8  N/A        C9  OPEN     C10 OPEN
+  C6  ✓ DONE    C7  N/A       C8  N/A        C9  N/A      C10 ✓ DONE
   C1a OPEN
 
   H1  OPEN      H2  N/A       H3  N/A        H4  ✓ DONE
@@ -591,73 +591,63 @@ serves no practical purpose for an event that cannot occur.
 C9: Backfill audio is stale if input was silent before press
 -------------------------------------------------------------
 
-**Severity**: MEDIUM.  **Live impact**: 2.  **Confidence**: HIGH.
+**Severity**: N/A — concern does not arise given actual buffer sizes.
+**Live impact**: 0.  **Confidence**: HIGH.
 
-**Status**: OPEN.
+**Status**: CLOSED — reclassified after verifying ``lInputBufSize``.
 
-**Where**: plugin.cc BLOCK 10 (backfill loop reads from
-``pfInputLatencyBuf``).
+The concern was that the input latency ring buffer might deliver
+"old audio from a previous wrap" if the performer was silent at the
+sync boundary.  This requires the backfill depth T to exceed
+``lInputBufSize``.
 
-**Mechanism**: the input latency ring buffer is written every sample
-unconditionally — there is no concept of "valid data start".  If the
-performer was silent for the past 100 ms (the late-hit window's
-default size) and then plays a note immediately followed by pressing
-RECORD slightly late, the backfill captures the silence before the
-note.  Fine, no problem.
+``lInputBufSize`` is a **hardcoded constant: 32768 samples** (682 ms
+at 48 kHz).  T is bounded by the late-hit window: at most
+``g_late_hit_window_ms / 1000 × fSampleRate`` ≈ **4800 samples**
+(100 ms at 48 kHz).  4800 << 32768 by a factor of 7.  The read
+position ``lInputBufWritePos - T`` never reaches the previous wrap.
 
-The problem case: a long silent gap before the press.  The ring buffer
-still contains audio from *much earlier* (whenever the buffer last
-wrapped during real input).  If the press happens within the late-hit
-window after a sync boundary but the boundary itself was in silence,
-the loop's leading T samples could be old, unrelated audio from the
-ring buffer's previous wrap.
+The "silence" scenario is also correct: if the performer was silent
+at the sync boundary, the ring buffer at that position holds silence,
+and the backfill correctly writes silence into the loop's leading
+samples.  The loop starts at the sync boundary with whatever was
+actually happening acoustically — the right result.
 
-In practice this is rarely audible because the boundary is "now minus
-T" and T is at most 100 ms — but with a fast tempo and a long silent
-gap before a downbeat, the leading edge of the loop could carry an
-audible ghost.
-
-**Why it matters live**: a quiet sustained note at the start of a
-loop could be preceded by a phantom tail from an earlier riff.
-
-**Direction for fix**: track the most recent input-non-silent sample
-position.  If the requested backfill range extends earlier than that,
-zero those samples instead.  Cheap to track (one threshold check
-per sample, one max() per sample).
+The C10 invariant comment documents the 32768 vs 4800 margin
+explicitly next to the copy loop.
 
 ------
 
 C10: ``loop->lLoopStart + i`` aliasing concern in backfill
------------------------------------------------------------
+----------------------------------------------------------
 
-**Severity**: MEDIUM.  **Live impact**: 1.  **Confidence**: MEDIUM.
+**Severity**: LOW.  **Live impact**: 0.  **Confidence**: HIGH.
 
-**Status**: OPEN.
+**Status**: ✓ IMPLEMENTED — invariant comment added; ``effectiveLateHitWindow``
+capped at ``lInputBufSize - 1``.
 
-**Where**: plugin.cc BLOCK 10 backfill copy loop.
-
-**Mechanism**: the backfill writes ``T`` samples into
+The backfill writes T samples into
 ``pLS->pSampleBuf[(loop->lLoopStart + i) & pLS->lBufferSizeMask]``.
-This relies on:
+A comment above the copy loop documents three invariants:
 
-- ``loop->lLoopStart`` having been set sensibly by ``pushNewLoopChunk``
-- ``pLS->lBufferSize`` being a power of two (mask validity)
-- No other chunk occupying the same ``T`` samples
+1. ``pushNewLoopChunk()`` places new chunks contiguously after the
+   previous tail; ``[lLoopStart, lLoopStart + T)`` is exclusive to
+   this chunk.
+2. ``lBufferSize`` is a power of two, so the mask is valid.
+3. T is bounded by ``effectiveLateHitWindow()``, which is now
+   explicitly capped at ``pLS->lInputBufSize - 1``.
 
-``pushNewLoopChunk`` is stock code; it places new chunks contiguously
-after the previous tail.  As long as the chunk is freshly allocated
-(which it is in the late-hit path), the range
-``[loop->lLoopStart, loop->lLoopStart + T)`` is exclusive to this
-chunk and the write is safe.
+**The cap in** ``effectiveLateHitWindow()`` **is the key fix**.
+The original comment argued safety from the default value of
+``g_late_hit_window_ms`` (100 ms ≈ 4800 samples << 32768).  But the
+fraction cap can only make the window *smaller*, never larger, so
+the ms cap is the only term that could exceed ``lInputBufSize``.
+That happens when ``g_late_hit_window_ms > 682 ms`` at 48 kHz.
+Capping ``msLimit`` at ``lInputBufSize - 1`` before the fraction
+comparison makes the constraint self-enforcing regardless of what
+the constant is set to.  No behavioural change at the default 100 ms.
 
-The concern is theoretical: if a future change reuses chunks instead
-of allocating fresh ones (memory pool exhaustion fallback, say), the
-backfill could clobber another chunk's tail.  Today this is not a
-real bug.
-
-**Direction for fix**: add a comment near the backfill that documents
-the invariant ("``pushNewLoopChunk`` returns a fresh range; backfill
-safe up to ``lBufferSize``").  No code change.
+------
 
 
 High-priority issues — JACK MIDI
@@ -1170,8 +1160,12 @@ down are appropriate for the next maintenance cycle.
 12. **C7** N/A — verified: ``do_event()`` → ``run()`` invariant holds;
     ``_pending_event_offset`` always reset before buffer end.  Comment
     added to looper.cpp BLOCK 2.
-13. **C9** — input-non-silent tracking for backfill.
-14. **C10** — backfill safety comment.
+13. **C9** N/A — reclassified: ``lInputBufSize`` = 32768 samples
+    (682 ms); T_max ≈ 4800 samples (100 ms).  Previous-wrap scenario
+    cannot occur.
+14. **C10** ✓ COMPLETED — invariant comment added; ``effectiveLateHitWindow``
+    capped at ``lInputBufSize - 1`` so backfill safety holds regardless
+    of ``g_late_hit_window_ms`` value.
 15. **R2** — ``std::call_once`` for ``sl_dbg_open``.
 16. **R3** N/A — timeout is 10 ms; delay before non-RT consumers see a
     tempo change is imperceptible.  No action needed.
