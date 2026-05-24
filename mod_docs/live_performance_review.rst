@@ -45,9 +45,9 @@ Executive summary
   C6  ✓ DONE    C7  N/A       C8  N/A        C9  N/A      C10 ✓ DONE
   C1a OPEN
 
-  H1  OPEN      H2  N/A       H3  N/A        H4  ✓ DONE
+  H1  N/A       H2  N/A       H3  N/A        H4  ✓ DONE
 
-  R1  ACCEPTED  R2  OPEN      R3  N/A         R4  OPEN     R5  OPEN
+  R1  ACCEPTED  R2  N/A       R3  N/A         R4  OPEN     R5  OPEN
 
   D1  OPEN      D2  N/A       D3  N/A         D4  OPEN     D5  ✓ DONE
 
@@ -656,33 +656,30 @@ High-priority issues — JACK MIDI
 H1: MIDI Start and first Clock at the same frame offset
 -------------------------------------------------------
 
-**Severity**: HIGH.  **Live impact**: 2.  **Confidence**: HIGH.
+**Severity**: N/A — not a real concern; current behaviour is correct.
+**Live impact**: 0.  **Confidence**: HIGH.
 
-**Status**: OPEN.
+**Status**: CLOSED — analysed and dismissed.
 
-**Where**: engine.cpp BLOCK 9 (JACK MIDI output generation).
+On the stopped→rolling transition, MIDI Start (0xFA) and the first
+clock tick (0xF8) are both written at offset 0 of the JACK MIDI output
+buffer.  The concern was that some devices might process them out of
+order.
 
-**Mechanism**: when transport transitions from stopped to rolling:
+**Why this is not a problem**: JACK MIDI guarantees that events at the
+same timestamp are delivered in write order.  Start is written first,
+tick second — any downstream JACK client and any physical MIDI interface
+serialising the port will always see Start then Tick in that sequence,
+which is correct MIDI spec behaviour.  A device whose firmware breaks on
+Start immediately followed by its first clock tick has a fundamental
+firmware bug that cannot be worked around.
 
-1. MIDI Start (0xFA) is written at offset 0
-2. ``_jack_clock_tick_phase`` is reset to 0.0
-3. The while loop immediately emits the first clock tick at offset 0
-   (because ``phase = 0.0 < nframes``)
-
-So two MIDI events appear at the exact same timestamp.  JACK MIDI
-permits this, but many external devices have firmware that processes
-events sequentially without considering simultaneous arrivals.
-Behaviour varies — some treat Start before Clock (correct), some
-treat them as out of order, some drop one.
-
-**Why it matters live**: an external synth fed clock from SooperLooper
-may exhibit a beat-1 phase offset that's noticed only after several
-bars.
-
-**Direction for fix**: after writing MIDI Start, set
-``_jack_clock_tick_phase = tpf`` (one tick into the future) so the
-first clock fires one tick after Start.  Or write Start at offset 0
-and skip the first clock tick of the buffer entirely.
+**Why the proposed fix would be worse**: setting
+``_jack_clock_tick_phase = tpf`` (one tick into the future) delays the
+first clock by one full tick period — approximately 20 ms at 120 BPM.
+A hardware synth or drum machine that uses the first post-Start clock to
+lock its phase would start 20 ms late.  This is a real, audible
+regression; the current behaviour is strictly better.
 
 ------
 
@@ -814,25 +811,27 @@ compile-time switch with zero cost when off.
 R2: ``sl_dbg_open`` data race (residual)
 -----------------------------------------
 
-**Severity**: LOW.  **Live impact**: 1.  **Confidence**: HIGH.
+**Severity**: N/A — theoretical only; cannot occur in the target build.
+**Live impact**: 0.  **Confidence**: HIGH.
 
-**Where**: plugin.cc BLOCK 1.
+**Status**: CLOSED — not worth fixing.
 
-**Status**: OPEN — one-line fix (``std::call_once``); low priority.
+The unsynchronised ``if (!sl_dbg_file) { fopen(...) }`` pattern in
+``sl_dbg_open()`` could in theory allow two threads to both see
+``sl_dbg_file == NULL`` and both open the log file, producing a
+garbled log.
 
-**Mechanism**: the previously identified two-channel race on
-``sl_dbg_open()`` is reduced by ``SL_LOG_RT`` (which doesn't call
-``sl_dbg_open``).  ``SL_LOG`` is now only called from ``instantiate``
-and ``activate``, both non-RT.  In the standalone build the LADSPA
-host instantiates channels sequentially on the main thread, so no
-race occurs in practice.
+In practice ``SL_LOG`` is called only from ``instantiate()`` and
+``activate()``, both invoked sequentially on the main thread in the
+standalone SooperLooper build.  Concurrent instantiation from multiple
+threads would require a LADSPA host that this codebase is not, and the
+section text confirms: "Not the case here."
 
-The race is theoretically possible if the LADSPA host instantiates
-channels concurrently from multiple threads.  Not the case here.
-
-**Direction for fix**: optional — wrap ``sl_dbg_open()`` in a
-``std::call_once`` or equivalent.  One-line fix; cost is the
-``<mutex>`` include.
+Even if the race fired, the consequence is a slightly garbled debug log
+— no crash, no data loss, and no effect at runtime.  This is
+debug-only infrastructure that is off by default (``SYNCWDEBUG``
+undefined).  A ``std::call_once`` fix is three lines but defends against
+an impossible scenario; not worth the ``<mutex>`` include.
 
 ------
 
@@ -1144,10 +1143,15 @@ down are appropriate for the next maintenance cycle.
    called from ``Engine::update_sync_source()``.  Stale period data
    and pulse flags from old sync source are cleared on every
    sync-source change.
-8. **H1** — MIDI Start + first clock at same offset.  Still open;
-   small one-line fix in engine.cpp BLOCK 9.
+8. **H1** N/A — JACK serialises events at the same offset in write
+   order; Start always precedes the first tick.  The proposed fix
+   (offset the first tick by one period) would introduce ~20 ms of
+   phase latency at 120 BPM — a regression, not an improvement.
    **H2** N/A — confirmed matches ALSA continuous-clock behaviour.
    **H3** N/A — follows H2; no action needed.
+9. **R2** N/A — ``sl_dbg_open`` race cannot occur in the standalone
+   build; sequential instantiation on the main thread; debug-only
+   infrastructure off by default.  Not worth the ``<mutex>`` include.
 9. **H4** ✓ COMPLETED — ``#define SL_JACK_MIDI_OUT_BUFSIZE 4096``
    added to engine.cpp BLOCK 6; passed to ``jack_port_register`` for
    ``midi_out``; worst-case usage (~45 bytes) documented in comment.
