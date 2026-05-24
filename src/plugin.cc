@@ -225,7 +225,7 @@ static void sl_dbg_open() {
 // SYNCWDEBUG: per-press sync timing diagnostics.
 // Comment out #define SYNCWDEBUG to suppress per-press log messages.
 // SL_LOG startup banners are unaffected and always appear.
-//#define SYNCWDEBUG
+#define SYNCWDEBUG
 #ifdef SYNCWDEBUG
 #define SYNCWDBG(x) x
 #else
@@ -252,6 +252,13 @@ static inline unsigned long effectiveLateHitWindow(const SooperLooperI *pLS,
                                                     unsigned int eighthPerCycle) {
     unsigned long msLimit =
         (unsigned long)(g_late_hit_window_ms * 0.001f * pLS->fSampleRate);
+    // Hard cap: backfill reads from pfInputLatencyBuf which is lInputBufSize
+    // samples deep.  A window wider than the ring buffer would read garbage.
+    // This cap makes the constraint self-enforcing regardless of the value
+    // of g_late_hit_window_ms.  The fraction cap below can only reduce the
+    // window further, never enlarge it, so one cap here is sufficient.
+    if (msLimit >= pLS->lInputBufSize)
+        msLimit = pLS->lInputBufSize - 1;
     if (eighthPerCycle == 0) return msLimit; // guard: cannot encode as large value
     double fractionLimit = (double)g_late_hit_max_8th_fraction
                            * (double)pLS->lLastSyncPeriodSamples
@@ -2611,6 +2618,18 @@ runSooperLooper(LADSPA_Handle Instance,
 				     pLS->lLoopIndex, pLS->lChannelIndex,
 				     pLS->lInputBufWritePos, SampleCount,
 				     T, lInputLatency, readPos));
+				 // C10 safety invariant:
+				 //   pushNewLoopChunk() always returns a freshly allocated chunk
+				 //   whose [lLoopStart, lLoopStart + T) range is exclusive to this
+				 //   chunk (ensureLoopSpace places new chunks contiguously after
+				 //   the previous tail).  No other live chunk occupies this range,
+				 //   so the destination write is safe.
+				 //   lBufferSize is always a power of two (see instantiate()), so
+				 //   lBufferSizeMask = lBufferSize - 1 is a valid wrap mask.
+				 //   T <= effectiveLateHitWindow() which is capped at
+				 //   lInputBufSize - 1 (see the cap in effectiveLateHitWindow()),
+				 //   so the source read from pfInputLatencyBuf never reaches a
+				 //   previous wrap regardless of g_late_hit_window_ms.
 				 for (unsigned long i = 0; i < T; ++i) {
 					 pLS->pSampleBuf[(loop->lLoopStart + i) & pLS->lBufferSizeMask] =
 						 pfInputLatencyBuf[(readPos + i) & pLS->lInputBufMask];
