@@ -1154,7 +1154,7 @@ down are appropriate for the next maintenance cycle.
    phase latency at 120 BPM — a regression, not an improvement.
    **H2** N/A — confirmed matches ALSA continuous-clock behaviour.
    **H3** N/A — follows H2; no action needed.
-9. **R2** N/A — ``sl_dbg_open`` race cannot occur in the standalone
+   **R2** N/A — ``sl_dbg_open`` race cannot occur in the standalone
    build; sequential instantiation on the main thread; debug-only
    infrastructure off by default.  Not worth the ``<mutex>`` include.
 9. **H4** ✓ COMPLETED — ``#define SL_JACK_MIDI_OUT_BUFSIZE 4096``

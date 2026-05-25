@@ -2,7 +2,7 @@ import test_engine
 
 class TwoWayDict(dict):
     def __len__(self):
-        return dict.__len__(self) / 2
+        return dict.__len__(self) // 2          # was: / 2
 
     def __setitem__(self, key, value):
         dict.__setitem__(self, key, value)
@@ -34,19 +34,16 @@ commands = (
         ,"PAUSE_ON"
         ,"PAUSE_OFF"
         )
-                #,"REDO_TOG" XXX what effect do they have exactly?
-                #,"QUANT_TOG"
-                #,"ROUND_TOG"
 
-states = TwoWayDict() 
-for member in test_engine.__dict__.iteritems():
+states = TwoWayDict()
+for member in test_engine.__dict__.items():  # was: iteritems()
     if "LooperState" in member[0]:
         states[member[1]] = member[0][11:]
 
 
 auto_states = [  states["Unknown"]
-        , states["WaitStart"] 
-        , states["WaitStop"] 
+        , states["WaitStart"]
+        , states["WaitStop"]
         , states["TriggerPlay"]
         , states["OneShot"]
         , states["Undo"]
@@ -80,7 +77,6 @@ typical =   [
 class Engine (test_engine.TestEngine):
 
     def request(self, command):
-          #print "   requesting: ", self.commands[command]
           command_no = commands.index(command)
           self.looper.request_cmd(command_no)
           while (self.looper.request_pending):
@@ -88,4 +84,3 @@ class Engine (test_engine.TestEngine):
 
     def getState(self):
         return int(self.looper.get_control_value(test_engine.State))
-        

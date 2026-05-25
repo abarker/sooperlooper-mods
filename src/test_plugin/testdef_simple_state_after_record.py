@@ -1,7 +1,7 @@
 import time
 import testdef_simple_state
 
-from nose_parameterized import parameterized
+# nose_parameterized was imported here but never used; removed for Python 3.
 
 class simpleStateTestsAfterRecord(testdef_simple_state.simpleStateTest):
     def setUp(self):

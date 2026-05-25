@@ -1,5 +1,5 @@
 import time
-from nose_parameterized import parameterized
+from parameterized import parameterized
 
 import testdef_simple_state
 import engine_wrapper

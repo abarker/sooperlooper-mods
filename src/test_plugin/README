@@ -1,11 +1,79 @@
-This is code to run tests on plugin.cc. It wraps plugin.cc using 
-swig. Each tests sets up plugin.cc as simple jack-client and then 
-takes it through it's states. 
+test_plugin
+===========
 
-dependencies:
-    swig
-    python2.7  
-    nose
-    nose_parameterized
+Regression tests for SooperLooper's plugin.cc.  The test harness wraps
+plugin.cc via SWIG and runs each looper instance as a real JACK client,
+taking it through its states from Python.
 
-run "make" to build and "nosetest" to run tests
+
+Dependencies
+------------
+
+System packages (Ubuntu/Debian)::
+
+    sudo apt install libjack-jackd2-dev ladspa-sdk
+
+Python packages::
+
+    pip install swig pytest parameterized
+
+Note: ``swig`` can be installed either via pip (as above) or via the
+system package manager (``sudo apt install swig``).  Either works.
+
+
+Build
+-----
+
+With JACK running (a dummy backend is sufficient)::
+
+    jackd -d dummy &
+    make
+
+This runs SWIG to generate the Python bindings and compiles the shared
+library ``_test_engine.so``.
+
+
+Run
+---
+
+::
+
+    python3 -m pytest
+
+Using ``python3 -m pytest`` rather than the bare ``pytest`` command ensures
+all imports resolve against the active virtual environment, avoiding
+conflicts when pytest dependencies are split across system and venv
+site-packages.  To run a single file::
+
+    python3 -m pytest testdef_simple_state.py
+
+
+Test files
+----------
+
+testdef_simple_state.py
+    Basic state transitions: RECORD from STATE_OFF.
+
+testdef_simple_state_after_record.py
+    Transitions from STATE_PLAY (after a complete record cycle).
+
+testdef_simple_state_off.py
+    All commands from STATE_OFF; parameterized over the full command set.
+
+testdef_simple_state_offmuted.py
+    All commands from STATE_OFF_MUTED.
+
+testdef_simple_state_overdub.py
+    Transitions from STATE_OVERDUB.
+
+testdef_simple_state_record_undo.py
+    State after RECORD → RECORD → UNDO; parameterized over commands.
+
+testdef_simple_state_record_undoall.py
+    State after RECORD → RECORD → UNDO_ALL; parameterized over commands.
+
+testdef_late_hit.py
+    Regression tests for the late-hit recording correction patch.
+    Requires the sync injection fields added to TestLooper (see
+    test_looper.hpp).  JACK must be running.  These tests are
+    timing-sensitive; see the timing notes in the file header.
