@@ -53,11 +53,18 @@ class TestLooper
 
 	/* Late-hit test support: when sync_inject_enabled is true, run() fills
 	 * _our_syncin_buf with sync_inject_value before each callback.  Set 2.0
-	 * to inject a sync pulse (> 1.5 threshold); set 1.0 for a non-pulse
-	 * cycle.  Both fields are written from Python and read on the JACK thread
-	 * — the same single-float race as ports[], acceptable for test code. */
+	 * to inject a sync pulse (> 1.5 threshold); set 0.0 for no-signal.
+	 * Both fields are written from Python and read on the JACK thread —
+	 * the same single-float race as ports[], acceptable for test code. */
 	float sync_inject_value;
 	bool  sync_inject_enabled;
+
+	/* Incremented at the top of every run() call.  Python tests busy-wait
+	 * on this to synchronise with exact JACK callback counts rather than
+	 * using time.sleep(), making timing independent of JACK period size. */
+	volatile int process_count;
+
+	int get_buffer_size() const { return (int)_buffersize; }
 
   protected:
 	

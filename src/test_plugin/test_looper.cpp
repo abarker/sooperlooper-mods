@@ -47,6 +47,7 @@ TestLooper::TestLooper (jack_client_t* j, unsigned int index, unsigned int chan_
 	request_pending = false;
 	sync_inject_value   = 1.0f;
 	sync_inject_enabled = false;
+	process_count       = 0;
 	_input_ports = 0;
 	_output_ports = 0;
 	_instances = 0;
@@ -192,6 +193,8 @@ TestLooper::request_cmd (int cmd)
 void
 TestLooper::run (jack_nframes_t offset, jack_nframes_t nframes)
 {
+	++process_count;
+
 	/* maybe change modes */
 
 	if (request_pending) {

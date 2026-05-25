@@ -2,21 +2,16 @@
 """
 Regression tests for the late-hit recording correction patch.
 
+Timing is controlled via process_count (a counter incremented every JACK
+callback) rather than time.sleep(), making tests independent of JACK period
+size.  The correction window is set explicitly in samples via
+g_late_hit_window_ms before each test, so "within window" and "outside
+window" are exact rather than probabilistic.
+
 Sync buffer injection values:
-  0.0  — no sync signal; STATE_TRIG_START/STOP will wait indefinitely
-  2.0  — sync pulse (> 1.5 threshold); primes bSyncPulseReceived and
+  0.0  — no sync signal; STATE_TRIG_START/STOP waits indefinitely
+  2.0  — sync pulse (> 1.5 threshold); sets bSyncPulseReceived and
          resets lGlobalSamplesSinceSync
-
-1.0 must NOT be used as a background value: SooperLooper's TRIG_START
-and TRIG_STOP states exit on pfSyncInput[n] > 0.0, so a constant 1.0
-would cause them to transition immediately, defeating the WaitStart/
-WaitStop assertions.
-
-Timing notes (adjust class attributes if JACK runs at a different period):
-  JACK period  ~10.7 ms  (512 samples at 48 kHz)
-  PRIME_SECS   ~30 ms    (>=2 periods; primes bSyncPulseReceived)
-  WINDOW_SECS  ~25 ms    (T ~1200 samples < 4800-sample / 100 ms window)
-  OUTSIDE_SECS ~150 ms   (T >> 4800 samples; well outside the window)
 """
 
 import time
@@ -24,31 +19,60 @@ import unittest
 import test_engine
 import engine_wrapper
 
+_DEFAULT_WINDOW_MS = 100.0   # restore in tearDown
+
 
 class LateHitTestCase(unittest.TestCase):
-    """Base class: creates engine with sync enabled and injection ready."""
+    """Base class providing buffer-precise timing helpers."""
 
-    PRIME_SECS   = 0.030
-    WINDOW_SECS  = 0.025
-    OUTSIDE_SECS = 0.150
-    RECORD_SECS  = 0.050
+    # Number of buffer-periods used for each phase.  The window is set to
+    # WINDOW_BUFS buffer-periods so "within" and "outside" are exact.
+    PULSE_BUFS   = 3    # how long to hold the pulse high
+    WITHIN_BUFS  = 2    # wait this many no-pulse buffers → T < window
+    OUTSIDE_BUFS = 6    # wait this many no-pulse buffers → T > window
+    RECORD_BUFS  = 10   # minimum recording duration before a late stop
 
     def setUp(self):
         self.engine = engine_wrapper.Engine("SL_test_latehit")
         self.looper = self.engine.looper
+        self.buf    = int(self.looper.get_buffer_size())
+        self.sr     = int(self.engine.get_sample_rate())
+
+        # Set window = WITHIN_BUFS+1 buffer-periods so WITHIN_BUFS is inside
+        # and OUTSIDE_BUFS is outside.  Use WITHIN_BUFS+1 as the exact ceiling.
+        self._set_window(self.WITHIN_BUFS + 1)
+
         self.looper.set_port(test_engine.Sync, 1.0)
         self.looper.sync_inject_enabled = True
-        self.looper.sync_inject_value   = 0.0   # no sync signal (not 1.0)
+        self.looper.sync_inject_value   = 0.0   # no signal
 
     def tearDown(self):
+        test_engine.cvar.g_late_hit_window_ms = _DEFAULT_WINDOW_MS
         del self.engine
 
+    # ------------------------------------------------------------------
+    # helpers
+
+    def _set_window(self, n_bufs):
+        """Set the correction window to exactly n_bufs JACK buffer-periods."""
+        test_engine.cvar.g_late_hit_window_ms = (n_bufs * self.buf / self.sr) * 1000.0
+
+    def wait_buffers(self, n, timeout=5.0):
+        """Busy-wait until exactly n more JACK callbacks have completed."""
+        target   = self.looper.process_count + n
+        deadline = time.time() + timeout
+        while self.looper.process_count < target:
+            if time.time() > deadline:
+                raise RuntimeError(
+                    f"Timed out waiting for {n} JACK callbacks "
+                    f"(process_count stuck at {self.looper.process_count})")
+
     def prime_pulse(self):
-        """Inject one sync pulse and wait for it to be processed.
-        Sets bSyncPulseReceived and resets lGlobalSamplesSinceSync to 0."""
-        self.looper.sync_inject_value = 2.0   # above the 1.5 threshold
-        time.sleep(self.PRIME_SECS)
-        self.looper.sync_inject_value = 0.0   # back to no-signal (not 1.0)
+        """Inject a sync pulse for PULSE_BUFS callbacks, then clear.
+        On return: bSyncPulseReceived=True, lGlobalSamplesSinceSync=0."""
+        self.looper.sync_inject_value = 2.0
+        self.wait_buffers(self.PULSE_BUFS)
+        self.looper.sync_inject_value = 0.0
 
     def assertState(self, state, msg=None):
         actual = self.engine.getState()
@@ -59,6 +83,21 @@ class LateHitTestCase(unittest.TestCase):
             if msg is None else msg
         )
 
+    @property
+    def t_within(self):
+        """T in samples after WITHIN_BUFS no-pulse buffers."""
+        return self.WITHIN_BUFS * self.buf
+
+    @property
+    def t_outside(self):
+        """T in samples after OUTSIDE_BUFS no-pulse buffers."""
+        return self.OUTSIDE_BUFS * self.buf
+
+    @property
+    def window_samples(self):
+        """Current window ceiling in samples."""
+        return (self.WITHIN_BUFS + 1) * self.buf
+
 
 # ======================================================================
 # Late-start tests
@@ -67,58 +106,57 @@ class LateHitTestCase(unittest.TestCase):
 class TestLateStart(LateHitTestCase):
 
     def testLateStart_DirectlyRecording(self):
-        """Core case: RECORD within the window after a pulse → immediate Recording."""
+        """Core case: RECORD WITHIN_BUFS after a pulse → Recording directly.
+        T = WITHIN_BUFS × buf_size < window = (WITHIN_BUFS+1) × buf_size."""
         self.prime_pulse()
-        time.sleep(self.WINDOW_SECS)
+        self.wait_buffers(self.WITHIN_BUFS)   # T = WITHIN_BUFS × buf exactly
         self.engine.request("RECORD")
-        time.sleep(0.002)
+        self.wait_buffers(1)  # let JACK callback settle
         self.assertState("Recording",
-                         "Late-hit start should enter Recording directly, not WaitStart")
+                         f"T={self.t_within} ≤ window={self.window_samples}: "
+                         "late-hit should enter Recording directly")
 
     def testNoCorrection_SyncOff(self):
-        """Regression: sync OFF still enters Recording immediately (stock path
-        unaffected by the late-hit code)."""
+        """Regression: sync OFF → Recording immediately (stock path unchanged)."""
         self.looper.set_port(test_engine.Sync, 0.0)
         self.prime_pulse()
-        time.sleep(self.WINDOW_SECS)
+        self.wait_buffers(self.WITHIN_BUFS)
         self.engine.request("RECORD")
-        time.sleep(0.002)
-        self.assertState("Recording",
-                         "Sync off: should enter Recording via stock path")
+        self.wait_buffers(1)  # let JACK callback settle
+        self.assertState("Recording", "Sync off: stock path must still reach Recording")
 
     def testNoCorrection_NoPulse(self):
-        """bSyncPulseReceived guard: with sync on but no pulse ever seen,
-        RECORD waits for the next boundary (stock behaviour).
-        Background value is 0.0 so TRIG_START stays waiting."""
-        # deliberately do NOT call prime_pulse()
-        time.sleep(self.WINDOW_SECS)
+        """bSyncPulseReceived guard: no pulse ever → WaitStart.
+        Background 0.0 keeps TRIG_START waiting indefinitely."""
+        self.wait_buffers(self.WITHIN_BUFS)   # T in range but no pulse seen
         self.engine.request("RECORD")
-        time.sleep(0.002)
+        self.wait_buffers(1)  # let JACK callback settle
         self.assertState("WaitStart",
-                         "No pulse seen: correction must not fire before first pulse")
+                         "No pulse: correction must not fire without bSyncPulseReceived")
 
     def testNoCorrection_TooLate(self):
-        """Window boundary: T > 100 ms after pulse → WaitStart (stock path).
-        Background value is 0.0 so TRIG_START stays waiting after the fallthrough."""
+        """Window boundary: T = OUTSIDE_BUFS × buf > window → WaitStart.
+        Background 0.0 keeps TRIG_START waiting."""
         self.prime_pulse()
-        time.sleep(self.OUTSIDE_SECS)  # T >> 100 ms window
+        self.wait_buffers(self.OUTSIDE_BUFS)  # T > window
         self.engine.request("RECORD")
-        time.sleep(0.002)
+        self.wait_buffers(1)  # let JACK callback settle
         self.assertState("WaitStart",
-                         "T outside window: should fall through to WaitStart")
+                         f"T={self.t_outside} > window={self.window_samples}: "
+                         "no correction should fire")
 
     def testNoCorrection_OnTime(self):
-        """On-time press regression: pulse and RECORD in the same buffer
-        must not corrupt state."""
-        self.looper.sync_inject_value = 2.0   # pulse stays on during RECORD
-        time.sleep(self.PRIME_SECS)
+        """On-time press (T=0): pulse and RECORD in the same callbacks.
+        Must not crash; acceptable results are Recording or WaitStart."""
+        self.looper.sync_inject_value = 2.0   # pulse held on
+        self.wait_buffers(self.PULSE_BUFS)
         self.engine.request("RECORD")
-        time.sleep(0.002)
+        self.wait_buffers(1)  # let JACK callback settle
         state = self.engine.getState()
         self.assertIn(state,
                       [engine_wrapper.states["Recording"],
                        engine_wrapper.states["WaitStart"]],
-                      "On-time press must result in Recording or WaitStart, not a crash")
+                      "On-time press must not produce an unexpected state")
 
 
 # ======================================================================
@@ -128,71 +166,128 @@ class TestLateStart(LateHitTestCase):
 class TestLateStop(LateHitTestCase):
 
     def _record_a_loop(self):
-        """Enter Recording via the late-hit path, record for RECORD_SECS."""
+        """Enter Recording via the late-hit path, record for RECORD_BUFS."""
         self.prime_pulse()
-        time.sleep(self.WINDOW_SECS)
+        self.wait_buffers(self.WITHIN_BUFS)
         self.engine.request("RECORD")
-        time.sleep(0.002)
-        self.assertState("Recording", "setUp: could not get into Recording")
-        time.sleep(self.RECORD_SECS)
+        self.wait_buffers(1)  # let JACK callback settle
+        self.assertState("Recording", "_record_a_loop: could not enter Recording")
+        self.wait_buffers(self.RECORD_BUFS)
 
     def testLateStop_DirectlyPlaying(self):
-        """Core case: RECORD stop within the window after a pulse → immediate Playing."""
+        """Core case: RECORD stop WITHIN_BUFS after a pulse → Playing directly."""
         self._record_a_loop()
         self.prime_pulse()
-        time.sleep(self.WINDOW_SECS)
+        self.wait_buffers(self.WITHIN_BUFS)
         self.engine.request("RECORD")
-        time.sleep(0.002)
+        self.wait_buffers(1)  # let JACK callback settle
         self.assertState("Playing",
                          "Late-hit stop should enter Playing directly, not WaitStop")
 
     def testNoCorrection_Stop_TooLate(self):
-        """Window boundary on stop: T > 100 ms after pulse → WaitStop.
-        Background 0.0 keeps TRIG_STOP waiting."""
+        """Window boundary on stop: T > window → WaitStop."""
         self._record_a_loop()
         self.prime_pulse()
-        time.sleep(self.OUTSIDE_SECS)  # T >> 100 ms
+        self.wait_buffers(self.OUTSIDE_BUFS)  # T > window
         self.engine.request("RECORD")
-        time.sleep(0.002)
+        self.wait_buffers(1)  # let JACK callback settle
         self.assertState("WaitStop",
-                         "T outside window: stop should fall through to WaitStop")
+                         f"T={self.t_outside} > window={self.window_samples}: "
+                         "stop correction must not fire")
 
     def testNoCorrection_Stop_NoPriorPulse(self):
-        """No pulse at all during recording: stop should go to WaitStop.
-        Since bSyncPulseReceived stays False throughout (no prime_pulse),
-        the stop guard fires and the correction does not run."""
-        # Enter recording WITHOUT priming a pulse first — use direct RECORD
-        # with sync off so we get into Recording immediately, then re-enable sync
+        """bSyncPulseReceived guard: recording started without sync, so no
+        pulse has been seen.  Stop correction must not fire."""
         self.looper.set_port(test_engine.Sync, 0.0)
         self.engine.request("RECORD")
-        time.sleep(0.002)
-        self.assertState("Recording", "setUp: could not get into Recording")
-        self.looper.set_port(test_engine.Sync, 1.0)  # re-enable sync
-        # bSyncPulseReceived is still False — no pulse has ever been seen
-        time.sleep(self.RECORD_SECS)
+        self.wait_buffers(1)  # let JACK callback settle
+        self.assertState("Recording", "Could not enter Recording with sync off")
+        self.looper.set_port(test_engine.Sync, 1.0)
+        # bSyncPulseReceived still False — no pulse has been injected
+        self.wait_buffers(self.WITHIN_BUFS)
         self.engine.request("RECORD")
-        time.sleep(0.002)
+        self.wait_buffers(1)  # let JACK callback settle
         self.assertState("WaitStop",
-                         "No pulse ever seen: stop correction must not fire")
+                         "No pulse seen: stop correction must not fire")
 
     def testLateStop_LoopLengthTrimmed(self):
-        """After a late stop the loop length must be less than the total
-        time spent in Recording (including prime and window wait time)."""
+        """After a late stop the loop must be shorter than the raw recording.
+        T = WITHIN_BUFS × buf, so trim = T / sr seconds.
+        raw_recording ≈ (PULSE_BUFS + WITHIN_BUFS + RECORD_BUFS + PULSE_BUFS
+                          + WITHIN_BUFS) × buf / sr.
+        trimmed ≈ raw - T."""
         self._record_a_loop()
-        # total recording duration ≈ RECORD_SECS + PRIME_SECS + WINDOW_SECS
-        # plus a generous margin for JACK callback timing
-        max_recording_secs = (self.RECORD_SECS + self.PRIME_SECS
-                               + 2 * self.WINDOW_SECS + 0.040)
         self.prime_pulse()
-        time.sleep(self.WINDOW_SECS)
+        self.wait_buffers(self.WITHIN_BUFS)
         self.engine.request("RECORD")
-        time.sleep(0.005)
+        self.wait_buffers(1)  # let JACK callback settle
         self.assertState("Playing")
+
         loop_len = self.engine.looper.get_control_value(test_engine.LoopLength)
+
+        # Total recording duration (known exactly in buffers):
+        #   _record_a_loop: PULSE_BUFS + WITHIN_BUFS + 1(settle) + RECORD_BUFS
+        #   stop phase:     PULSE_BUFS + WITHIN_BUFS
+        total_recording_bufs = (2 * self.PULSE_BUFS + 2 * self.WITHIN_BUFS
+                                 + 1 + self.RECORD_BUFS)
+        raw_secs = total_recording_bufs * self.buf / self.sr
+        # T = WITHIN_BUFS buffer-periods
+        t_secs   = self.WITHIN_BUFS * self.buf / self.sr
+
         self.assertGreater(loop_len, 0.0,
-                           "Loop length must be positive after late stop")
-        self.assertLess(loop_len, max_recording_secs,
-                        "Loop length must not exceed total recording duration")
+                           "Loop length must be positive")
+        # Upper bound: loop must be shorter than total recording time
+        # (trimmed by T; add a few buffers of slack for scheduling jitter)
+        max_secs = raw_secs + 0.030
+        self.assertLess(loop_len, max_secs,
+                        f"Loop ({loop_len:.4f}s) must be < raw recording "
+                        f"({raw_secs:.4f}s + 30ms slack)")
+        # The trim T should be visible
+        self.assertLess(loop_len, raw_secs,
+                        f"Loop ({loop_len:.4f}s) should be shorter than "
+                        f"raw recording ({raw_secs:.4f}s) by T ({t_secs:.4f}s)")
+
+
+# ======================================================================
+# Window constant tests
+# ======================================================================
+
+class TestWindowControl(LateHitTestCase):
+    """Verify that g_late_hit_window_ms actually controls the boundary."""
+
+    def testWindowBoundaryExact(self):
+        """At T = window-1 buf correction fires; at T = window+1 buf it does not.
+        This pins the window arithmetic directly."""
+        # --- within: window set to WITHIN_BUFS+1, T = WITHIN_BUFS → fires
+        self._set_window(self.WITHIN_BUFS + 1)
+        self.prime_pulse()
+        self.wait_buffers(self.WITHIN_BUFS)
+        self.engine.request("RECORD")
+        self.wait_buffers(1)  # let JACK callback settle
+        self.assertState("Recording",
+                         f"T={self.t_within} inside window={self.window_samples}: "
+                         "correction should fire")
+
+        # tear down and rebuild for the outside case
+        del self.engine
+        self.engine = engine_wrapper.Engine("SL_test_latehit")
+        self.looper = self.engine.looper
+        self.buf    = int(self.looper.get_buffer_size())
+        self.sr     = int(self.engine.get_sample_rate())
+        self.looper.set_port(test_engine.Sync, 1.0)
+        self.looper.sync_inject_enabled = True
+        self.looper.sync_inject_value   = 0.0
+
+        # --- outside: window set to WITHIN_BUFS-1, T = WITHIN_BUFS → does not fire
+        self._set_window(self.WITHIN_BUFS - 1)
+        self.prime_pulse()
+        self.wait_buffers(self.WITHIN_BUFS)     # now T > window
+        self.engine.request("RECORD")
+        self.wait_buffers(1)  # let JACK callback settle
+        self.assertState("WaitStart",
+                         f"T={self.t_within} outside window="
+                         f"{(self.WITHIN_BUFS-1)*self.buf}: "
+                         "correction must not fire")
 
 
 # ======================================================================
@@ -202,15 +297,15 @@ class TestLateStop(LateHitTestCase):
 class TestSyncSourceReset(LateHitTestCase):
 
     def testAfterSyncOff_NoCorrectionOnNextRecord(self):
-        """Toggle sync off/on without a new pulse: the first press after
-        re-enabling should not fire the correction."""
+        """Toggle sync off/on without a new pulse: first press should not
+        fire the correction (bSyncPulseReceived cleared on mode change)."""
         self.prime_pulse()
         self.looper.set_port(test_engine.Sync, 0.0)
-        time.sleep(self.PRIME_SECS)
+        self.wait_buffers(self.PULSE_BUFS)
         self.looper.set_port(test_engine.Sync, 1.0)
-        time.sleep(self.WINDOW_SECS)
+        self.wait_buffers(self.WITHIN_BUFS)
         self.engine.request("RECORD")
-        time.sleep(0.002)
+        self.wait_buffers(1)  # let JACK callback settle
         state = self.engine.getState()
         self.assertIn(state,
                       [engine_wrapper.states["WaitStart"],
