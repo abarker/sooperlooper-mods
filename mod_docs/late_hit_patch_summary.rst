@@ -3,8 +3,8 @@ SooperLooper Late-Hit Recording Modification Summary
 
 | **Base version:** SooperLooper 1.7.9
 | **Modified files:** ``src/plugin.cc``, ``src/plugin.hpp``, ``src/engine.cpp``,
-| ``src/looper.cpp``, ``src/looper.hpp``, ``src/audio_driver.hpp``,
-| ``src/jack_audio_driver.hpp``
+| ``src/engine.hpp``, ``src/looper.cpp``, ``src/looper.hpp``, ``src/audio_driver.hpp``,
+| ``src/jack_audio_driver.hpp``, and some test files in ``src/test_plugin``.
 | **All new code sections** are bracketed with ``albBegin`` / ``albEnd`` markers.
 | In ``plugin.cc`` and ``plugin.hpp`` the markers are ``//====== albBegin`` /
 | ``//====== albEnd``; in all other files they are ``//------ albBegin`` /
@@ -45,14 +45,13 @@ SooperLooper Late-Hit Recording Modification Summary
 Problem Being Solved
 --------------------
 
-SooperLooper's quantize mode corrects *early* button presses by waiting for the next sync
-boundary before acting. It does nothing for *late* presses — a Record or Stop hit that
-arrives slightly after a sync boundary causes the loop to start one full quantization unit
-late — the press is treated as belonging to the *next* boundary, not the one just passed —
-and the loop length is inflated by that same unit. This is a persistent source of timing
-errors in live performance.
-
---------------
+With sync mode enabled, SooperLooper corrects *early* button presses by waiting
+for the next sync boundary before acting.  It does nothing for *late* presses —
+a Record or Stop hit that arrives slightly after a sync boundary causes the
+loop to start one full quantization unit late — the press is treated as
+belonging to the *next* boundary, not the one just passed — and the loop length
+is inflated by that same unit. This is a persistent source of timing errors in
+live performance.
 
 What the Patch Does
 -------------------
@@ -116,8 +115,6 @@ All new code paths are gated by ``withinWindow`` / ``stopWithinWindow`` /
 (``fSyncMode == 0``), or when no sync pulse has arrived recently (T exceeds the window).
 The engine behaves identically to the unpatched version in all these cases. Quantize mode
 is no longer a condition.
-
---------------
 
 JACK MIDI Output and Improved Timing
 --------------------------------------
@@ -556,9 +553,13 @@ Session File Key (``engine.cpp``)
        ``Engine::save_session()`` and read by ``Engine::load_session()``. If absent (older
        session files), the compile-time default is used. Edit with a text editor; a
        restart of the engine is required for the change to take effect.
-
-
---------------
+   * - ``late_hit_max_8th_fraction``
+     - **[NEW]**
+     - Floating-point XML property in the ``<Globals>`` node of the ``.slsess`` session
+       file. Written by ``Engine::save_session()`` and read by
+       ``Engine::load_session()``. If absent (older session files), the compile-time
+       default ``LATE_HIT_MAX_8TH_FRACTION`` is used. Edit with a text editor; a
+       restart of the engine is required for the change to take effect.
 
 Architecture Notes
 ------------------
@@ -601,8 +602,6 @@ Architecture Notes
    (BLOCK 7) gives a period that is immune to these sub-threshold pulses, while BLOCK 8
    provides a measured update gated by a sanity floor to catch cases where no tempo is
    available.
-
---------------
 
 Known Issues and Future Work
 ----------------------------
@@ -657,4 +656,176 @@ Known Issues and Future Work
    When active, ``SL_LOG_RT`` uses ``fprintf``, which is not fully RT-safe and will
    cause xruns; this is accepted as the cost of debug mode. Startup banners via
    ``SL_LOG`` are unaffected by this setting.
+
+
+Test Suite
+----------
+
+The stock test harness lives in ``src/test_plugin/``.  It wraps ``plugin.cc``
+via SWIG and runs each looper instance as a real JACK client, taking it through
+its states from Python.  JACK must be running before the tests are started; a
+dummy backend suffices::
+
+    jackd -d dummy &
+    make
+    python3 -m pytest
+
+Note: use ``python3 -m pytest`` rather than the bare ``pytest`` command to
+ensure all imports resolve against the active virtual environment.
+
+Python 3 migration
+~~~~~~~~~~~~~~~~~~
+
+The original tests targeted Python 2.7 with ``nose`` / ``nose_parameterized``.
+The following files were updated to run under Python 3 with ``pytest``:
+
+.. list-table::
+   :header-rows: 1
+
+   * - File
+     - Change
+   * - ``engine_wrapper.py``
+     - ``dict.iteritems()`` → ``dict.items()``; integer division ``/ 2`` → ``// 2``
+   * - ``testdef_simple_state_after_record.py``
+     - Removed unused ``from nose_parameterized import parameterized`` import
+   * - ``testdef_simple_state_off.py``, ``_offmuted.py``, ``_record_undo.py``, ``_record_undoall.py``
+     - ``from nose_parameterized import parameterized`` → ``from parameterized import parameterized``
+   * - ``makefile``
+     - ``-I/usr/include/python2.7/`` replaced with ``$(shell python3-config --includes)``
+   * - ``pytest.ini``
+     - New file.  Sets ``python_files = testdef_*.py`` so ``pytest`` collects
+       the ``testdef_`` prefix convention and ignores the SWIG-generated
+       ``test_engine.py``.
+   * - ``README``
+     - Updated with Python 3 dependencies, build, and run instructions.
+
+``testdef_simple_state.py`` and ``testdef_simple_state_overdub.py`` required no
+changes.  Install dependencies with::
+
+    pip install pytest parameterized swig
+
+Test harness additions for late-hit testing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The C++ test harness (``test_looper.hpp`` / ``test_looper.cpp``,
+``test_engine.hpp``, ``test_engine.swg``) was extended with the following
+additions to support the late-hit tests:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Addition
+     - Description
+   * - ``TestLooper::sync_inject_value`` (``float``, public)
+     - When ``sync_inject_enabled`` is true, ``run()`` fills ``_our_syncin_buf``
+       with this value before each JACK callback.  Use ``2.0`` to inject a sync
+       pulse (above the ``> 1.5`` threshold that sets ``bSyncPulseReceived``);
+       use ``0.0`` for no signal.  Note: ``1.0`` must not be used as a
+       background value — ``STATE_TRIG_START`` and ``STATE_TRIG_STOP`` exit on
+       ``pfSyncInput[n] > 0.0``, so a constant ``1.0`` would cause them to
+       leave the wait states immediately.
+   * - ``TestLooper::sync_inject_enabled`` (``bool``, public)
+     - Enables the sync buffer injection above.
+   * - ``TestLooper::process_count`` (``volatile int``, public)
+     - Incremented at the top of every ``run()`` call.  Python tests busy-wait
+       on this to synchronise with exact JACK callback counts rather than using
+       ``time.sleep()``, making timing independent of JACK period size.
+   * - ``TestLooper::get_buffer_size()`` (returns ``int``)
+     - Returns ``_buffersize`` (JACK period size in samples).  Return type is
+       ``int`` rather than ``nframes_t`` so that SWIG maps it to a plain Python
+       integer rather than an opaque ``SwigPyObject``.
+   * - ``TestEngine::get_sample_rate()`` (returns ``int``)
+     - Returns ``jack_get_sample_rate(jack)``.  Used together with
+       ``get_buffer_size()`` to convert buffer counts to milliseconds when
+       setting the correction window.
+   * - ``g_late_hit_window_ms`` exposed via SWIG
+     - Declared ``extern float g_late_hit_window_ms;`` in ``test_engine.swg``
+       (both inside and outside the ``%{ %}`` block).  Accessible in Python as
+       ``test_engine.cvar.g_late_hit_window_ms``.  SWIG places writable C
+       globals in a ``cvar`` object on the module; writing directly to
+       ``test_engine.g_late_hit_window_ms`` silently creates a Python attribute
+       and does not affect the C variable.
+   * - ``g_late_hit_max_8th_fraction`` exposed via SWIG
+     - Same mechanism as above.  Accessible as
+       ``test_engine.cvar.g_late_hit_max_8th_fraction``.
+
+Late-hit test cases (``testdef_late_hit.py``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The base class ``LateHitTestCase`` sets the correction window to exactly
+``(WITHIN_BUFS + 1)`` buffer-periods via ``test_engine.cvar.g_late_hit_window_ms``
+in ``setUp()``, and restores the default (100 ms) in ``tearDown()``.  All
+timing uses ``wait_buffers(n)`` (busy-wait on ``process_count``) rather than
+``time.sleep()`` so the tests are independent of JACK period size.  One
+``wait_buffers(1)`` settle call follows every ``engine.request()`` before any
+``assertState()`` to avoid a race between ``request_pending`` clearing and
+``descriptor->run()`` completing.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Test
+     - What it verifies
+   * - ``TestLateStart.testLateStart_DirectlyRecording``
+     - Core late-start case: RECORD within the window after a pulse enters
+       ``STATE_RECORD`` directly.  Would fail on unpatched code (gets
+       ``WaitStart`` instead).
+   * - ``TestLateStart.testNoCorrection_SyncOff``
+     - Regression: sync OFF still reaches ``STATE_RECORD`` immediately (stock
+       path unaffected).
+   * - ``TestLateStart.testNoCorrection_NoPulse``
+     - ``bSyncPulseReceived`` guard: no correction fires before the first sync
+       pulse has been seen.
+   * - ``TestLateStart.testNoCorrection_TooLate``
+     - Window boundary: T = ``OUTSIDE_BUFS × buf`` > window →
+       ``STATE_TRIG_START`` (no correction).
+   * - ``TestLateStart.testNoCorrection_OnTime``
+     - On-time press (pulse held on during RECORD) produces ``Recording`` or
+       ``WaitStart`` and does not crash.
+   * - ``TestLateStop.testLateStop_DirectlyPlaying``
+     - Core late-stop case: second RECORD within window after a pulse enters
+       ``STATE_PLAY`` directly.
+   * - ``TestLateStop.testNoCorrection_Stop_TooLate``
+     - Window boundary on stop: T > window → ``STATE_TRIG_STOP`` (no
+       correction).
+   * - ``TestLateStop.testNoCorrection_Stop_NoPriorPulse``
+     - ``bSyncPulseReceived`` guard on stop: recording started with sync off
+       (no pulse ever seen); stop goes to ``WaitStop``.
+   * - ``TestLateStop.testLateStop_LoopLengthTrimmed``
+     - Loop length after a late stop is positive and less than the total
+       recording duration (the T-sample trim is visible).
+   * - ``TestWindowControl.testWindowBoundaryExact``
+     - Pins the window arithmetic from both sides in a single test: T =
+       ``WITHIN_BUFS × buf`` fires when window = ``WITHIN_BUFS + 1`` buffers
+       and does not fire when window = ``WITHIN_BUFS − 1`` buffers.
+   * - ``TestSyncSourceReset.testAfterSyncOff_NoCorrectionOnNextRecord``
+     - After toggling sync off and back on without a new pulse, the first
+       press does not fire the correction spuriously.
+
+Not yet tested
+~~~~~~~~~~~~~~
+
+The following behaviours are covered by the patch but do not yet have
+automated tests:
+
+-  **Exact T offset after late start.**  The tests verify that ``STATE_RECORD``
+   is entered directly, but do not assert that ``dCurrPos == T`` (the loop
+   content begins at the sync boundary).
+
+-  **Backfill audio content.**  The ring buffer read position
+   (``lInputBufWritePos − T``) and the per-sample copy are not verified
+   against the expected source samples.
+
+-  **Multiply-end correction** (``multStopInWindow``, guarded by
+   ``LATE_HIT_MULTIPLY_CORRECTION``).
+
+-  **Two-channel** ``bLateHitBypassed`` behaviour in internal sync mode.  A
+   two-channel ``TestLooper`` (``_chan_count = 2``) and a sync source pointing
+   to one of the looper instances would be needed to test this.
+
+-  **C6 reset via an actual sync-source change engine event.**  The current
+   test toggles the ``Sync`` port, which does not call
+   ``Engine::update_sync_source()``.  A test that sends an OSC sync-source
+   change and verifies ``bSyncPulseReceived`` is cleared would more faithfully
+   exercise the C6 fix.
 
