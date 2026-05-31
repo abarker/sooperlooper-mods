@@ -251,11 +251,11 @@ General Terminology
        correction is disabled on slave channels in this mode to prevent stereo
        channel divergence; both channels use the stock timing path instead.
 
-Variables marked **[NEW]** were added by this patch. All others are pre-existing
-SooperLooper variables whose roles are clarified here because the patch depends on them.
-
 Constants and Globals (``plugin.cc``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Variables marked **[NEW]** were added by this patch. All others are pre-existing
+SooperLooper variables whose roles are clarified here because the patch depends on them.
 
 .. list-table::
    :header-rows: 1
