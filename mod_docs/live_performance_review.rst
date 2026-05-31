@@ -2,6 +2,12 @@
 SooperLooper Modifications — Live Performance Code Review
 ================================================================================
 
+This document was a critique of possible live performance failures that might
+occur with respect to an earlier version of the late-hit patches and the new
+Jack midi ports.  Most have now been corrected or mitigated, but the document
+has been retained because the issue numbers (C1, H2, etc.) are referred to in
+some other documents and in the code.
+
 :Document type:  Critique / improvement guideline
 :Scope:          All ``albBegin``/``albEnd`` blocks in plugin.cc, plugin.hpp,
                  engine.cpp, engine.hpp, looper.cpp, looper.hpp, audio_driver.hpp,

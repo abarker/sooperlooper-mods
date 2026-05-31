@@ -9,8 +9,6 @@ first before covering the other settings.
 The running examples assume a JACK-connected sync source (such as Hydrogen)
 at 120 BPM with Eighths/Cycle set to 8 (one standard 4/4 bar), unless noted.
 
-----
-
 Two separate "sync" concepts
 -----------------------------
 
@@ -22,8 +20,29 @@ This drop-down selects where the timing reference comes from. The options are:
 - *None / Internal Tempo* — SooperLooper uses its own internal tempo clock.
   The tap button lets you set the tempo by feel.
 - *MIDI Clock* — tempo and beat pulses come from incoming MIDI clock messages.
+  SooperLooper's sync grid is anchored to the last **MIDI Start** message:
+  the internal tick counter resets to zero on Start, and sync pulses fire
+  at fixed tick intervals from that point. A MIDI Stop followed by a new
+  MIDI Start therefore resets the grid cleanly — no separate locate command
+  is needed. Note that MIDI Stop alone does not reset the grid; only the
+  subsequent Start does. In Hydrogen, stopping transport resets the pattern
+  to its beginning and sending Start resumes from there, so the Stop+Start
+  pair gives automatic bar-1 alignment on each resume. Tempo is derived by
+  measuring the interval between quarter-note beats (every 24 ticks) rather
+  than reading a reported BPM, so it requires at least one beat after Start
+  before locking to the correct value.
 - *JACK Transport* — tempo is provided by the JACK time master (a DAW,
-  Hydrogen, or any other transport master).
+  Hydrogen, or any other transport master). SooperLooper's sync grid is
+  anchored to JACK transport position 0: boundary pulses fall at exact
+  multiples of the quantize interval counting from that origin, so the
+  grid is fully determined by tempo, Eighths/Cycle, and the starting
+  position — not by when you press Record. Locating the transport back
+  to position 0 re-aligns SooperLooper's grid with the master's grid
+  cleanly. Locating to a non-zero position, or changing Eighths/Cycle
+  mid-transport without a locate, can shift the grids out of alignment.
+  Simply stopping and restarting transport without a locate preserves
+  alignment, since both SooperLooper and the master resume from the same
+  frame position.
 - *Loop N* — any existing loop can be the sync source. The tempo is derived
   from that loop's length divided by Eighths/Cycle, so Eighths/Cycle must be
   set correctly for this to work.
@@ -42,8 +61,6 @@ These are independent: you can have a sync source configured without the Sync
 checkbox enabled on any loop, and vice versa. Neither does anything useful
 without the other.
 
-----
-
 Eighths/Cycle
 -------------
 
@@ -56,11 +73,19 @@ two-bar phrase, use 16.
 
 **What it affects**
 
-*Sync calculations.* When using Rel Sync, Quantize 8th, or Quantize Cycle, the
-engine converts Eighths/Cycle and the current tempo into a ``syncSamples``
-value: the half-period used for boundary detection, Play Sync, and Rel Sync's
-phase-offset correction. The formula is:
-``syncSamples = (sampleRate * 30 / tempo) * eighthsPerCycle / 2``.
+*Snap grid interval — Quantize = Cycle only.* Eighths/Cycle directly controls
+the snap-grid spacing **only when Quantize is set to Cycle**. One cycle equals
+the number of eighth notes you specify. Examples at any tempo in 4/4 time:
+Eighths/Cycle 2 → quarter-note snaps; 4 → half-note snaps; 8 → bar snaps.
+With Quantize set to 8th the snap is always one eighth note regardless of this
+setting. With Quantize Off there is no snap grid at all.
+
+*Play Sync and Rel Sync half-period.* The engine converts Eighths/Cycle and
+the current tempo into a half-period value (``syncSamples``) used for Play Sync
+boundary detection and the Rel Sync phase-offset correction. For Quantize =
+Cycle this is ``syncSamples = (sampleRate × 30 / tempo) × eighthsPerCycle / 2``.
+For Quantize = 8th the value is half an eighth-note period, which does not
+involve Eighths/Cycle.
 
 *Loop-as-sync-source.* When another loop is the sync source, there is no
 external BPM reference. The tempo is derived from the loop's length divided
@@ -73,14 +98,13 @@ length (``lCycleLength``), not in units of Eighths/Cycle. If you record a
 two-bar loop and Multiply it, each pass adds one two-bar unit regardless of
 this setting.
 
-----
-
 Quantize
 --------
 
 **What it does**
 
-The Quantize button selects the snap resolution. There are four modes:
+The Quantize selector determines the snap resolution for sync operations. There
+are four modes:
 
 - **Off** — no snap-grid subdivisions for internal sync or Rel Sync.
   With Sync also off, presses take effect immediately. With Sync on and an
@@ -135,6 +159,29 @@ pulse. Without this correction, any press arriving after the pulse is treated
 as belonging to the next cycle — one full pulse interval later — regardless
 of how slightly late it was.
 
+A second session-file parameter, ``late_hit_max_8th_fraction``, caps the
+window as a fraction of one eighth note. At fast tempos a fixed-ms window
+can span a significant portion of the beat, potentially snapping a press
+genuinely aimed at the *next* boundary back to the *previous* one. For example,
+at 200 BPM an eighth note is about 75 ms, so the default 100 ms window
+would exceed it. Setting ``late_hit_max_8th_fraction`` to 0.5 caps the window
+at half an eighth note regardless of tempo. The default of 100.0 disables the
+cap, leaving ``late_hit_window_ms`` as the sole limit. Both parameters live in
+the ``<Globals>`` section of the ``.slsess`` session file.
+
+*Planned: ``late_hit_max_quant_unit_fraction``.* A future revision may rename
+this parameter and change its reference unit from an eighth note to the full
+quantize interval — one cycle when Quantize is set to Cycle, one eighth note
+when Quantize is set to 8th. (Quantize = Loop is not supported for late-hit
+correction regardless of this parameter: no periodic sync pulses are generated
+in that mode, so the correction window never fires.) Under the new scheme a
+value of 0.25 would cap the window at one-quarter of the quantize interval
+regardless of tempo or Eighths/Cycle, which is a more direct expression of
+"do not correct presses that are more than X% of the way to the next
+boundary." The implementation is a one-line formula change plus a session-key
+rename. This paragraph will be updated or removed when that change is
+implemented; sessions using the default value of 100.0 will not need updating.
+
 The boundary being corrected back to is the last sync pulse, tracked by the
 ``lGlobalSamplesSinceSync`` counter which counts samples elapsed since the
 most recent pulse in all states. The counter increments in all engine
@@ -150,8 +197,6 @@ press is corrected back to the barline regardless of Quantize setting.
 What Quantize Off does disable is Play Sync drift correction and the Rel
 Sync half-period phase offset correction, both of which require a non-zero
 ``syncSamples`` value.
-
-----
 
 Sync checkbox + Quantize — the full picture
 --------------------------------------------
@@ -181,8 +226,6 @@ These two settings combine as follows:
      - Cycle/8th/Loop
      - Snaps to next sync pulse
      - Corrected back to current pulse if within window
-
-----
 
 Multiply
 --------
@@ -254,8 +297,6 @@ After Multiply, ``lLoopLength`` is longer but ``lCycleLength`` stays the same
 (the original loop length). Subsequent Multiply passes add one ``lCycleLength``
 unit per pass. Overdub and Replace span the full new length.
 
-----
-
 Round
 -----
 
@@ -305,7 +346,6 @@ determine where boundaries fall. The separate Round Integer Tempo parameter
 (``pfRoundIntegerTempo``, not the Round button) applies a different mechanism
 in the Record/Stop path: it finds the nearest integer-BPM interpretation of
 the current loop length and extends the recording to that exact length.
-
 
 Insert
 ------
@@ -370,8 +410,6 @@ then returns to play. The ``bReplaceQuantized`` (Replace Quant) flag controls
 whether Substitute start is sync-gated — the same flag as Replace, not a
 separate control.
 
-----
-
 Play Sync
 ---------
 
@@ -393,8 +431,6 @@ drift out of phase as the two run independently. With Play Sync on, the loop
 is nudged back into phase alignment on each sync pulse, as long as it is close
 to a boundary. It does not do any time-stretching — it is a position
 correction only, so it is effective only for small accumulated drift.
-
-----
 
 Rel Sync (Relative Sync)
 ------------------------
@@ -444,7 +480,6 @@ offset that can cause slight misalignment on subsequent pulses.
 Rel Sync requires a live sync signal. Without a sync source, the stop
 condition never fires and the playback re-cue never runs.
 
-
 Overdub Quant, Replace Quant, and Mute Quant
 --------------------------------------------
 
@@ -492,11 +527,11 @@ in time, not *back* to a recent one. They are used to control texture
 mid-performance (layering, muting, replacing a section) rather than to define
 loop boundaries. The user is not trying to hit a precise boundary — they are
 performing within an existing loop and the sync wait is a forward-looking
-cleanup, not a correction of a missed entry point. Late-hit correction only
-applies to Record, Multiply end, and Insert start/end because those are the
+cleanup, not a correction of a missed entry point. Late-hit correction applies
+only to **Record start**, **Record stop**, and **Multiply end** — the three
 operations where the user is explicitly trying to land on a specific boundary.
-
-----
+Insert end already fires at the exact sample of the press and needs no
+correction; Insert start correction is not yet implemented.
 
 A note on Overdub
 -----------------
@@ -505,8 +540,6 @@ Overdub is not quantized in normal operation — it starts and stops immediately
 when the button is pressed, regardless of Sync or Quantize settings. An
 internal ``OverdubQuantized`` parameter exists in the engine (``pfOverdubQuantized``)
 but defaults to off and is not exposed in the standard GUI.
-
-----
 
 Summary table
 -------------
@@ -527,8 +560,9 @@ Summary table
      - Sync source active
      - No sync source
    * - **Quantize** Off/Cycle/8th/Loop
-     - Subdivision for Rel Sync and Play Sync; enables late-hit window
-     - Sync checkbox on (for late-hit window), or Rel Sync on
+     - Subdivision for Rel Sync phase-offset correction and Play Sync
+       boundary detection; does **not** affect the late-hit window
+     - Rel Sync on, or Sync on with Play Sync enabled
      - Sync and Rel Sync both off
    * - **Round**
      - Multiply/Insert end on a complete cycle boundary
@@ -546,8 +580,6 @@ Summary table
      - Cycle period for sync calculations; defines tempo if loop is source
      - Rel Sync, Quantize Cycle/8th/Loop, or loop-as-sync-source
      - Absolute external-pulse sync with no Rel Sync
-
-----
 
 Big-picture control flow (pseudocode)
 --------------------------------------
@@ -579,21 +611,26 @@ audio detail to focus on the control logic.
                     if fSyncMode == 0 and not bRoundIntegerTempo:
                         → STATE_PLAY immediately
                     elif late-stop window:
-                        # (fSyncMode > 0 and 0 < T <= shiftSamples)
-                        trim lLoopLength by T
+                        # (fSyncMode > 0 and 0 < T <= shiftSamples
+                        #  and bSyncPulseReceived)
+                        trim lLoopLength by T; lCycleLength = lLoopLength; lCycles = 1
                         set dCurrPos = lLoopLength + latency + T
                         → STATE_PLAY immediately
                     else:
                         → STATE_TRIG_STOP  # wait for next sync pulse
 
                 default:                    # first press = start recording
-                    shiftSamples = g_late_hit_window_ms * sampleRate / 1000
+                    shiftSamples = effectiveLateHitWindow(sampleRate, tempo,
+                                       eighthPerCycle)  # ms cap + 8th-fraction cap
+                                       # (session params: late_hit_window_ms,
+                                       #  late_hit_max_8th_fraction)
                     if fSyncMode > 0
-                       and 0 < T <= shiftSamples:
+                       and 0 < T <= shiftSamples
+                       and bSyncPulseReceived:   # false until first real pulse
                         # late-hit correction
                         allocate loop buffer
                         backfill T samples from input ring buffer
-                          at readPos = inputWritePos - T - inputLatency
+                          at readPos = inputWritePos - T  # no latency term
                         dCurrPos = T
                         → STATE_RECORD immediately
                     elif fSyncMode > 0:
@@ -650,8 +687,6 @@ audio detail to focus on the control logic.
         # natural wrap:
         dCurrPos = fmod(dCurrPos, lLoopLength)  # wraps at each loop end
 
-----
-
 Common setups for live performance
 -----------------------------------
 
@@ -664,6 +699,38 @@ determine loop length by feel.
 Sync To: JACK Transport or MIDI Clock. Sync checkbox on, Quantize Cycle. The
 source provides the beat; SooperLooper snaps every loop to exact bar multiples.
 The late-hit window means you can press by feel without watching a metronome.
+
+**Tempo changes from an external JACK master**
+Sync To: JACK Transport. Sync checkbox on, Quantize Cycle. When the JACK time
+master sends a new tempo and you reset the transport to position 0 —
+for example via a footswitch — SooperLooper picks up the new tempo on the
+first rolling buffer and its sync grid re-anchors to position 0 alongside
+the master. The grids stay aligned across every tempo change as long as each
+one is accompanied by a locate back to position 0. Note that this workflow
+applies when your master (e.g. Hydrogen) changes tempo via an external command
+(such as an OSC message) while remaining in a single pattern; Hydrogen's song
+mode would be needed for pre-programmed tempo sequences.
+
+If you also change Eighths/Cycle between patterns (for example switching from
+a 4-beat to a 3-beat cycle), pair that change with the same locate to 0.
+SooperLooper recalculates its pulse grid immediately when Eighths/Cycle changes;
+without a locate, the new grid is anchored to frame 0 but SooperLooper's current
+transport position may land at an arbitrary point within the new cycle until the
+next pulse arrives.
+
+Simply stopping and restarting transport without a locate does not require a
+reset when using JACK sync: SooperLooper and Hydrogen both resume from the same
+frame position and remain in sync. Hydrogen in pattern mode does not
+auto-reset to bar 1 on a JACK transport stop — only an explicit locate to
+position 0 returns to bar 1. (With MIDI Clock sync the situation is different:
+Hydrogen resets its pattern on MIDI Stop, and the subsequent MIDI Start
+resets SooperLooper's tick counter automatically, giving implicit bar-1
+alignment on every Stop+Start without any locate command.)
+
+If tempos vary significantly between patterns, consider setting
+``late_hit_max_8th_fraction`` in the session file (e.g. 0.4–0.5): at fast
+tempos a fixed-ms window covers a larger fraction of the beat, and the cap
+prevents it from accidentally reaching the next cycle.
 
 **Building up layered parts live**
 Sync on, Quantize Cycle, Round on. Record a short seed loop (one or two bars),
@@ -695,3 +762,4 @@ together.
 Sync To: MIDI Clock. Sync on, Quantize Cycle, Play Sync on. The loop snaps to
 bar lines on record; Play Sync nudges playback back into phase on each incoming
 clock pulse if the MIDI source drifts slightly.
+

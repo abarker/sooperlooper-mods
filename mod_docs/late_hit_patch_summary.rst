@@ -82,7 +82,7 @@ producing a loop that starts one full cycle late. Instead:
 4. The engine enters ``STATE_RECORD`` directly rather than ``STATE_TRIG_START``.
 
 The result: the loop content starts at exactly the sync boundary as if the button had been
-pressed on time.
+pressed on time.  Late starts are perfectly corrected.
 
 Late Record Stop
 ~~~~~~~~~~~~~~~~
@@ -96,6 +96,12 @@ Instead:
    lInputLatency + T`` — the same formula as the normal ``STATE_TRIG_STOP`` path, plus
    *T* to compensate for having entered ``STATE_PLAY`` *T* samples late in real time.
 3. The engine enters ``STATE_PLAY`` directly.
+
+Note that with the late-hit corrections, stop-hit accuracy is more important
+than start-hit accuracy.  This is because a late stop results in an audible
+delay in the start of the first loop (which is corrected on later loop
+repetitions).  In a DAW, a performance with a late-stop error can be repaired
+by carefully copying one of the correct loop plays to the first loop play.
 
 After the first natural wrap, ``dCurrPos`` lands at ``lOutputLatency + lInputLatency`` —
 identical to a normal on-time loop. No rewind or special first-play handling is needed.

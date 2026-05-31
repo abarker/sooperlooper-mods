@@ -1,7 +1,7 @@
 #!/bin/bash
 
-qjackctl &
+qjackctl & # This assumes you use Qjackctl to start up Jack audio.
+sleep 2
 make
 python3 -m pytest -v
-
 

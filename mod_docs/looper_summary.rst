@@ -2,6 +2,10 @@
 SooperLooper 1.7.9 — ``looper.hpp`` / ``looper.cpp`` Compilation Unit Summary
 ================================================================================
 
+This is an earlier analysis of the code, especially with respect to latencies.
+It discusses Mididings in the context of receiving MIDI input to the new Jack
+MIDI port via a MIDI controller but remapped by software based on Mididings.
+
 :Author: Analysis of source by Jesse Chappell <jesse@essej.net>
 :Version: SooperLooper 1.7.9
 :License: GNU General Public License v2+
@@ -2705,22 +2709,8 @@ Possible Future Addition: JACK MIDI Output Port
 
 SooperLooper can optionally send MIDI output: MIDI sync/clock (to
 keep external devices in time with the loops) and MIDI feedback to
-controllers (e.g. lighting footswitch LEDs).  These currently leave
-via the ALSA MIDI port managed by ``MidiBridge``.  Since ``a2jmidid``
-is no longer running, that ALSA output is unreachable from the JACK
-graph.
+controllers (e.g. lighting footswitch LEDs).
 
-A JACK MIDI output port could be added following the same pattern as
-the input:
+A JACK MIDI output port has now been added to the code, but not yet
+tested.
 
-- Register ``jack_port_t * _jack_midi_out_port`` with
-  ``JackPortIsOutput`` in ``initialize()``
-- In ``process()``, after the looper run calls, drain
-  ``MidiBridge``'s MIDI output queue into the JACK MIDI output buffer
-  using ``jack_midi_event_write()``
-
-The output path in ``MidiBridge`` would need to be inspected to
-understand how outgoing MIDI is currently queued, but the pattern is
-symmetric with the input and the estimated cost is similar (~30 lines).
-This has not yet been implemented; the system is being tested with
-input only first.
