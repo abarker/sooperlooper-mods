@@ -189,6 +189,11 @@ static void sl_dbg_open() {
             sl_dbg_file = stderr;
             fprintf(stderr, "SooperLooper: could not open log file, using stderr\n");
         } else {
+            // Switch to line-buffered mode so SL_LOG_RT messages (which have no
+            // fflush) appear immediately after each '\n' rather than accumulating
+            // in the default 8 KB full-buffer until program exit.
+            // Must be called before any write to the stream.
+            setvbuf(sl_dbg_file, NULL, _IOLBF, 0);
             fprintf(sl_dbg_file, "SooperLooper: log file opened\n");
             fflush(sl_dbg_file);
         }
@@ -225,7 +230,7 @@ static void sl_dbg_open() {
 // SYNCWDEBUG: per-press sync timing diagnostics.
 // Comment out #define SYNCWDEBUG to suppress per-press log messages.
 // SL_LOG startup banners are unaffected and always appear.
-//#define SYNCWDEBUG
+#define SYNCWDEBUG
 #ifdef SYNCWDEBUG
 #define SYNCWDBG(x) x
 #else
