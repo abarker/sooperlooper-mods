@@ -98,43 +98,49 @@ using namespace SooperLooper;
 // LADSPA port (matching all the other parameters) and remove this global.
 float g_late_hit_window_ms = LATE_HIT_WINDOW_MS;
 
-// Maximum fraction of one eighth note that the late-hit window may span.
+// Maximum fraction of one quantize cycle that the late-hit window may span.
 // effectiveLateHitWindow() always evaluates both limits and returns the
 // smaller:
 //
 //     min( g_late_hit_window_ms * 0.001 * sampleRate,
-//          g_late_hit_max_8th_fraction * lLastSyncPeriodSamples / eighthPerCycle )
+//          g_late_hit_max_quant_unit_fraction * lLastSyncPeriodSamples )
+//
+// lLastSyncPeriodSamples is the full quantize-cycle period in samples
+// (eighthSamples * eighthPerCycle for QUANT_CYCLE, eighthSamples for
+// QUANT_8TH), so the fraction term is relative to one complete cycle
+// regardless of Eighths/Cycle or quantize mode.  A value of 0.25 means
+// "at most 25 % of one cycle", directly and intuitively.
 //
 // Setting either parameter to a sufficiently large value renders that term
 // larger than any practical T, so the other term wins exclusively:
 //
-//   Large g_late_hit_max_8th_fraction  →  only the ms cap matters.
-//   Large g_late_hit_window_ms         →  only the 8th-fraction cap matters.
+//   Large g_late_hit_max_quant_unit_fraction  →  only the ms cap matters.
+//   Large g_late_hit_window_ms                →  only the fraction cap matters.
 //
 // Setting EITHER parameter to zero makes the corresponding term zero, so the
 // minimum is zero and the late-hit window is disabled entirely, reverting to
 // stock SooperLooper behaviour.  Setting BOTH to zero has the same effect.
 //
-// The default (100.0 = 100 eighth notes) is intentionally absurd so that the
+// The default (100.0 = 100 cycles) is intentionally large so that the
 // fraction term is always much larger than the ms term at any musical tempo,
 // giving the same behaviour as before this parameter was added.
 //
-// A value of 0.5 caps the window at 50 % of one measured eighth note, which
-// prevents a late press from snapping back to the *previous* boundary at fast
-// tempos where the ms window would otherwise span more than half an eighth.
+// A value of 0.5 caps the window at 50 % of one quantize cycle, which
+// prevents a late press from snapping back to the *previous* boundary when
+// the ms window would otherwise span more than half the cycle.
 //
 // lLastSyncPeriodSamples is initialised to ULONG_MAX in activate() so that
 // the fraction term is effectively infinite before the first complete sync
 // period is measured; the ms term therefore wins until real tempo data
 // arrives, regardless of the configured fraction.
 //
-// Both globals are saved and loaded from the session file via looper.cpp's
-// get_state() / set_state() as the XML properties "late_hit_window_ms" and
-// "late_hit_max_8th_fraction" on each Looper node.  The compile-time
-// constants below are the fallback when loading a session that pre-dates
-// this patch.
-#define LATE_HIT_MAX_8TH_FRACTION 100.0f
-float g_late_hit_max_8th_fraction = LATE_HIT_MAX_8TH_FRACTION;
+// Both globals are saved and loaded from the session file as XML properties
+// "late_hit_window_ms" and "late_hit_max_quant_unit_fraction" in the
+// <Globals> node (written/read by engine.cpp save_session/load_session).
+// The compile-time constants below are the fallback when loading a session
+// that pre-dates this patch.
+#define LATE_HIT_MAX_QUANT_UNIT_FRACTION 100.0f
+float g_late_hit_max_quant_unit_fraction = LATE_HIT_MAX_QUANT_UNIT_FRACTION;
 
 // Compile-time safety switch for the Multiply-end late-hit correction.
 // Set to 0 to disable only the Multiply-end correction while leaving
@@ -189,11 +195,6 @@ static void sl_dbg_open() {
             sl_dbg_file = stderr;
             fprintf(stderr, "SooperLooper: could not open log file, using stderr\n");
         } else {
-            // Switch to line-buffered mode so SL_LOG_RT messages (which have no
-            // fflush) appear immediately after each '\n' rather than accumulating
-            // in the default 8 KB full-buffer until program exit.
-            // Must be called before any write to the stream.
-            setvbuf(sl_dbg_file, NULL, _IOLBF, 0);
             fprintf(sl_dbg_file, "SooperLooper: log file opened\n");
             fflush(sl_dbg_file);
         }
@@ -243,18 +244,24 @@ static void sl_dbg_open() {
 // Always evaluates both limits and returns the smaller:
 //
 //     min( g_late_hit_window_ms * 0.001 * sampleRate,
-//          g_late_hit_max_8th_fraction * lLastSyncPeriodSamples / eighthPerCycle )
+//          g_late_hit_max_quant_unit_fraction * lLastSyncPeriodSamples )
+//
+// lLastSyncPeriodSamples is the full quantize-cycle period (one cycle =
+// eighthPerCycle eighth-notes for QUANT_CYCLE; one eighth-note for QUANT_8TH).
+// Multiplying by g_late_hit_max_quant_unit_fraction therefore expresses the
+// cap as a direct fraction of one cycle: 0.25 → 25 % of a cycle, regardless
+// of Eighths/Cycle or quantize mode.
 //
 // The intermediate product is kept in double to handle the ULONG_MAX sentinel
 // that activate() stores in lLastSyncPeriodSamples before the first measured
 // sync period: the resulting fractionLimit is then much larger than any
 // practical msLimit, so the ms term wins until real tempo data is available.
 //
-// Division by zero (eighthPerCycle == 0) is the only case that cannot be
-// expressed via a "large value" convention; it is caught explicitly and falls
-// back to msLimit.
+// The eighthPerCycle parameter is retained in the signature for call-site
+// compatibility but is no longer used in the formula.
 static inline unsigned long effectiveLateHitWindow(const SooperLooperI *pLS,
                                                     unsigned int eighthPerCycle) {
+    (void)eighthPerCycle; // formerly used for / eighthPerCycle division; now unused
     unsigned long msLimit =
         (unsigned long)(g_late_hit_window_ms * 0.001f * pLS->fSampleRate);
     // Hard cap: backfill reads from pfInputLatencyBuf which is lInputBufSize
@@ -264,10 +271,8 @@ static inline unsigned long effectiveLateHitWindow(const SooperLooperI *pLS,
     // window further, never enlarge it, so one cap here is sufficient.
     if (msLimit >= pLS->lInputBufSize)
         msLimit = pLS->lInputBufSize - 1;
-    if (eighthPerCycle == 0) return msLimit; // guard: cannot encode as large value
-    double fractionLimit = (double)g_late_hit_max_8th_fraction
-                           * (double)pLS->lLastSyncPeriodSamples
-                           / (double)eighthPerCycle;
+    double fractionLimit = (double)g_late_hit_max_quant_unit_fraction
+                           * (double)pLS->lLastSyncPeriodSamples;
     // If fractionLimit >= msLimit the ms term wins; cast is safe because
     // fractionLimit < msLimit guarantees it fits in unsigned long.
     if (fractionLimit >= (double)msLimit) return msLimit;
@@ -2066,7 +2071,7 @@ runSooperLooper(LADSPA_Handle Instance,
   // what the pulse scanner measures between cycle boundaries).  Note: NOT
   // divided by 2 — syncSamples uses /2 for quantize-period purposes, but
   // lLastSyncPeriodSamples must be the full cycle for effectiveLateHitWindow
-  // to compute fractionLimit = g_late_hit_max_8th_fraction * one_eighth_note.
+  // to compute fractionLimit = g_late_hit_max_quant_unit_fraction * one_cycle.
   //
   // Gated on fSyncMode: completely inactive when sync is disabled.  This
   // means zero impact on JACK-mode usage without the sync checkbox.

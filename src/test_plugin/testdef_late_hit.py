@@ -42,9 +42,21 @@ class LateHitTestCase(unittest.TestCase):
         # and OUTSIDE_BUFS is outside.  Use WITHIN_BUFS+1 as the exact ceiling.
         self._set_window(self.WITHIN_BUFS + 1)
 
-        self.looper.set_port(test_engine.Sync, 1.0)
-        self.looper.sync_inject_enabled = True
+        # Arm sync injection BEFORE raising fSyncMode to 1.  BLOCK 8 in plugin.cc
+        # runs on every JACK callback whenever fSyncMode >= 1.0, and reads
+        # pfSyncInput (= _our_syncin_buf) immediately.  _our_syncin_buf is
+        # allocated with `new` and contains uninitialized memory until the fill
+        # loop runs for the first time.  If set_port(Sync, 1.0) were called first,
+        # a JACK callback could fire between that call and the two lines below,
+        # reading garbage from the uninitialised buffer.  Any sample > 1.5 would
+        # set bSyncPulseReceived = true on instance 0, invalidating the guard that
+        # testNoCorrection_Stop_NoPriorPulse relies on.
+        #
+        # Correct order: enable injection and set value to 0.0 first, so the buffer
+        # is filled with 0.0 before BLOCK 8 can see it.
         self.looper.sync_inject_value   = 0.0   # no signal
+        self.looper.sync_inject_enabled = True   # fill buffer before fSyncMode=1
+        self.looper.set_port(test_engine.Sync, 1.0)
 
     def tearDown(self):
         test_engine.cvar.g_late_hit_window_ms = _DEFAULT_WINDOW_MS

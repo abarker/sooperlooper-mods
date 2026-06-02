@@ -62,7 +62,9 @@ using namespace sigc;
 // See the comment block in plugin.cc for the full rationale on why this
 // uses a plain global rather than a LADSPA port.
 extern float g_late_hit_window_ms;
-extern float g_late_hit_max_8th_fraction; //------ albBegin/albEnd (same patch)
+// Maximum fraction of one quantize cycle for the late-hit window.  Defined
+// and defaulted in plugin.cc; saved/loaded here alongside g_late_hit_window_ms.
+extern float g_late_hit_max_quant_unit_fraction;
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
@@ -3139,15 +3141,15 @@ Engine::load_session (std::string fname, string * readstr)
 				g_late_hit_window_ms = val;
 			}
 		}
-		if ((prop = globals_node->property ("late_hit_max_8th_fraction")) != 0) {
+		if ((prop = globals_node->property ("late_hit_max_quant_unit_fraction")) != 0) {
 			float val;
 			if (sscanf (prop->value().c_str(), "%g", &val) == 1 && val >= 0.0f) {
-				g_late_hit_max_8th_fraction = val;
+				g_late_hit_max_quant_unit_fraction = val;
 			}
 		}
 		fprintf(stderr,
 		        "SooperLooper: late_hit_window_ms loaded from session: %.4g ms"
-		        " (8th_fraction cap: %.4g)"
+		        " (quant_unit_fraction cap: %.4g)"
 #ifdef ALB_RT_SAFE_COND_SIGNAL
 		        "  rt_safe_cond_signal: ON"
 #else
@@ -3158,7 +3160,7 @@ Engine::load_session (std::string fname, string * readstr)
 #else
 		        "  tempo_only_when_rolling: OFF\n",
 #endif
-		        g_late_hit_window_ms, g_late_hit_max_8th_fraction);
+		        g_late_hit_window_ms, g_late_hit_max_quant_unit_fraction);
 		//------ albEnd ----------------------------------
 
 	}
@@ -3258,8 +3260,8 @@ Engine::save_session (std::string fname, bool write_audio, string * writestr)
 	//------ albBegin ----------------------------------
 	snprintf(buf, sizeof(buf), "%.10g", g_late_hit_window_ms);
 	globals_node->add_property ("late_hit_window_ms", buf);
-	snprintf(buf, sizeof(buf), "%.10g", g_late_hit_max_8th_fraction);
-	globals_node->add_property ("late_hit_max_8th_fraction", buf);
+	snprintf(buf, sizeof(buf), "%.10g", g_late_hit_max_quant_unit_fraction);
+	globals_node->add_property ("late_hit_max_quant_unit_fraction", buf);
 	//------ albEnd ----------------------------------
 
 	
