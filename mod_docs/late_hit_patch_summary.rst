@@ -4,7 +4,8 @@ SooperLooper Late-Hit Recording Modification Summary
 | **Base version:** SooperLooper 1.7.9
 | **Modified files:** ``src/plugin.cc``, ``src/plugin.hpp``, ``src/engine.cpp``,
 | ``src/engine.hpp``, ``src/looper.cpp``, ``src/looper.hpp``, ``src/audio_driver.hpp``,
-| ``src/jack_audio_driver.hpp``, and some test files in ``src/test_plugin``.
+| ``src/jack_audio_driver.hpp``, ``src/jack_audio_driver.cpp``,
+| and some test files in ``src/test_plugin``.
 | **All new code sections** are bracketed with ``albBegin`` / ``albEnd`` markers.
 | In ``plugin.cc`` and ``plugin.hpp`` the markers are ``//====== albBegin`` /
 | ``//====== albEnd``; in all other files they are ``//------ albBegin`` /
@@ -14,9 +15,11 @@ SooperLooper Late-Hit Recording Modification Summary
 .. tip:: **Quick Start**
 
    The late-hit correction is active immediately after compiling — no session file
-   changes are required. The compile-time defaults (100ms ms cap, 0.5 eighth-note
-   fraction cap) are used whenever the session file does not contain the late-hit
-   keys, and are a good starting point for most tempos.
+   changes are required. The compile-time defaults (100 ms cap; fraction cap disabled at 100.0) are
+   used whenever the session file does not contain the late-hit keys.  Setting
+   ``late_hit_max_quant_unit_fraction`` to a value like 0.5 caps the window at
+   half the current quantize cycle (useful at faster tempos where the ms cap
+   would otherwise allow a press that is more than half a cycle late).
 
    To change the values:
 
@@ -27,7 +30,7 @@ SooperLooper Late-Hit Recording Modification Summary
       and add the two late-hit keys at the end of its attribute list, before the
       closing ``/>``::
 
-          late_hit_max_8th_fraction="0.5" late_hit_window_ms="100"
+          late_hit_max_quant_unit_fraction="0.5" late_hit_window_ms="100"
 
       A complete ``<Globals>`` element looks like this (your other values will
       differ)::
@@ -36,11 +39,82 @@ SooperLooper Late-Hit Recording Modification Summary
            input_gain="1" sync_source="-1" auto_disable_latency="1"
            jack_timebase_master="0" output_midi_clock="0" use_midi_start="0"
            use_midi_stop="0" send_midi_start_on_trigger="0" smart_eighths="0"
-           late_hit_max_8th_fraction="0.5" late_hit_window_ms="100"/>
+           late_hit_max_quant_unit_fraction="0.5" late_hit_window_ms="100"/>
 
    3. **Restart SooperLooper** with the session file::
 
           sooperlooper --load-session yourfile.slsess
+
+
+What This Patch Adds at a Glance
+---------------------------------
+
+A concise inventory of all significant capabilities added to SooperLooper 1.7.9.
+
+- **Late-hit Record start correction.** A Record press arriving within the
+  configurable window after a sync boundary immediately creates the loop buffer,
+  backfills *T* samples from the input ring buffer, and enters ``STATE_RECORD``
+  directly — as if the button had been pressed on time.
+
+- **Late-hit Record stop correction.** A Stop press within the window trims *T*
+  samples from the loop length, advances ``dCurrPos`` to compensate for the
+  late entry into ``STATE_PLAY``, and enters ``STATE_PLAY`` directly.
+
+- **Late-hit Multiply end correction.** The same window logic applied to Multiply
+  end; guarded by the ``LATE_HIT_MULTIPLY_CORRECTION`` compile flag (disable with
+  value 0 if regressions appear).
+
+- **Configurable two-cap window.** The correction fires only within
+  ``min(g_late_hit_window_ms, g_late_hit_max_quant_unit_fraction × cycle_samples)``,
+  hard-clamped to the input ring buffer depth.  Both values are saved in and loaded
+  from the session file ``<Globals>`` node.
+
+- **Direct JACK MIDI input port** (``sooperlooper:midi_in``).  Receives MIDI
+  commands with sub-buffer sample-accurate timestamps, bypassing the ALSA /
+  ``a2jmidid`` path.
+
+- **Sub-buffer TriggerLatency correction for JACK MIDI events.**  The sample
+  offset of each inbound JACK MIDI event (``jack_ev.time``) is stored as
+  ``_pending_event_offset``; the following ``run()`` call zeros ``TriggerLatency``
+  for that segment so no additional latency compensation is applied to an event
+  that is already placed at its exact physical sample.
+
+- **Direct JACK MIDI output port** (``sooperlooper:midi_out``).  Generates
+  24-ppqn MIDI clock via a phase accumulator for sample-accurate tick placement,
+  and sends MIDI Start / Stop on JACK Transport transitions.  Replaces the need
+  for ``a2jmidid`` when driving external hardware from SooperLooper.
+
+- **BBT-based JackSync pulse placement** (``ALB_BBT_SYNC``).
+  ``Engine::generate_sync()`` uses JACK BBT position fields supplied by the
+  timebase master (bar, beat, tick, bar_start_tick, ticks_per_beat) to anchor
+  sync pulses to the master's musical grid.  Correctly handles locates to
+  non-zero transport positions and mid-transport Eighths/Cycle changes.  Falls
+  back automatically to the stock ``fmod(framepos, _tempo_frames)`` arithmetic
+  when the timebase master does not supply BBT data, or when the compile flag
+  is disabled.
+
+- **RT-safety: suppressed** ``pthread_cond_signal`` **from RT callback**
+  (``ALB_RT_SAFE_COND_SIGNAL``).  Three calls in ``generate_sync()`` that
+  can cause priority inversion and xruns are suppressed; the main event loop's
+  existing ``timedwait`` handles wakeup instead.
+
+- **RT-safety: gated tempo update** (``ALB_TEMPO_ONLY_WHEN_ROLLING``).
+  The JACK Transport tempo path in ``generate_sync()`` is skipped unless
+  transport is actually rolling, preventing spurious non-RT-safe ``set_tempo()``
+  calls during locate transitions.
+
+- **Session persistence for late-hit parameters.**  ``late_hit_window_ms`` and
+  ``late_hit_max_quant_unit_fraction`` are written and read in the ``<Globals>``
+  node of the ``.slsess`` session file.
+
+- **Stereo safety in internal sync mode.**  ``bLateHitBypassed`` is set on slave
+  channels whenever one looper drives another, preventing L/R divergence that
+  would otherwise arise from different *T* values on each channel.
+
+- **Sync-source change reset.**  ``Looper::reset_late_hit_state()`` clears
+  ``bSyncPulseReceived``, ``lGlobalSamplesSinceSync``, and
+  ``lLastSyncPeriodSamples`` whenever the sync source changes, preventing stale
+  period data from the old source affecting the first presses on the new one.
 
 Problem Being Solved
 --------------------
@@ -154,6 +228,51 @@ correction is needed. ALSA MIDI events, which carry no sub-buffer position, alwa
 The result is that JACK MIDI controller presses are handled with higher timing accuracy
 than ALSA MIDI.
 
+
+BBT-Based JackSync Pulse Placement
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When ``ALB_BBT_SYNC`` is defined (the default), ``Engine::generate_sync()``
+uses JACK BBT position fields from the timebase master to determine where sync
+pulses fall within each buffer, rather than computing position as
+``fmod(framepos, _tempo_frames)`` anchored to JACK frame 0.
+
+The stock formula breaks in two real scenarios.  First, after a transport
+locate to a non-zero position: ``fmod(new_pos, _tempo_frames)`` gives a
+non-zero phase offset unless the locate target happens to be an exact multiple
+of ``_tempo_frames`` from frame 0, which it generally is not.  Second, after a
+mid-transport Eighths/Cycle change: ``_tempo_frames`` updates immediately, but
+``fmod(framepos, new_tempo_frames)`` then anchors to a different grid from what
+the timebase master uses.  Both problems are avoided in practice by always
+locating to position 0 before recording, but the BBT path makes the code
+correct unconditionally.
+
+``JackAudioDriver::get_transport_info()`` now populates six additional fields in
+``TransportInfo`` when the timebase master has set the ``JackPositionBBT`` valid
+bit: ``bar``, ``beat``, ``tick``, ``bar_start_tick``, ``ticks_per_beat``, and
+the ``bbt_valid`` flag.  ``generate_sync()`` checks ``bbt_valid`` and, when
+true, computes::
+
+    ticks_per_sample = bpm × ticks_per_beat / (60 × SR)
+    ticks_per_cycle  = _tempo_frames × ticks_per_sample
+    cum_ticks        = bar_start_tick + (beat − 1) × ticks_per_beat + tick
+    ticks_at_start   = fmod(cum_ticks, ticks_per_cycle)
+    thisval          = lrint(ticks_at_start / ticks_per_sample)
+
+Because ``_tempo_frames`` already encodes the correct cycle length for the
+current quantize mode (QUANT_8TH or QUANT_CYCLE), ``ticks_per_cycle`` is correct
+for both modes without any quantize-mode branching.
+
+The ``beat_type == 4`` guard limits the BBT path to quarter-note beat signatures
+(the universal case for Hydrogen and essentially all JACK timebase masters).
+Any other denominator falls through to the stock ``fmod`` path rather than
+computing wrongly.  PipeWire's JACK compatibility layer implements the full BBT
+API; no special handling is needed.
+
+Commenting out ``#define ALB_BBT_SYNC`` in ``audio_driver.hpp`` removes the BBT
+fields from ``TransportInfo`` entirely and restores verbatim stock
+``generate_sync()`` behaviour.
+
 Configurable Window Size
 ------------------------
 
@@ -167,24 +286,28 @@ other engine-level settings. To change it, edit the session file in a text edito
 restart the engine. If the key is absent (older session files), the compile-time default
 ``LATE_HIT_WINDOW_MS`` (100 ms) is used.
 
-**Fraction cap** — ``g_late_hit_max_8th_fraction`` (default 0.5, can be >1).
-This limits the window to a fraction of one eighth note at the current tempo,
-so the correction window scales automatically with tempo rather than being a
-fixed duration. At slow tempos the ms cap is the binding limit; the fraction
-cap becomes the effective limit above roughly 150 BPM with the default values,
-where half an eighth note falls below 100 ms. Its value is stored in the
-session file under the key ``late_hit_max_8th_fraction`` in the ``<Globals>``
-node; if absent, the compile-time default ``LATE_HIT_MAX_8TH_FRACTION`` is
-used.
+**Fraction cap** — ``g_late_hit_max_quant_unit_fraction`` (default 100.0,
+which effectively disables the cap so the ms limit always governs).
+When set to a value less than 1.0, this limits the window to that fraction of
+one full quantize cycle at the current tempo and Eighths/Cycle setting, so the
+correction window scales automatically rather than being a fixed duration.
+For example, 0.25 caps the window at 25 % of one cycle regardless of tempo.
+At slow tempos the ms cap is usually the binding limit; the fraction cap
+becomes the effective limit at faster tempos or larger cycle sizes where the
+cycle period falls below ``g_late_hit_window_ms``. Its value is stored in the
+session file under the key ``late_hit_max_quant_unit_fraction`` in the
+``<Globals>`` node; if absent, the compile-time default
+``LATE_HIT_MAX_QUANT_UNIT_FRACTION`` (100.0) is used.
 
 ``effectiveLateHitWindow()`` in ``plugin.cc`` evaluates both limits each buffer and
 returns the smaller value in samples. The ms cap is additionally clamped to
 ``lInputBufSize − 1`` (32767 samples, approximately 682 ms at 48 kHz), ensuring the
 window never exceeds the depth of the input ring buffer regardless of what
 ``g_late_hit_window_ms`` is set to. Setting the ms cap above this ceiling is silently
-clamped to it; one practical use of this is to set ``g_late_hit_window_ms`` to a large
-value so that the fraction cap alone governs the effective window at all normal playing
-tempos.
+clamped to it; one practical use is to set ``g_late_hit_window_ms`` to a large value
+so that the fraction cap alone governs the effective window at all normal playing
+tempos (set ``g_late_hit_max_quant_unit_fraction`` to the desired cycle fraction and
+leave the ms cap at something like 2000).
 
 Why Not a LADSPA Port
 ~~~~~~~~~~~~~~~~~~~~~
@@ -203,6 +326,76 @@ is loaded as a true LADSPA plugin inside a DAW, ``engine.cpp`` is absent and the
 stays at the compile-time default for the session, which is acceptable behaviour. If the
 value is ever promoted to a GUI control, the correct migration path is to add a proper
 LADSPA port and remove the global.
+
+
+Compile-Time Flags
+------------------
+
+All flags are collected here for reference.  Each is also documented at its
+definition site.  Flags in ``plugin.cc`` are purely local to that translation
+unit.  ``ALB_BBT_SYNC`` is defined in ``audio_driver.hpp`` because it controls
+struct layout visible to multiple translation units; the two ``ALB_`` flags in
+``engine.cpp`` are local to that file.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 20 15 30
+
+   * - Flag
+     - File
+     - Default
+     - Effect
+   * - ``LATE_HIT_WINDOW_MS``
+     - ``plugin.cc``
+     - ``100.0f``
+     - Compile-time initial value for ``g_late_hit_window_ms`` (ms cap).
+       Overridden at runtime by the session file.  Do not use directly in
+       logic; read ``g_late_hit_window_ms`` instead.
+   * - ``LATE_HIT_MAX_QUANT_UNIT_FRACTION``
+     - ``plugin.cc``
+     - ``100.0f``
+     - Compile-time initial value for ``g_late_hit_max_quant_unit_fraction``
+       (fraction cap).  100.0 effectively disables the fraction cap so the
+       ms cap always governs.  Overridden at runtime by the session file.
+   * - ``LATE_HIT_MULTIPLY_CORRECTION``
+     - ``plugin.cc``
+     - ``1``
+     - When 1, the late-hit correction is applied to Multiply end
+       (``multStopInWindow`` path).  Set to 0 to disable Multiply-end
+       correction only, leaving Record start/stop correction active.
+   * - ``SYNCWDEBUG``
+     - ``plugin.cc``
+     - *(commented out)*
+     - When defined, enables per-press timing diagnostics written to
+       ``/tmp/sl_debug.log`` via ``SYNCWDBG()`` / ``SL_LOG_RT()``.  Not
+       RT-safe (``fprintf`` acquires a lock and may block); causes xruns.
+       Must be commented out in any production build.
+   * - ``ALB_RT_SAFE_COND_SIGNAL``
+     - ``engine.cpp``
+     - defined
+     - **When defined (default):** three ``pthread_cond_signal()`` calls in
+       ``generate_sync()`` are suppressed; the main event loop wakes via its
+       existing ``timedwait`` timeout instead.  Reduces xruns on transport
+       locate events.  **When not defined:** stock behaviour — signals fire
+       from the RT callback.
+   * - ``ALB_TEMPO_ONLY_WHEN_ROLLING``
+     - ``engine.cpp``
+     - defined
+     - **When defined (default):** tempo is updated from JACK Transport only
+       while rolling; during locate transitions the existing ``_tempo`` is
+       preserved until rolling resumes, preventing non-RT-safe ``set_tempo()``
+       calls from firing on every buffer during a locate.  **When not defined:**
+       stock behaviour — tempo updated on every cycle regardless of state.
+   * - ``ALB_BBT_SYNC``
+     - ``audio_driver.hpp``
+     - defined
+     - **When defined (default):** adds BBT fields to ``TransportInfo``;
+       ``generate_sync()`` uses them to anchor JackSync pulses to the timebase
+       master's musical grid, with automatic runtime fallback to
+       ``fmod(framepos)`` when BBT data is unavailable.  **When not defined:**
+       BBT fields are absent from ``TransportInfo`` and ``generate_sync()``
+       uses the stock ``fmod(framepos, _tempo_frames)`` arithmetic in all
+       cases — identical to stock SooperLooper 1.7.9 JackSync behaviour.
 
 Glossaries
 ----------
@@ -233,8 +426,8 @@ General Terminology
    * - late-hit window
      - The maximum elapsed time between a sync boundary and a button press for the
        press to qualify as "late" rather than simply off-beat. Bounded by both an
-       absolute millisecond cap and a fraction of one eighth note at the current
-       tempo; whichever is smaller applies.
+       absolute millisecond cap and a fraction of one full quantize cycle at the
+       current tempo and Eighths/Cycle setting; whichever is smaller applies.
    * - T
      - The number of audio samples that elapsed between the most recent sync
        boundary and the moment the button press was detected. The correction undoes
@@ -270,11 +463,12 @@ SooperLooper variables whose roles are clarified here because the patch depends 
      - Compile-time default for the late-hit window in milliseconds. Remains defined so it
        can initialise ``g_late_hit_window_ms`` and appear in startup banners. Do not use
        directly in runtime logic — use ``g_late_hit_window_ms``.
-   * - ``LATE_HIT_MAX_8TH_FRACTION``
+   * - ``LATE_HIT_MAX_QUANT_UNIT_FRACTION``
      - **[NEW]**
      - ``#define float``
-     - Compile-time default for the fraction cap (default 0.5). Initialises
-       ``g_late_hit_max_8th_fraction``.
+     - Compile-time default for the quantize-unit fraction cap (default 100.0,
+       which effectively disables the fraction cap so the ms cap always governs).
+       Initialises ``g_late_hit_max_quant_unit_fraction``.
    * - ``g_late_hit_window_ms``
      - **[NEW]**
      - ``float`` (file-scope global)
@@ -283,21 +477,22 @@ SooperLooper variables whose roles are clarified here because the patch depends 
        present in the ``<Globals>`` node of the session file. Read at buffer-processing
        time via ``effectiveLateHitWindow()``. See the comment block in ``plugin.cc`` for
        the full rationale on why this is a global rather than a LADSPA port.
-   * - ``g_late_hit_max_8th_fraction``
+   * - ``g_late_hit_max_quant_unit_fraction``
      - **[NEW]**
      - ``float`` (file-scope global)
-     - Fraction of one eighth note that defines the upper limit of the window at a given
-       tempo. ``effectiveLateHitWindow()`` uses this together with
-       ``lLastSyncPeriodSamples`` to compute the fraction cap. At 0.5 (default), the
-       window is capped at half an eighth note, preventing the correction from firing
-       after the midpoint between two boundaries.
+     - Fraction of one full quantize cycle that defines the upper limit of the late-hit
+       window. ``effectiveLateHitWindow()`` multiplies this directly by
+       ``lLastSyncPeriodSamples`` (the full cycle period in samples). At 0.25 the
+       window is capped at 25 % of the current cycle length at any tempo or
+       Eighths/Cycle setting. The compile-time default is 100.0, making the ms cap
+       always the binding limit until a lower value is set in the session file.
    * - ``effectiveLateHitWindow()``
      - **[NEW]**
      - ``static inline`` function
      - Computes the window in samples as ``min(ms_cap, fraction_cap)``, where
        ``ms_cap = g_late_hit_window_ms × 0.001 × fSampleRate`` (clamped to
-       ``lInputBufSize − 1``) and ``fraction_cap = g_late_hit_max_8th_fraction ×
-       lLastSyncPeriodSamples / eighthPerCycle``. Returns the ms cap alone if
+       ``lInputBufSize − 1``) and ``fraction_cap = g_late_hit_max_quant_unit_fraction
+       × lLastSyncPeriodSamples``. Returns the ms cap alone if
        ``lLastSyncPeriodSamples`` is at its uninitialised sentinel (``ULONG_MAX``).
    * - ``sl_dbg_file``
      - **[NEW]**
@@ -543,6 +738,47 @@ Buffer Variables (local to ``runSooperLooper()``)
        bound in the trim guard.
 
 
+
+Fields added to ``TransportInfo`` (``audio_driver.hpp``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+These fields exist only when ``ALB_BBT_SYNC`` is defined.  They are populated
+by ``JackAudioDriver::get_transport_info()`` from the ``jack_position_t``
+returned by ``jack_transport_query()`` when the timebase master has set the
+``JackPositionBBT`` valid bit.  ``Engine::generate_sync()`` reads ``bbt_valid``
+before accessing any other field; when ``bbt_valid`` is false the BBT fields
+are not touched and the stock ``fmod`` path is used instead.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Name
+     - Type
+     - Description
+   * - ``bar``
+     - ``int32_t``
+     - 1-indexed current bar from the timebase master.
+   * - ``beat``
+     - ``int32_t``
+     - 1-indexed beat within the current bar.
+   * - ``tick``
+     - ``int32_t``
+     - Tick within the current beat (0 to ``ticks_per_beat − 1``).
+   * - ``bar_start_tick``
+     - ``double``
+     - Cumulative ticks from the transport origin (frame 0) to the start of
+       the current bar.  Used with ``beat`` and ``tick`` to compute the
+       absolute cumulative tick count at the start of each buffer.
+   * - ``ticks_per_beat``
+     - ``double``
+     - Tick resolution set by the timebase master (Hydrogen uses 1920.0).
+   * - ``bbt_valid``
+     - ``bool``
+     - ``true`` when all of the above fields were successfully populated from
+       ``JackPositionBBT`` this buffer.  Always ``false`` when no timebase
+       master is active, when ``ALB_BBT_SYNC`` is not defined, or when the
+       master does not set ``JackPositionBBT``.
+
 Session File Key (``engine.cpp``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -559,13 +795,15 @@ Session File Key (``engine.cpp``)
        ``Engine::save_session()`` and read by ``Engine::load_session()``. If absent (older
        session files), the compile-time default is used. Edit with a text editor; a
        restart of the engine is required for the change to take effect.
-   * - ``late_hit_max_8th_fraction``
+   * - ``late_hit_max_quant_unit_fraction``
      - **[NEW]**
      - Floating-point XML property in the ``<Globals>`` node of the ``.slsess`` session
        file. Written by ``Engine::save_session()`` and read by
-       ``Engine::load_session()``. If absent (older session files), the compile-time
-       default ``LATE_HIT_MAX_8TH_FRACTION`` is used. Edit with a text editor; a
-       restart of the engine is required for the change to take effect.
+       ``Engine::load_session()``. If absent, the compile-time default
+       ``LATE_HIT_MAX_QUANT_UNIT_FRACTION`` (100.0) is used. Edit with a text editor;
+       a restart is required. Note: the older key ``late_hit_max_8th_fraction`` had
+       different units (fraction of one eighth note rather than one full cycle); session
+       files containing the old key will use the compile-time default on load.
 
 Architecture Notes
 ------------------
@@ -751,9 +989,9 @@ additions to support the late-hit tests:
        globals in a ``cvar`` object on the module; writing directly to
        ``test_engine.g_late_hit_window_ms`` silently creates a Python attribute
        and does not affect the C variable.
-   * - ``g_late_hit_max_8th_fraction`` exposed via SWIG
+   * - ``g_late_hit_max_quant_unit_fraction`` exposed via SWIG
      - Same mechanism as above.  Accessible as
-       ``test_engine.cvar.g_late_hit_max_8th_fraction``.
+       ``test_engine.cvar.g_late_hit_max_quant_unit_fraction``.
 
 Late-hit test cases (``testdef_late_hit.py``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
