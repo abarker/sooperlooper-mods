@@ -2837,13 +2837,87 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 			}
 
 			if (_tempo_frames > 0.0 && info.state == TransportInfo::ROLLING) {
-				nframes_t thisval = (nframes_t) lrint (fmod ((double) (info.framepos + offset), _tempo_frames));
-				nframes_t nextval = (nframes_t) lrint (fmod ((double) (info.framepos + offset + nframes), _tempo_frames));
-				nframes_t diff = lrint(_tempo_frames - thisval);
-				diff = (thisval == 0) ? 0 : diff;
-				
+
+				//====== albBegin — BBT-based JackSync pulse placement =====================
+				// Use JACK BBT position fields when the timebase master has set them
+				// (info.bbt_valid, guarded by #ifdef ALB_BBT_SYNC).  This anchors sync
+				// pulses to the master's musical grid rather than to JACK frame 0,
+				// which fixes pulse placement after locates to non-zero positions and
+				// after mid-transport Eighths/Cycle changes.
+				//
+				// Falls back to the original stock fmod(framepos) arithmetic when:
+				//   - ALB_BBT_SYNC is not defined (compile-time disable), or
+				//   - no timebase master has set JackPositionBBT (info.bbt_valid == false), or
+				//   - beat_type != 4 (non-quarter-note beats — guard for exotic time sigs), or
+				//   - bpm or ticks_per_beat is zero (degenerate / transition state).
+				//
+				// Formula derivation (BBT path):
+				//   ticks_per_sample = bpm * ticks_per_beat / (60 * SR)
+				//   ticks_per_cycle  = _tempo_frames * ticks_per_sample
+				//     (correct for both QUANT_8TH and QUANT_CYCLE because _tempo_frames
+				//      already encodes the right cycle length for the current quantize mode)
+				//   cum_ticks = bar_start_tick + (beat-1)*ticks_per_beat + tick
+				//     (cumulative from transport origin, on the master's grid)
+				//   ticks_at_start = fmod(cum_ticks + offset*ticks_per_sample, ticks_per_cycle)
+				//     (phase within current cycle at the start of this buffer region)
+				//   thisval  = lrint(ticks_at_start / ticks_per_sample)  [samples into cycle]
+				//   nextval  = lrint(ticks_at_end   / ticks_per_sample)  [at end of region]
+				//   diff     = lrint((ticks_per_cycle - ticks_at_start) / ticks_per_sample)
+				//     (samples from start of region to next cycle boundary)
+				//
+				// beat_type guard: assumes quarter-note beats (beat_type == 4), which is
+				// what Hydrogen and virtually all JACK timebase masters use.  With
+				// beat_type != 4, ticks_per_cycle would need scaling by (4.0/beat_type);
+				// that case falls through to the fmod path instead of computing wrongly.
+				//
+				// STOCK (sooperlooper 1.7.9):
+				//   nframes_t thisval = (nframes_t) lrint (fmod ((double) (info.framepos + offset), _tempo_frames));
+				//   nframes_t nextval = (nframes_t) lrint (fmod ((double) (info.framepos + offset + nframes), _tempo_frames));
+				//   nframes_t diff = lrint(_tempo_frames - thisval);
+				//   diff = (thisval == 0) ? 0 : diff;
+				nframes_t thisval, nextval, diff;
+#ifdef ALB_BBT_SYNC
+				bool use_bbt = info.bbt_valid
+				               && info.ticks_per_beat > 0.0
+				               && info.bpm > 0.0
+				               && info.beat_type == 4.0f;
+				if (use_bbt) {
+					double sr               = (double)_driver->get_samplerate();
+					double ticks_per_sample = info.bpm * info.ticks_per_beat / (60.0 * sr);
+					double ticks_per_cycle  = _tempo_frames * ticks_per_sample;
+					double cum_ticks        = info.bar_start_tick
+					                         + (double)(info.beat - 1) * info.ticks_per_beat
+					                         + (double)info.tick;
+					double ticks_at_start   = fmod(cum_ticks
+					                               + (double)offset * ticks_per_sample,
+					                               ticks_per_cycle);
+					double ticks_at_end     = fmod(cum_ticks
+					                               + (double)(offset + nframes) * ticks_per_sample,
+					                               ticks_per_cycle);
+					double samples_per_tick = 1.0 / ticks_per_sample;
+
+					thisval = (nframes_t) lrint(ticks_at_start * samples_per_tick);
+					nextval = (nframes_t) lrint(ticks_at_end   * samples_per_tick);
+					diff    = (thisval == 0)
+					        ? 0
+					        : (nframes_t) lrint((ticks_per_cycle - ticks_at_start)
+					                            * samples_per_tick);
+				} else {
+#endif // ALB_BBT_SYNC
+					// Stock arithmetic: anchor to frame 0.
+					thisval = (nframes_t) lrint(fmod((double)(info.framepos + offset),
+					                                 _tempo_frames));
+					nextval = (nframes_t) lrint(fmod((double)(info.framepos + offset + nframes),
+					                                 _tempo_frames));
+					diff    = (nframes_t) lrint(_tempo_frames - thisval);
+					diff    = (thisval == 0) ? 0 : diff;
+#ifdef ALB_BBT_SYNC
+				}
+#endif // ALB_BBT_SYNC
+				//====== albEnd ============================================================
+
 				//fprintf(stderr, "pos: %lu   lastpos: %lu  tempoframe: %g  thisval: %lu  nextval: %lu\n", info.framepos , info.last_framepos, _tempo_frames, thisval, nextval);
-				
+
 				if (info.framepos < info.last_framepos) {
 					//fprintf(stderr,"framepos discontinuity!  setting samples since sync to : %lu   last: %lu \n",info.framepos + offset, info.last_framepos);
 					for (Instances::iterator i = _rt_instances.begin(); i != _rt_instances.end(); ++i) {

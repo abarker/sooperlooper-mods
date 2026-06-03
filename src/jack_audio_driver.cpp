@@ -416,6 +416,39 @@ JackAudioDriver::get_transport_info (TransportInfo &info)
 		info.bpm = tpos.beats_per_minute;
 	}
 
+	//------ albBegin ----------------------------------
+	// Populate BBT position fields and the pre-existing beats_per_bar /
+	// beat_type fields (which the stock code never read from tpos in this
+	// function) when the timebase master has set JackPositionBBT.
+	//
+	// bbt_valid is cleared unconditionally first so that a missing or
+	// non-BBT timebase master always leaves info.bbt_valid == false, causing
+	// Engine::generate_sync() to fall back to the stock fmod(framepos) path
+	// with no additional overhead.
+	//
+	// beats_per_bar and beat_type are populated here (inside the guard)
+	// because Engine::generate_sync() uses info.beat_type == 4.0f as a safety
+	// guard against non-quarter-note beat signatures.  Without this assignment
+	// the field remains zero-uninitialised on the stack and use_bbt would
+	// never become true even when a valid timebase master is running.
+	//
+	// No additional includes are required: jack_transport_query() is already
+	// called above and JackPositionBBT is declared in <jack/jack.h>.
+#ifdef ALB_BBT_SYNC
+	info.bbt_valid = false;
+	if (tpos.valid & JackPositionBBT) {
+		info.beats_per_bar  = tpos.beats_per_bar;
+		info.beat_type      = tpos.beat_type;
+		info.bar            = tpos.bar;
+		info.beat           = tpos.beat;
+		info.tick           = tpos.tick;
+		info.bar_start_tick = tpos.bar_start_tick;
+		info.ticks_per_beat = tpos.ticks_per_beat;
+		info.bbt_valid      = true;
+	}
+#endif // ALB_BBT_SYNC
+	//------ albEnd ----------------------------------
+
 	info.last_framepos = info.framepos;
 	info.framepos = tpos.frame;
 

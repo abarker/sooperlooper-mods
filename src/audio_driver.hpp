@@ -37,6 +37,35 @@ struct _jack_client;
 typedef struct _jack_client jack_client_t;
 //------ albEnd ----------------------------------
 
+//------ albBegin ----------------------------------
+// ALB_BBT_SYNC: when defined, Engine::generate_sync() uses JACK BBT position
+// fields (bar, beat, tick, bar_start_tick, ticks_per_beat) to place sync
+// pulses on the timebase master's musical grid rather than anchoring to JACK
+// frame 0.  This corrects pulse placement after transport locates to non-zero
+// positions and after mid-transport Eighths/Cycle changes.
+//
+// WHEN DEFINED (default):
+//   generate_sync() checks info.bbt_valid at runtime.  If the timebase master
+//   has set JackPositionBBT (Hydrogen, Ardour, etc.) AND beat_type == 4 AND
+//   bpm and ticks_per_beat are non-zero, the BBT path is taken.  Otherwise
+//   the code falls back automatically to the original fmod(framepos) arithmetic.
+//   PipeWire's JACK layer implements the full BBT API; no special handling needed.
+//
+// WHEN NOT DEFINED:
+//   The BBT fields are not compiled into TransportInfo and generate_sync()
+//   uses only the original fmod(framepos, _tempo_frames) arithmetic in all
+//   cases — identical to stock SooperLooper 1.7.9 JackSync behaviour.
+//   Comment out to force the fmod path (e.g. if a timebase master populates
+//   BBT fields incorrectly, or for debugging grid-alignment issues).
+//
+// Note: ALB_BBT_SYNC is defined here in audio_driver.hpp (rather than in
+// engine.cpp alongside ALB_RT_SAFE_COND_SIGNAL) because it also gates fields
+// in TransportInfo, which is included by multiple translation units.  The
+// jack_audio_driver.cpp population block and the engine.cpp pulse-placement
+// block both check #ifdef ALB_BBT_SYNC.
+#define ALB_BBT_SYNC
+//------ albEnd ----------------------------------
+
 namespace SooperLooper {
 
 typedef float sample_t;
@@ -57,7 +86,7 @@ struct TransportInfo
 	double bpm;
 	State state;
 
-	// future items
+	// future items (uncommented below when ALB_BBT_SYNC is defined)
 	// int32_t bar;           /**< current bar */
 	// int32_t beat;          /**< current beat-within-bar */
 	// int32_t tick;          /**< current tick-within-beat */
@@ -66,6 +95,28 @@ struct TransportInfo
 	float beat_type;      /**< time signature "denominator" */
 	// double ticks_per_beat;
 	// nframes_t bbt_offset; /**< frame offset for the BBT fields */
+
+	//------ albBegin ----------------------------------
+	// BBT position fields from jack_position_t.  Only present when
+	// ALB_BBT_SYNC is defined.  Populated by JackAudioDriver::get_transport_info()
+	// from the jack_position_t returned by jack_transport_query() when the
+	// timebase master has set the JackPositionBBT valid bit.
+	// bbt_valid is false when no timebase master is active, when the master
+	// does not set JackPositionBBT, or when ALB_BBT_SYNC is not defined.
+	// Engine::generate_sync() reads bbt_valid before touching any other
+	// BBT field, so an absent or unavailable timebase master falls back to
+	// the stock fmod(framepos) path with no additional overhead.
+#ifdef ALB_BBT_SYNC
+	int32_t  bar;            /**< 1-indexed current bar */
+	int32_t  beat;           /**< 1-indexed beat within bar */
+	int32_t  tick;           /**< tick within beat (0 .. ticks_per_beat-1) */
+	double   bar_start_tick; /**< cumulative ticks from transport origin to
+	                              start of current bar */
+	double   ticks_per_beat; /**< tick resolution (Hydrogen uses 1920.0) */
+	bool     bbt_valid;      /**< true iff the above fields were populated
+	                              from JackPositionBBT this buffer */
+#endif // ALB_BBT_SYNC
+	//------ albEnd ----------------------------------
 };
 
 
