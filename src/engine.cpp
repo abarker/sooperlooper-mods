@@ -2851,24 +2851,32 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				//   - beat_type != 4 (non-quarter-note beats — guard for exotic time sigs), or
 				//   - bpm or ticks_per_beat is zero (degenerate / transition state).
 				//
-				// Formula derivation (BBT path):
-				//   ticks_per_sample = bpm * ticks_per_beat / (60 * SR)
-				//   ticks_per_cycle  = _tempo_frames * ticks_per_sample
-				//     (correct for both QUANT_8TH and QUANT_CYCLE because _tempo_frames
-				//      already encodes the right cycle length for the current quantize mode)
-				//   cum_ticks = bar_start_tick + (beat-1)*ticks_per_beat + tick
-				//     (cumulative from transport origin, on the master's grid)
-				//   ticks_at_start = fmod(cum_ticks + offset*ticks_per_sample, ticks_per_cycle)
-				//     (phase within current cycle at the start of this buffer region)
-				//   thisval  = lrint(ticks_at_start / ticks_per_sample)  [samples into cycle]
-				//   nextval  = lrint(ticks_at_end   / ticks_per_sample)  [at end of region]
-				//   diff     = lrint((ticks_per_cycle - ticks_at_start) / ticks_per_sample)
-				//     (samples from start of region to next cycle boundary)
+				// Formula (BBT path):
+				//   bar_start_frame = bar_start_tick * frames_per_beat / ticks_per_beat
+				//     (exact frame of the current bar's first sample, using the integer
+				//      bar_start_tick field — no integer-tick truncation error)
+				//   phase_shift = bar_start_frame - fmod(bar_start_frame, _tempo_frames)
+				//     (frame of the most-recent cycle boundary on or before bar_start_frame;
+				//      aligns the fmod grid to the timebase master's bar grid after any locate)
+				//   frame_in_cycle = (framepos + offset) - phase_shift
+				//     (frame position measured from the aligned cycle boundary)
+				//   thisval = lrint(fmod(frame_in_cycle, _tempo_frames))
+				//   nextval = lrint(fmod(frame_in_cycle + nframes, _tempo_frames))
+				//   diff    = lrint(_tempo_frames - thisval); if thisval==0: diff=0
+				//
+				// WHY NOT use info.tick in the formula:
+				//   info.tick is an integer (floor of the true fractional tick within the
+				//   beat).  When the truncated cumulative tick count happens to be an exact
+				//   multiple of ticks_per_cycle (960), the tick-based formula erroneously
+				//   places thisval=0, firing a spurious second pulse one buffer after the
+				//   legitimate boundary-crossing pulse.  The bar_start_frame approach uses
+				//   only the exact-integer bar_start_tick field and the absolute frame
+				//   position, so it never suffers tick-truncation rounding into a false zero.
 				//
 				// beat_type guard: assumes quarter-note beats (beat_type == 4), which is
 				// what Hydrogen and virtually all JACK timebase masters use.  With
-				// beat_type != 4, ticks_per_cycle would need scaling by (4.0/beat_type);
-				// that case falls through to the fmod path instead of computing wrongly.
+				// beat_type != 4, bar boundaries would not align with the _tempo_frames
+				// grid; that case falls through to the fmod path instead.
 				//
 				// STOCK (sooperlooper 1.7.9):
 				//   nframes_t thisval = (nframes_t) lrint (fmod ((double) (info.framepos + offset), _tempo_frames));
@@ -2882,26 +2890,32 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				               && info.bpm > 0.0
 				               && info.beat_type == 4.0f;
 				if (use_bbt) {
-					double sr               = (double)_driver->get_samplerate();
-					double ticks_per_sample = info.bpm * info.ticks_per_beat / (60.0 * sr);
-					double ticks_per_cycle  = _tempo_frames * ticks_per_sample;
-					double cum_ticks        = info.bar_start_tick
-					                         + (double)(info.beat - 1) * info.ticks_per_beat
-					                         + (double)info.tick;
-					double ticks_at_start   = fmod(cum_ticks
-					                               + (double)offset * ticks_per_sample,
-					                               ticks_per_cycle);
-					double ticks_at_end     = fmod(cum_ticks
-					                               + (double)(offset + nframes) * ticks_per_sample,
-					                               ticks_per_cycle);
-					double samples_per_tick = 1.0 / ticks_per_sample;
+					double sr              = (double)_driver->get_samplerate();
+					double frames_per_beat = 60.0 * sr / info.bpm;
+					// bar_start_frame: exact floating-point frame of the current bar's
+					// first sample.  bar_start_tick is an integer supplied by the
+					// timebase master; dividing by ticks_per_beat and scaling by
+					// frames_per_beat gives the frame position without rounding through
+					// an integer tick accumulator.
+					double bar_start_frame = info.bar_start_tick
+					                         * frames_per_beat / info.ticks_per_beat;
+					// phase_shift: frame of the cycle boundary immediately at or before
+					// bar_start_frame.  Because bar boundaries are always exact multiples
+					// of _tempo_frames (quarter-note beats contain an integer number of
+					// QUANT_8TH cycles, and QUANT_CYCLE cycles divide the bar evenly),
+					// fmod(bar_start_frame, _tempo_frames) is effectively zero, making
+					// phase_shift == bar_start_frame in practice.  The fmod is kept for
+					// correctness on hypothetical non-standard cycle lengths.
+					double phase_shift     = bar_start_frame
+					                         - fmod(bar_start_frame, _tempo_frames);
+					// Frame position relative to the aligned cycle grid:
+					double frame_in_cycle  = (double)(info.framepos + offset) - phase_shift;
 
-					thisval = (nframes_t) lrint(ticks_at_start * samples_per_tick);
-					nextval = (nframes_t) lrint(ticks_at_end   * samples_per_tick);
-					diff    = (thisval == 0)
-					        ? 0
-					        : (nframes_t) lrint((ticks_per_cycle - ticks_at_start)
-					                            * samples_per_tick);
+					thisval = (nframes_t) lrint(fmod(frame_in_cycle, _tempo_frames));
+					nextval = (nframes_t) lrint(fmod(frame_in_cycle + (double)nframes,
+					                                 _tempo_frames));
+					diff    = (nframes_t) lrint(_tempo_frames - (double)thisval);
+					diff    = (thisval == 0) ? 0 : diff;
 				} else {
 #endif // ALB_BBT_SYNC
 					// Stock arithmetic: anchor to frame 0.
