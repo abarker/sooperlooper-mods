@@ -153,6 +153,30 @@ float g_late_hit_max_quant_unit_fraction = LATE_HIT_MAX_QUANT_UNIT_FRACTION;
 // The Insert-end correction (not yet implemented) will use the same flag.
 #define LATE_HIT_MULTIPLY_CORRECTION 1
 
+//====== albBegin ==================================================================================
+// SYNCWDEBUG: master switch for ALL debug output in this file.
+// When defined:
+//   - /tmp/sl_loaded.txt is written at binary-load time.
+//   - /tmp/sl_debug.log (or ~/sl_debug.log) is opened on first SL_LOG call.
+//   - SL_LOG startup banners (instantiate/activate) go to the log file.
+//   - SYNCWDBG(SL_LOG_RT(...)) per-press messages go to the log file with
+//     an fflush() after each write (immediate, crash-safe, but RT-blocking).
+// When NOT defined (default):
+//   - No files are created in /tmp or ~.
+//   - SL_LOG and SL_LOG_RT expand to nothing.
+//   - SYNCWDBG(...) expands to nothing.
+//   - The only output is the session-load fprintf(stderr,...) in engine.cpp.
+//
+// Default is DISABLED (commented out) to avoid xruns in performance builds.
+// Uncomment to enable all diagnostics for debugging.
+//#define SYNCWDEBUG
+#ifdef SYNCWDEBUG
+#define SYNCWDBG(x) x
+#else
+#define SYNCWDBG(x)
+#endif
+//====== albEnd ====================================================================================
+
 /*****************************************************************************/
 // Static initializer: runs when the binary/library is loaded, before any
 // plugin functions are called.  Writes to multiple locations so at least
@@ -247,31 +271,6 @@ static void sl_dbg_open() {
 #define DBG(x)
 #endif
 
-//====== albBegin ==================================================================================
-// Separate debug flag for sync/timing diagnostics in the late-hit window code.
-//
-// SYNCWDEBUG: master switch for ALL debug output in this file.
-// When defined:
-//   - /tmp/sl_loaded.txt is written at binary-load time.
-//   - /tmp/sl_debug.log (or ~/sl_debug.log) is opened on first SL_LOG call.
-//   - SL_LOG startup banners (instantiate/activate) go to the log file.
-//   - SYNCWDBG(SL_LOG_RT(...)) per-press messages go to the log file with
-//     an fflush() after each write (immediate, crash-safe, but RT-blocking).
-// When NOT defined (default):
-//   - No files are created in /tmp or ~.
-//   - SL_LOG and SL_LOG_RT expand to nothing.
-//   - SYNCWDBG(...) expands to nothing.
-//   - The only output is the session-load fprintf(stderr,...) in engine.cpp.
-//
-// Default is DISABLED (commented out) to avoid xruns in performance builds.
-// Uncomment to enable all diagnostics for debugging.
-//#define SYNCWDEBUG
-#ifdef SYNCWDEBUG
-#define SYNCWDBG(x) x
-#else
-#define SYNCWDBG(x)
-#endif
-//====== albEnd ====================================================================================
 //====== albBegin ==================================================================================
 // effectiveLateHitWindow(): compute the late-hit window in samples.
 //
