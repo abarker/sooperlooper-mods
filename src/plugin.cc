@@ -56,13 +56,18 @@ using namespace SooperLooper;
 // (before main) and writes a marker file to confirm the experimental build
 // is running.  Useful when slgui swallows stderr.
 //
-// sl_dbg_file / sl_dbg_open / SL_LOG: log-file infrastructure so debug
-// output goes to /tmp/sl_debug.log (or ~/sl_debug.log) regardless of how
-// the process was launched.
+// sl_dbg_file / sl_dbg_open / SL_LOG / SL_LOG_RT: log-file infrastructure so
+// debug output goes to /tmp/sl_debug.log (or ~/sl_debug.log) regardless of
+// how the process was launched.  ALL of this infrastructure is gated on
+// #define SYNCWDEBUG below.  When SYNCWDEBUG is not defined: no log file is
+// created, no sentinel file is written to /tmp, and all SL_LOG / SL_LOG_RT
+// calls expand to nothing.  The only unconditional output is the
+// fprintf(stderr, ...) banner in engine.cpp after session load.
 //
-// SYNCWDEBUG / SYNCWDBG: per-press timing diagnostics.  Comment out the
-// #define SYNCWDEBUG line to suppress per-press messages while keeping
-// the startup banners.
+// SYNCWDEBUG / SYNCWDBG: per-press timing diagnostics.  Define SYNCWDEBUG to
+// enable all debug output.  Leave it commented out for production/performance
+// builds.  WARNING: when enabled, SL_LOG_RT calls fflush() on every button
+// press, which can cause RT-thread blocking and xruns.
 
 // Window size in milliseconds for late-hit record correction.
 // LATE_HIT_WINDOW_MS is the compile-time default and must remain defined
@@ -152,8 +157,10 @@ float g_late_hit_max_quant_unit_fraction = LATE_HIT_MAX_QUANT_UNIT_FRACTION;
 // Static initializer: runs when the binary/library is loaded, before any
 // plugin functions are called.  Writes to multiple locations so at least
 // one will be visible regardless of how the process is launched.
+// Gated on SYNCWDEBUG: in production builds no files are written to /tmp.
 static struct SL_LoadProbe {
     SL_LoadProbe() {
+#ifdef SYNCWDEBUG
         // Write a sentinel file confirming the experimental build is loaded.
         // The late-hit window value is NOT printed here: g_late_hit_window_ms
         // has not yet been overwritten by the session file at binary-load time.
@@ -171,11 +178,22 @@ static struct SL_LoadProbe {
             fprintf(f, "SooperLooper experimental binary (late-hit patch) loaded\n");
             fclose(f);
         }
+#endif // SYNCWDEBUG
     }
 } sl_load_probe;
 
 /*****************************************************************************/
 // Debug log file for the experimental late-hit window patch.
+// The entire infrastructure below is compiled only when SYNCWDEBUG is defined.
+// When SYNCWDEBUG is not defined, SL_LOG and SL_LOG_RT expand to nothing and
+// no log file or /tmp file is ever created.
+//
+// WARNING (when enabled): SL_LOG_RT calls fflush() on every button press.
+// fflush() acquires the C stdio mutex and issues a kernel write() syscall,
+// both of which can block the RT thread.  This is intentional for accurate
+// post-crash log recovery but WILL increase xrun risk.  Only enable
+// SYNCWDEBUG in debug builds; never in a live-performance build.
+#ifdef SYNCWDEBUG
 // Tries /tmp/sl_debug.log first, then ~/sl_debug.log, then falls back to stderr.
 static FILE* sl_dbg_file = NULL;
 
@@ -201,17 +219,22 @@ static void sl_dbg_open() {
     }
 }
 
-// Use SL_LOG(...) for messages that should always appear (banners etc.); non-RT only.
-// Use SYNCWDBG(SL_LOG_RT(...)) for per-press diagnostics inside the RT callback.
-// SL_LOG_RT omits fopen/fflush and is safe to call from the JACK RT callback.
+// Use SL_LOG(...) for non-RT messages (startup banners, session load).
+// Calls sl_dbg_open() if needed, then writes and fflushes.
 #define SL_LOG(...) do { sl_dbg_open(); fprintf(sl_dbg_file, __VA_ARGS__); fflush(sl_dbg_file); } while(0)
-// SL_LOG_RT: RT-callable version — no fopen(), no fflush().
+// SL_LOG_RT: RT-callable version.
 // Writes to sl_dbg_file only if already open (set during instantiate/activate,
-// which always run before the JACK RT callback starts).  Safe to call from the
-// RT thread: no blocking, no memory allocation.  stdio buffering means output
-// may not appear immediately after a crash; acceptable for timing diagnostics.
-// Use SL_LOG (with fflush) for startup banners and all non-RT messages only.
-#define SL_LOG_RT(...) do { if (sl_dbg_file) fprintf(sl_dbg_file, __VA_ARGS__); } while(0)
+// which always run before the JACK RT callback starts).
+// NOTE: fflush() is called after every write so that log data survives a
+// crash without buffering delay.  This WILL block the RT thread on the
+// stdio mutex and kernel write() — xruns are the known cost when enabled.
+// Use SYNCWDBG(SL_LOG_RT(...)) to wrap all RT-path log calls so they
+// compile away completely when SYNCWDEBUG is not defined.
+#define SL_LOG_RT(...) do { if (sl_dbg_file) { fprintf(sl_dbg_file, __VA_ARGS__); fflush(sl_dbg_file); } } while(0)
+#else  // SYNCWDEBUG not defined — no logging, no /tmp files
+#define SL_LOG(...)    do { } while(0)
+#define SL_LOG_RT(...) do { } while(0)
+#endif // SYNCWDEBUG
 //====== albEnd ====================================================================================
 
 
@@ -226,12 +249,23 @@ static void sl_dbg_open() {
 
 //====== albBegin ==================================================================================
 // Separate debug flag for sync/timing diagnostics in the late-hit window code.
-// Comment out the #define below to suppress these messages.
 //
-// SYNCWDEBUG: per-press sync timing diagnostics.
-// Comment out #define SYNCWDEBUG to suppress per-press log messages.
-// SL_LOG startup banners are unaffected and always appear.
-#define SYNCWDEBUG
+// SYNCWDEBUG: master switch for ALL debug output in this file.
+// When defined:
+//   - /tmp/sl_loaded.txt is written at binary-load time.
+//   - /tmp/sl_debug.log (or ~/sl_debug.log) is opened on first SL_LOG call.
+//   - SL_LOG startup banners (instantiate/activate) go to the log file.
+//   - SYNCWDBG(SL_LOG_RT(...)) per-press messages go to the log file with
+//     an fflush() after each write (immediate, crash-safe, but RT-blocking).
+// When NOT defined (default):
+//   - No files are created in /tmp or ~.
+//   - SL_LOG and SL_LOG_RT expand to nothing.
+//   - SYNCWDBG(...) expands to nothing.
+//   - The only output is the session-load fprintf(stderr,...) in engine.cpp.
+//
+// Default is DISABLED (commented out) to avoid xruns in performance builds.
+// Uncomment to enable all diagnostics for debugging.
+//#define SYNCWDEBUG
 #ifdef SYNCWDEBUG
 #define SYNCWDBG(x) x
 #else

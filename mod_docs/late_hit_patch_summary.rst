@@ -86,12 +86,32 @@ A concise inventory of all significant capabilities added to SooperLooper 1.7.9.
 
 - **BBT-based JackSync pulse placement** (``ALB_BBT_SYNC``).
   ``Engine::generate_sync()`` uses JACK BBT position fields supplied by the
-  timebase master (bar, beat, tick, bar_start_tick, ticks_per_beat) to anchor
-  sync pulses to the master's musical grid.  Correctly handles locates to
-  non-zero transport positions and mid-transport Eighths/Cycle changes.  Falls
-  back automatically to the stock ``fmod(framepos, _tempo_frames)`` arithmetic
-  when the timebase master does not supply BBT data, or when the compile flag
-  is disabled.
+  timebase master (``bar_start_tick``, ``beat``, ``bpm``, ``ticks_per_beat``)
+  to anchor sync pulses to the master's musical grid.  Correctly handles
+  locates to non-zero transport positions and mid-transport Eighths/Cycle
+  changes.  Falls back automatically to the stock ``fmod(framepos,
+  _tempo_frames)`` arithmetic when the timebase master does not supply BBT
+  data, or when the compile flag is disabled.
+
+  **Bug fixed (integer tick truncation):** the initial implementation used
+  ``info.tick`` (the integer-truncated tick-within-beat field) to compute the
+  phase of the current buffer relative to the cycle grid.  Because
+  ``jack_position_t.tick`` is the floor of the true fractional tick, the
+  accumulated integer tick count periodically lands on an exact multiple of
+  ``ticks_per_cycle`` (960 for QUANT_8TH) even when the true fractional
+  position is just past the boundary.  This caused a spurious second sync
+  pulse — 4 samples after the legitimate boundary-crossing pulse — which
+  produced double pulses that split loop recordings short.  The symptom was
+  loop lengths differing from the expected value by multiples of the JACK
+  buffer size (256 samples), with the magnitude and sign varying per recording.
+
+  The fix replaces the tick-based phase formula with a frame-based one that
+  uses only ``bar_start_tick`` (an exact integer) to compute
+  ``bar_start_frame``, then derives a ``phase_shift`` that aligns
+  ``fmod(frame_in_cycle, _tempo_frames)`` to the timebase master's bar grid.
+  The ``tick`` field is never used.  This is algebraically equivalent to the
+  stock ``fmod(framepos, _tempo_frames)`` formula for normal operation and
+  correctly re-anchors to the master's grid after a locate.
 
 - **RT-safety: suppressed** ``pthread_cond_signal`` **from RT callback**
   (``ALB_RT_SAFE_COND_SIGNAL``).  Three calls in ``generate_sync()`` that
@@ -247,20 +267,30 @@ the timebase master uses.  Both problems are avoided in practice by always
 locating to position 0 before recording, but the BBT path makes the code
 correct unconditionally.
 
-``JackAudioDriver::get_transport_info()`` now populates six additional fields in
+``JackAudioDriver::get_transport_info()`` now populates five additional fields in
 ``TransportInfo`` when the timebase master has set the ``JackPositionBBT`` valid
-bit: ``bar``, ``beat``, ``tick``, ``bar_start_tick``, ``ticks_per_beat``, and
-the ``bbt_valid`` flag.  ``generate_sync()`` checks ``bbt_valid`` and, when
-true, computes::
+bit: ``bar``, ``beat``, ``bar_start_tick``, ``ticks_per_beat``, and the
+``bbt_valid`` flag.  (``tick`` is also copied but is not used by the formula;
+see the bug-fix note in *What This Patch Adds at a Glance*.)
+``generate_sync()`` checks ``bbt_valid`` and, when true, computes:
 
-    ticks_per_sample = bpm × ticks_per_beat / (60 × SR)
-    ticks_per_cycle  = _tempo_frames × ticks_per_sample
-    cum_ticks        = bar_start_tick + (beat − 1) × ticks_per_beat + tick
-    ticks_at_start   = fmod(cum_ticks, ticks_per_cycle)
-    thisval          = lrint(ticks_at_start / ticks_per_sample)
+.. code-block::
+
+    bar_start_frame = bar_start_tick × (60 × SR / bpm) / ticks_per_beat
+    phase_shift     = bar_start_frame − fmod(bar_start_frame, _tempo_frames)
+    frame_in_cycle  = (framepos + offset) − phase_shift
+    thisval         = lrint(fmod(frame_in_cycle, _tempo_frames))
+
+``bar_start_tick`` is an exact integer supplied by the timebase master, so
+``bar_start_frame`` is computed without rounding through an integer tick
+accumulator.  ``phase_shift`` is the frame of the most-recent cycle boundary
+on or before ``bar_start_frame``, which aligns the ``fmod`` grid to the
+master's bar grid.  The result is numerically equivalent to the stock
+``fmod(framepos, _tempo_frames)`` formula when starting from the transport
+origin, and correctly re-anchors after any locate.
 
 Because ``_tempo_frames`` already encodes the correct cycle length for the
-current quantize mode (QUANT_8TH or QUANT_CYCLE), ``ticks_per_cycle`` is correct
+current quantize mode (QUANT_8TH or QUANT_CYCLE), the formula is correct
 for both modes without any quantize-mode branching.
 
 The ``beat_type == 4`` guard limits the BBT path to quarter-note beat signatures
@@ -366,10 +396,18 @@ struct layout visible to multiple translation units; the two ``ALB_`` flags in
    * - ``SYNCWDEBUG``
      - ``plugin.cc``
      - *(commented out)*
-     - When defined, enables per-press timing diagnostics written to
-       ``/tmp/sl_debug.log`` via ``SYNCWDBG()`` / ``SL_LOG_RT()``.  Not
-       RT-safe (``fprintf`` acquires a lock and may block); causes xruns.
-       Must be commented out in any production build.
+     - Master switch for ALL debug output.  When defined: ``/tmp/sl_loaded.txt``
+       is written at binary-load time; ``/tmp/sl_debug.log`` is created and
+       ``SL_LOG`` startup banners are written to it; ``SYNCWDBG()`` /
+       ``SL_LOG_RT()`` per-press messages are written with an ``fflush()`` after
+       every call.  When **not** defined (default): no files in ``/tmp`` or
+       ``~`` are created; ``SL_LOG`` and ``SL_LOG_RT`` expand to nothing;
+       ``SYNCWDBG(...)`` expands to nothing; the only unconditional output is
+       the ``fprintf(stderr, ...)`` banner in ``engine.cpp`` after session load.
+       Must be commented out in any production / performance build.  When
+       enabled, the ``fflush()`` in ``SL_LOG_RT`` causes an immediate kernel
+       ``write()`` on every button press, which is not RT-safe and will cause
+       xruns.
    * - ``ALB_RT_SAFE_COND_SIGNAL``
      - ``engine.cpp``
      - defined
@@ -498,27 +536,32 @@ SooperLooper variables whose roles are clarified here because the patch depends 
      - **[NEW]**
      - ``static FILE*``
      - Handle for the debug log file (``/tmp/sl_debug.log`` or ``~/sl_debug.log``). Opened
-       lazily by ``sl_dbg_open()``.
+       lazily by ``sl_dbg_open()``.  Only declared and used when ``SYNCWDEBUG`` is
+       defined; absent entirely in production builds.
    * - ``SL_LOG(...)``
      - **[NEW]**
      - macro
-     - Write a message to ``sl_dbg_file`` with an immediate ``fflush``. Use for messages
-       that should always appear (startup banners). Not RT-safe; do not call from the
-       audio callback.
+     - When ``SYNCWDEBUG`` is defined: calls ``sl_dbg_open()`` if needed, then writes to
+       ``sl_dbg_file`` with an immediate ``fflush``.  Use for non-RT messages (startup
+       banners, session load).  When ``SYNCWDEBUG`` is not defined: expands to nothing —
+       no file is created and no output is produced.
    * - ``SL_LOG_RT(...)``
      - **[NEW]**
      - macro
-     - Write a message to ``sl_dbg_file`` without ``fflush``. Used inside
-       ``SYNCWDBG()`` in the RT callback. Not fully RT-safe (``fprintf`` acquires a
-       stdio lock); causes xruns when ``SYNCWDEBUG`` is defined. Acceptable as a
-       debug-only cost.
+     - When ``SYNCWDEBUG`` is defined: writes to ``sl_dbg_file`` (if open) and calls
+       ``fflush()`` after every write.  Used inside ``SYNCWDBG()`` in the RT callback.
+       Not RT-safe: ``fprintf`` acquires a stdio lock and ``fflush`` issues a kernel
+       ``write()``; causes xruns when enabled.  The ``fflush`` ensures log data survives
+       a crash but is the primary xrun risk.  When ``SYNCWDEBUG`` is not defined:
+       expands to nothing.
    * - ``SYNCWDEBUG``
      - **[NEW]**
      - ``#define`` (flag)
-     - When defined, enables per-press timing diagnostics via ``SYNCWDBG()``. Comment out
-       the ``#define SYNCWDEBUG`` line to suppress these messages while keeping banners.
-       Commented out by default; disable it for any performance build to eliminate any
-       associated xruns.  See the Known Issues section.
+     - Master switch for ALL debug output in ``plugin.cc``.  When defined, enables
+       ``/tmp/sl_loaded.txt``, ``/tmp/sl_debug.log``, startup banners, and per-press
+       diagnostics.  When not defined (default): all ``SL_LOG`` / ``SL_LOG_RT`` /
+       ``SYNCWDBG`` calls expand to nothing; no ``/tmp`` files are written.  Commented
+       out by default; must remain disabled in any performance build.
    * - ``SYNCWDBG(x)``
      - **[NEW]**
      - macro
@@ -528,8 +571,9 @@ SooperLooper variables whose roles are clarified here because the patch depends 
      - **[NEW]**
      - ``static struct SL_LoadProbe``
      - C++ static initialiser that fires when the binary is loaded (before ``main``).
-       Writes ``/tmp/sl_loaded.txt`` and a line to stderr confirming that the experimental
-       build is running. Useful because ``slgui`` redirects stderr of the engine process.
+       When ``SYNCWDEBUG`` is defined, writes ``/tmp/sl_loaded.txt`` confirming the
+       experimental build is running.  When ``SYNCWDEBUG`` is not defined the
+       constructor body is empty and no files are written.
 
 
 Fields on ``SooperLooperI`` (``plugin.hpp``)
@@ -889,17 +933,31 @@ Known Issues and Future Work
    both channel instances (0:0 and 0:1) receive the same event and log independently.
    Expected behaviour, not a bug.
 
--  **``SYNCWDEBUG`` is off by default.** Uncomment ``#define SYNCWDEBUG`` in
-   ``plugin.cc`` to enable per-press timing diagnostics. Output is written to
-   ``/tmp/sl_debug.log`` (falling back to ``~/sl_debug.log`` if ``/tmp`` is not
-   writable); the file is overwritten fresh on each engine start. To watch it in
-   real time::
+-  **``SYNCWDEBUG`` is off by default.** Uncomment ``//#define SYNCWDEBUG``
+   in ``plugin.cc`` to enable all debug output.  When enabled:
+
+   - ``/tmp/sl_loaded.txt`` is written at binary-load time confirming the
+     experimental build is running.
+   - ``/tmp/sl_debug.log`` is created (falling back to ``~/sl_debug.log`` if
+     ``/tmp`` is not writable) and overwritten fresh on each engine start.
+   - ``SL_LOG`` startup banners (instantiate, activate) go to the log file.
+   - ``SYNCWDBG()``-wrapped ``SL_LOG_RT()`` calls write per-press timing
+     diagnostics to the same file.
+
+   To watch the log in real time::
 
        tail -f /tmp/sl_debug.log
 
-   When active, ``SL_LOG_RT`` uses ``fprintf``, which is not fully RT-safe and will
-   cause xruns; this is accepted as the cost of debug mode. Startup banners via
-   ``SL_LOG`` are unaffected by this setting.
+   When ``SYNCWDEBUG`` is enabled, ``SL_LOG_RT`` calls ``fflush()`` after
+   every write.  This forces an immediate kernel ``write()`` syscall on every
+   button press, acquiring the C stdio mutex.  Both operations can block the
+   RT thread; **xruns are the expected cost of enabling this mode.**  The
+   fflush ensures log data is flushed to disk even if the process crashes
+   mid-session, which makes post-mortem diagnosis reliable.  When
+   ``SYNCWDEBUG`` is not defined (the default), none of this code exists:
+   ``SL_LOG`` / ``SL_LOG_RT`` / ``SYNCWDBG`` expand to nothing, and the only
+   output is the ``fprintf(stderr, ...)`` banner in ``engine.cpp`` after
+   session load.
 
 
 Test Suite

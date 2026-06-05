@@ -1206,10 +1206,14 @@ down are appropriate for the next maintenance cycle.
     normalisation lines in ``audio_driver.hpp`` are semantic no-ops.
 22. **R1** — lock-free log buffer: confirmed xrun source.  ``SL_LOG_RT``
     uses ``fprintf`` which acquires the C stdio mutex and makes a kernel
-    ``write()`` syscall — both can block the RT thread.  The ring-buffer
-    fix (~60 lines, engine.cpp drain) was evaluated and consciously
-    deferred: ``SYNCWDEBUG`` is a compile-time flag, so xruns only occur
-    in debug builds.  Accepted as the known cost of enabling that mode.
+    ``write()`` syscall — both can block the RT thread.  ``fflush()`` has
+    since been added to ``SL_LOG_RT`` (for crash-safe log recovery), which
+    increases the xrun risk further: every button press now forces an
+    immediate kernel write rather than waiting for the stdio buffer to fill.
+    The ring-buffer fix (~60 lines, engine.cpp drain) was evaluated and
+    consciously deferred: ``SYNCWDEBUG`` is a compile-time flag that is
+    **disabled by default**, so xruns only occur in explicitly enabled debug
+    builds.  Accepted as the known cost of enabling that mode.
 
 ------
 
@@ -1273,12 +1277,15 @@ buffer budget at 512 samples / 48 kHz.  Negligible.
 
 The only hot-path code with a potential pathological cost is the
 ``SYNCWDBG(SL_LOG_RT(...))`` calls on button presses.  These are
-not per-sample; they fire on user input only.  At the worst credible
-press rate (4 presses per second sustained), the logging overhead
-is dominated by the ``write()`` syscall when the stdio buffer
-flushes (~once per 100–200 presses).  An 8 KB stdio buffer drains
-in ~10 µs on modern Linux, which is well under any plausible
-buffer deadline.
+not per-sample; they fire on user input only.  ``SL_LOG_RT`` now calls
+``fflush()`` after every write, which forces an immediate kernel
+``write()`` syscall on every button press (rather than waiting for the
+8 KB stdio buffer to fill).  At the worst credible press rate (4 presses
+per second), each flush costs roughly 10 µs on modern Linux — well under
+any plausible buffer deadline — but the stdio mutex acquisition is
+non-deterministic and cannot be excluded as a cause of occasional xruns.
+This cost exists only when ``SYNCWDEBUG`` is compiled in, which is
+disabled by default.
 
 Bottom line: per-buffer overhead from the patches is not a credible
 xrun source.  If xruns are observed during JACK connection events,
