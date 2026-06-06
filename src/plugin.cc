@@ -169,7 +169,7 @@ float g_late_hit_max_quant_unit_fraction = LATE_HIT_MAX_QUANT_UNIT_FRACTION;
 //
 // Default is DISABLED (commented out) to avoid xruns in performance builds.
 // Uncomment to enable all diagnostics for debugging.
-//#define SYNCWDEBUG
+#define SYNCWDEBUG
 #ifdef SYNCWDEBUG
 #define SYNCWDBG(x) x
 #else

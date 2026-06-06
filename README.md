@@ -1,26 +1,48 @@
-This modification of SooperLooper corrects for late hits on record starts and
-record stops.  If a start hit is late it starts the first loop as soon as
-possible, and corrects all the later loops.  If a stop hit is late it starts
-playing the loop as soon as possible, corrected for the error-induced offset,
-and repairs all the later loops.
+## Modifications to SooperLooper 1.7.9
 
-The basic mechanism is that the hit window, which is normally the same as the
-sync period, is shifted forward by some fixed amount.  The default in this
-branch is 50ms (which is half an eighth note at 300bpm, so a 16th note at
-300bpm).  The amount is user-settable by modifying the saved session file
-`SL_session_save.slsess` in the "Globals" section, adding a
-`late_hit_window_ms` key to it like this:
+This is a modified version of SooperLooper which adds late-hit correction
+for record start and record end operations, direct JACK MIDI ports, and
+BBT-based sync pulse placement.
+
+**Late-hit record correction.** When sync is active, a Record press that
+arrives within a configurable window after a sync boundary is corrected back
+to that boundary, as if the button had been pressed on time.  This applies
+to both the press that starts recording and the press that ends it (a second
+Record press, or another button such as Mute that exits the record state).
+Late record starts are perfectly corrected.  Late record ends are corrected
+on all plays except at the beginning of the first loop of an immediate-play
+loop (this is due to obvious realtime constraints).
+
+The default correction window is 100ms beyond the sync points; it can be
+narrowed by a fractional cap tied to the current quantize cycle length.  Both
+values are saved in and loaded from the session file `<Globals>` node:
 
 ```xml
-<Globals tempo="108" eighth_per_cycle="1" common_dry="0" common_wet="1" input_gain="1" sync_source="-1" auto_disable_latency="1" jack_timebase_master="0" output_midi_clock="0" use_midi_start="0" use_midi_stop="0" send_midi_start_on_trigger="0" smart_eighths="0" late_hit_window_ms="50"/>
+<Globals tempo="108" eighth_per_cycle="1" ... sync_source="-1"
+         late_hit_window_ms="100" late_hit_max_quant_unit_fraction="0.5"/>
 ```
 
-The modification also corrects at the end of multiply operations.  This part
-can be disabled via a switch in `plugin.cc`.
+**Direct JACK MIDI ports.**  A `sooperlooper:midi_in` port accepts MIDI
+commands with sub-buffer sample-accurate timestamps.  A
+`sooperlooper:midi_out` port generates 24-ppqn MIDI clock and sends JACK
+Transport Start/Stop messages, replacing the need for `a2jmidid` when
+driving external hardware.
 
-The original SooperLooper README is below.
+For full details see the documentation in [`mod_docs/`](mod_docs/):
 
-----------------------------------------------------------------
+- [`late_hit_patch_summary.rst`](mod_docs/late_hit_patch_summary.rst) —
+  complete description of all modifications, configuration, and known issues.
+- [`sync_quantize_round_relsync.rst`](mod_docs/sync_quantize_round_relsync.rst) —
+  background on SooperLooper's sync and quantize model.
+
+All new code is bracketed with `albBegin` / `albEnd` markers; search for
+`albBegin` to locate every changed block.
+
+---
+
+*The original SooperLooper 1.7.9 README follows.*
+
+---
 
 SooperLooper -- Live Looping Sampler
 Jesse Chappell <jesse@essej.net>
