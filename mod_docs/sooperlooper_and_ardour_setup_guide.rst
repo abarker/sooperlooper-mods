@@ -1,0 +1,475 @@
+.. SooperLooper + Ardour live-looping setup and latency guide
+.. Draft -- collaborative working document
+
+=========================================================================
+Live Looping with SooperLooper and Ardour: A Low-Budget Example Setup
+=========================================================================
+
+This guide describes a practical, low-budget live-looping setup on Linux using
+a JACK-MIDI--enabled fork of SooperLooper, Hydrogen as the transport/timebase
+master, and Ardour for recording and latency verification. It covers software
+configuration, signal routing, and -- in the most detail -- latency calibration.
+
+The forked SooperLooper used in this setup is at
+https://github.com/abarker/sooperlooper-mods (branch ``late-hit-and-jack-midi``).
+
+**Contents**
+
+- `Overview`_
+- `System Description`_
+- `1. Setup`_
+- `2. Latency: Concepts and Calibration`_
+- `3. Automating the Setup`_
+- `Appendix: Outstanding TODOs`_
+
+.. note::
+
+   This guide assumes the modified SooperLooper 1.7.9 from the fork above,
+   which adds **late-hit corrections** and **direct JACK MIDI** I/O. Stock
+   SooperLooper 1.7.9 does not support JACK MIDI; with it you have to route
+   MIDI over ALSA using ``aconnect`` and **a2jmidid**. With this fork you
+   connect directly over JACK and skip ALSA entirely.
+
+
+Overview
+========
+
+This is a fairly low-budget setup built around commodity Linux audio hardware
+and open-source software. It lets you build loops locked to a Hydrogen drum
+pattern and record the result in Ardour with sample-accurate alignment. The
+Hydrogen beat plays continuously in the background as a click track and sync
+source; it is **not** captured into the loop. The bulk of the work in getting
+it to feel right is **latency calibration** -- making sure the loop you record
+lines up with what you actually heard when you played it. That is covered in
+detail in `2. Latency: Concepts and Calibration`_.
+
+The signal/control chain at a glance:
+
+* A four-button **ActitioN** MIDI footswitch sends momentary CC events
+  (press + release).
+* A **remapper** program turns those raw events into higher-level gestures
+  (chords, long-presses, repeat-on-hold, double-taps) and switches banks.
+  One dedicated bank controls Hydrogen -- patterns, tempo, and so on. This
+  allows switching drum patterns mid-performance from the footswitch, for
+  example moving between a 4/4 and a 3/4 pattern.
+* **SooperLooper** receives the mapped MIDI and records/plays loops, always
+  locked to the Hydrogen beat while JACK transport is running.
+* **Hydrogen** runs in pattern mode as the JACK timebase master. Its drum
+  pattern acts as a click track -- it can be any Hydrogen pattern, simple or
+  complex.
+* **Big Tempo** monitors JACK transport state (Hydrogen, as timebase master,
+  controls transport start/stop). When transport starts or stops, Big Tempo
+  sends MIDI to toggle SooperLooper's sync and mute-quantize state accordingly,
+  so loops can be recorded either locked to the Hydrogen beat or free-running.
+  Big Tempo also displays a large tempo readout for the performer.
+* **Ardour** records everything and is used to measure and verify latency.
+
+
+System Description
+==================
+
+============================  ===================================================
+Component                     Detail
+============================  ===================================================
+OS                            Ubuntu 24.04
+Kernel                        Generic kernel (low-latency settings applied)
+SooperLooper                  1.7.9, forked: late-hit corrections + JACK MIDI
+MIDI footswitch               ActitioN four-button MIDI controller
+Audio interface               Behringer UMC404HD (four inputs)
+Mixer                         Behringer Xenyx 802S
+============================  ===================================================
+
+.. note::
+
+   The dedicated low-latency kernel is probably the better audio choice, but
+   the generic kernel is used here because it includes a driver needed for
+   other hardware that the low-latency kernel currently lacks.
+
+
+1. Setup
+=========
+
+1.1 JACK
+---------
+
+**Transport / timebase master**
+
+Set **Hydrogen** as the JACK timebase master.
+
+**Zero-latency monitoring**
+
+For better sync -- especially at larger JACK buffer sizes -- use the
+interface's zero-latency / direct-monitoring path. The UMC404HD has 1/4" TRS
+insert points on all four input channels (tip = send, ring = return, sleeve =
+ground). To tap a zero-latency feed, short the send (tip) and return (ring)
+together and wire that junction as the output signal, with the sleeve as
+ground. Route this to the **Xenyx 802S** mixer, which sends it on to the
+headphones or other monitor. The insert cables for this are straightforward to
+make.
+
+**JACK buffer settings**
+
+The buffer size and period count affect both latency and stability: lower
+values reduce latency but risk xruns, depending on the hardware and system
+load. As an example, this setup currently uses **256 frames/period** and
+**3 periods/buffer**. See `2. Latency: Concepts and Calibration`_ for how
+to measure round-trip latency and how these values feed into the QJackctl
+settings.
+
+**JACK connections**
+
+The key audio and MIDI connections needed for this setup are:
+
+* Remapper MIDI out -> SooperLooper MIDI in
+* Remapper MIDI out -> Hydrogen MIDI in (drum bank commands)
+* Big Tempo MIDI out -> SooperLooper MIDI in (sync/mute-quantize toggle)
+* UMC404HD capture ports -> Ardour track inputs (guitar mic, etc.)
+* SooperLooper audio out -> Ardour track inputs (for loop recording)
+* Hydrogen audio out -> Ardour track input (for direct drum reference)
+* Ardour/SooperLooper/Hydrogen audio out -> UMC404HD playback ports
+
+The full set of port names is hardware- and session-specific. In practice,
+connections are made by a startup script using ``jack_connect`` or the
+JACK Python API (``jacklib`` / ``jack``). Only the connections above need
+to be established; internal Ardour and Hydrogen routing is handled within
+those applications.
+
+
+1.2 SooperLooper
+-----------------
+
+**Connecting MIDI**
+
+With this fork, connect SooperLooper directly over **JACK MIDI** -- no ALSA,
+no a2jmidid. (Stock SooperLooper 1.7.9 must be reached over ALSA with
+``aconnect`` and ``a2jmidid``.)
+
+**Learning and saving MIDI bindings**
+
+Choose whatever MIDI channel and signals you want to drive SooperLooper, then
+use the **slgui "learn"** function to bind those actions. Test that
+SooperLooper recognizes each incoming MIDI signal while learning before moving
+on.
+
+When the bindings are right, **save them** -- slgui does not retain them
+automatically. SooperLooper stores bindings in an ``.slb`` file; this setup
+uses ``sl_midi_config_actition_bindings.slb``. (Hydrogen remembers its MIDI
+setup automatically.)
+
+On the ActitioN footswitch, each button sends a **momentary CC** event -- a
+press followed by a release. The remapper layers gestures on top of these raw
+events and handles bank switching.
+
+The core button actions:
+
+============== ==============================================================
+Button         Action
+============== ==============================================================
+record         Records on the first press; plays the recording on the second.
+mute_trigger   Mutes active playback and restarts the loop from the top on
+               unmute. Effectively the **Stop** button.
+undo           (optional) Undo the last action.
+overdub        (optional) Layer additional material onto the loop.
+============== ==============================================================
+
+.. note::
+
+   SooperLooper is always running; ``mute_trigger`` is a "stop everything you
+   can hear" command -- the loop cycles silently and resumes from the start
+   when unmuted. Pressing **record** while recording begins playback of what
+   was just recorded.
+
+**Sync and quantize settings**
+
+These are the settings currently in use -- one example, not a universal
+recommendation:
+
+* **Sync** -> Jack/Host
+* **Quantize** -> Cycles
+* **8ths per cycle** -> 2  (one example choice, giving quarter-note
+  quantization)
+* **Crossfade (xfade)** -> ~200 samples for smoother transitions. The right
+  value depends on material, tempo, and timing accuracy. Set it to **0**
+  during latency calibration.
+
+When JACK transport is running, SooperLooper is always locked to the Hydrogen
+beat. Since Hydrogen is the JACK timebase master, it controls transport
+start/stop. Big Tempo detects these transport changes and sends MIDI to
+SooperLooper to toggle sync on and off, which is what allows recording a loop
+either locked to the beat or free-running.
+
+.. note::
+
+   You *can* loop a drum part -- for example, if you play a beat on a drum
+   controller and loop it. But in normal use the Hydrogen pattern simply runs
+   in the background as the click and sync source and is not captured into the
+   loop.
+
+
+1.3 Ardour
+-----------
+
+Ardour's track alignment setting determines whether JACK's latency compensation
+is applied when recording. The correct setting differs by source:
+
+* **Hydrogen and SooperLooper tracks** -> align to **capture time**. Both are
+  generated entirely in software and reach Ardour directly via JACK, with no
+  hardware round-trip. There is no latency for Ardour to compensate, so
+  recording at the raw capture position is correct.
+* **Guitar, vocal, and other hardware-source tracks** -> align to **existing
+  material**. These signals travel through the full hardware round-trip (output
+  latency to the headphones/monitor, input latency back from the mic or
+  instrument). Ardour compensates using JACK's reported latency to keep them
+  in sync with the rest of the session.
+
+Right-click a track header and choose *Alignment* to set this per track.
+
+.. note:: **TODO** -- add reference link for the alignment options.
+
+For multitracking to work correctly, JACK must have accurate hardware latency
+information. See `2.4 Setting the QJackctl hardware latency`_ in the next section.
+
+
+2. Latency: Concepts and Calibration
+======================================
+
+This is the part that makes or breaks the feel of the setup. The goal:
+**a loop you record should line up exactly with what you heard when you played
+it.** This means accounting for the full delay between your instrument and the
+recorded sample.
+
+2.1 Where latency comes from
+-----------------------------
+
+Round-trip audio latency through JACK has three main parts::
+
+   total_roundtrip_frames = capture_hw_latency
+                          + (periods_per_buffer × frames_per_period)
+                          + playback_hw_latency
+
+To convert frames to milliseconds::
+
+   latency_ms = frames / sample_rate × 1000
+
+2.2 Latency asymmetry: software vs. hardware sources
+------------------------------------------------------
+
+Not all signals in this setup travel the same path, so they accumulate
+different latencies:
+
+* **Hydrogen drums -> headphones.** Hydrogen generates audio entirely in
+  software. It reaches the player's ears via JACK output buffering and the DAC
+  only -- so the delay is **output/playback latency only**.
+* **Guitar or vocal -> headphones** (monitoring through the interface).
+  The signal goes all the way through ADC -> JACK input buffer -> JACK output
+  buffer -> DAC -- the **full round-trip latency**.
+* **Multitracked guitar/vocal recorded in Ardour** (with *align to existing
+  material*). Ardour applies JACK's compensation automatically; the
+  full round-trip latency must be correctly reported to JACK via the QJackctl
+  hardware latency settings for this alignment to be accurate.
+
+2.3 Measuring round-trip latency
+----------------------------------
+
+There are two complementary approaches:
+
+**jack_iodelay:** loop a JACK output back to a JACK input with a cable.
+``jack_iodelay`` measures the total round-trip in frames and ms directly.
+
+**Drum-beat recording method:** record a Hydrogen beat directly into Ardour
+(Track A), then play Track A back while recording the interface output into a
+new track (Track B). With tracks set to *align to capture time*, the sample
+offset between matching peaks in Track A and Track B is the total round-trip
+latency -- the same number ``jack_iodelay`` gives, but measured through the
+actual signal chain. Zoom in on the drum waveform to find a sharp transient or
+a recognizable feature where the two tracks should align, or simply use the
+very start of the recording.
+
+.. note::
+
+   When recording reference tracks for latency analysis, **renormalize** them
+   in Ardour after recording. This brings peaks to a consistent level and makes
+   waveform features much easier to compare visually.
+
+Both methods yield the same value. The drum-beat method also validates the real
+signal chain end-to-end rather than a loopback path.
+
+2.4 Setting the QJackctl hardware latency
+-------------------------------------------
+
+QJackctl's **Setup -> Advanced -> Latency I/O** has two boxes (the tooltip on
+each identifies which is which) for the *hardware converter* latency of the
+interface -- the ADC/DAC delays that JACK doesn't know about automatically.
+JACK's own buffer delays are already accounted for internally and must be
+subtracted first::
+
+   hw_latency_total = measured_offset - (nperiods + 1) × period_size
+   input_latency    = hw_latency_total / 2
+   output_latency   = hw_latency_total / 2
+
+Setting these correctly is necessary for **Ardour multitracking**: any time you
+record guitar, vocals, or other tracks in Ardour and expect them to line up
+with existing material, JACK needs accurate latency information to apply
+automatic compensation.
+
+.. note::
+
+   SooperLooper's own input/output latency settings (see below) are a
+   *separate* compensation mechanism. The QJackctl values correct JACK's
+   latency reporting for all clients; the SL values shift SL's recorded
+   material directly. They are set independently.
+
+2.5 Worked example (this setup)
+---------------------------------
+
+Settings: **256 frames/period**, **3 periods/buffer**, **48 kHz**.
+
+JACK's internal buffer contribution::
+
+   (nperiods + 1) × period_size = (3 + 1) × 256 = 1024 frames
+
+Measured round-trip (``jack_iodelay`` or drum-beat method): ~**1486 frames**
+(~**30.9 ms**).
+
+QJackctl hardware latency::
+
+   hw_total   = 1486 - 1024 = 462 frames  (~9.6 ms)
+   each box   = 462 / 2     = 231 frames  (~4.8 ms)
+
+SooperLooper latency settings (compensating for the full round-trip directly,
+independent of QJackctl): ~**743 frames** (~**15.5 ms**) for both input and
+output, summing to ~1486 frames.
+
+2.6 Why SooperLooper needs its own latency settings
+-----------------------------------------------------
+
+When you press **record**, SooperLooper captures audio arriving at its input
+*now*. But the timing reference you played against -- the Hydrogen beat in your
+headphones -- reached your ears only after the output/playback latency. The
+full round-trip latency separates "when you heard it" from "when the soundcard
+saw it." SooperLooper's input and output latency settings shift newly recorded
+material earlier so the loop sits where you heard it, not where it physically
+arrived at the hardware.
+
+2.7 Input vs. output split, and why it matters for overdubs
+-------------------------------------------------------------
+
+Both SL latency settings shift newly recorded material earlier. For a **plain
+loop** -- record, then play -- only their *sum* matters; the whole ~1486 frames
+could go into either box.
+
+**Overdubs** are different. An overdub plays the existing loop back *while*
+recording new material on top, so playback delay and capture delay act on two
+different signals. That is why the total is split roughly evenly (~743 / ~743).
+
+*Overdub split test:* With sync enabled, engage overdub while the loop --
+which contains the recorded drum beat -- is already playing. The loop is
+periodic, so where in the cycle you enter overdub does not matter: both signals
+are the same repeating drum beat. If the split is right, the overdubbed and
+underlying beats merge into a single waveform throughout the loop (at least
+approximately, on average). If they don't, measure the distance between
+corresponding peaks and adjust the split.
+
+2.8 The monitor-feedback calibration method
+--------------------------------------------
+
+In normal performance the signal path is:
+
+  Hydrogen beat -> headphones -> **player hears, plays along** -> guitar ->
+  guitar mic -> recorded
+
+The calibration method short-circuits the player out of this loop. The
+headphones (playing the Hydrogen beat) are placed on or near the guitar mic,
+so the mic picks up the drum signal as a stand-in for a live guitar
+performance. What gets recorded on the guitar track is the same signal the
+player would have been hearing -- a proxy for the guitar part that would have
+been played. When SooperLooper captures a loop, the drum signal in the loop
+stands in for the looped guitar, for both plain loops and overdubs. With the
+player removed, all three reference signals can be compared as waveforms and
+any latency offset shows up directly.
+
+Use a drum pattern where the downbeat is easy to pick out, and set
+SooperLooper's crossfade (``xfade``) to **0** for clean transition data. After
+recording, **renormalize** the reference tracks so waveform features are easier
+to compare.
+
+The three signals to compare:
+
+1. **Hydrogen recorded directly into Ardour.** The timing reference -- no
+   analog chain, no hardware latency.
+
+2. **The guitar-mic signal through the full chain.** Headphones placed on or
+   near the guitar mic; the mic records the beat after it has passed through
+   the complete output -> analog -> input path. This represents the guitar
+   signal a player would have recorded while hearing that beat.
+
+3. **The SooperLooper loop**, caught in **sync** mode. This represents the
+   looped guitar -- for both plain loops and overdubs.
+
+All three should align at the start of each beat:
+
+* If the **mic'd signal (2)** does not line up with the direct Hydrogen track
+  (1), the offset is JACK I/O latency. Measure it (see below) and adjust the
+  QJackctl hardware latency values accordingly.
+* If the **looper (3)** does not line up, adjust SooperLooper's input/output
+  latency settings.
+
+*Measuring the offset in Ardour:* First make the selection clock visible if it
+isn't already: **Edit -> Preferences -> Toolbar**, check the box to display the
+selection clock, then right-click it and choose **Samples** as the unit. The
+clock shows the begin, end, and **length** of any selected range.
+
+Create a range with one end on a recognizable point in the in-sync waveform
+and the other end on the corresponding point in the off-sync waveform. Zooming
+in on the drum waveform makes it easy to identify matching transients -- a
+sharp attack at the start of a beat works well -- though the very start of the
+recording is also fine. The length shown in the selection clock is the offset
+to correct. Ranges are easy to create and drag to adjust, so you can line up
+the endpoints precisely before reading the value.
+
+.. note:: **TODO** -- screenshot of aligned and misaligned drum waveforms.
+
+2.9 Additional tests
+---------------------
+
+* **Footswitch-noise marker.** Place a mic on the floor next to the footswitch
+  to capture the mechanical click of the switch. This is especially useful in
+  no-drum mode: without sync, the loop starts playing immediately on the button
+  press rather than waiting to quantize to the beat, so you can directly observe
+  the latency between the switch click and the start of loop playback.
+
+* **Constant-signal / fan test.** Turn on a fan next to the guitar mic to
+  provide a continuous signal (with or without drums). This can give a cleaner
+  picture than the drum method because there is typically a short silence before
+  the first drum beat -- the fan signal starts immediately and makes the loop
+  start edge easy to see, though you can often also spot the noise floor rise
+  even before the first drum hit.
+
+
+3. Automating the Setup
+========================
+
+Once the setup is dialed in, automate the repetitive parts:
+
+* **MIDI bindings.** Save from slgui as an ``.slb`` file (this setup uses
+  ``sl_midi_config_actition_bindings.slb``). Hydrogen remembers its MIDI setup
+  automatically.
+* **SooperLooper session.** Save the full session to restore the loop/sync
+  configuration and latency settings. Keep a separate file per buffer size
+  since the latency settings differ: ``SL_session_save_256.slsess`` and
+  ``SL_session_save_512.slsess``.
+* **JACK connections.** Use a startup script with ``jack_connect`` or the JACK
+  Python API to reconnect ports automatically. See the connection list in
+  `1.1 JACK`_ for the key connections to include.
+
+.. note:: **TODO** -- document the exact session-save and connection-restore
+   commands/scripts used here.
+
+
+Appendix: Outstanding TODOs
+=============================
+
+* Ardour alignment reference link (Section 1.3).
+* Waveform alignment screenshot(s) (Section 2.8).
+* Session-save / connection-restore automation details (Section 3).
+* Keep all reference links up to date before publishing.
