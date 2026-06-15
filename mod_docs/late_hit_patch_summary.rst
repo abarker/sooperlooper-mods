@@ -12,6 +12,24 @@ SooperLooper Late-Hit Recording Modification Summary
 | ``//------ albEnd``. Search for ``albBegin`` to locate every changed block.
 
 
+.. tip:: **Compiling on Ubuntu 24.04**
+
+   The patched source is in the ``late-hit-and-jack-midi`` branch of
+   https://github.com/abarker/sooperlooper-mods.  Run
+   ``git switch late-hit-and-jack-midi`` to go to the branch.  A convenience
+   script ``ubuntu_compile.bash`` at the top level of the repository automates
+   the build.
+
+   For a first build, set all four flags near the top of the script to
+   ``true`` and run it::
+
+       bash ubuntu_compile.bash
+
+   On subsequent recompiles only ``compile_modified_fork=true`` is needed;
+   the other three flags (``install_deps``, ``run_autogen``, ``run_config``)
+   can remain ``false``.  The script prompts before running
+   ``sudo make install``.
+
 .. tip:: **Quick Start**
 
    The late-hit correction is active immediately after compiling — no session file
@@ -894,17 +912,18 @@ Architecture Notes
 Known Issues and Future Work
 ----------------------------
 
+-  **Only tested on Ubuntu 24.04:** no other environments yet tested.
+
+-  **Only tested in basic looping setups:** only basic looping and overdubs have
+   currently been tested.  Multi-loop setups not yet tested (but should revert
+   to stock behavior for syncing to a loop).  Tests with syncing assume the sync
+   source is Jack.
+
 -  **Internal sync mode:** when SooperLooper drives itself (one loop as the sync source
    for others), late-hit correction is **disabled on all slave channels**. Both channels
    of a stereo pair then use the stock timing path and stay in phase with each other.
    Enabling correction on all channels in this mode would require a broader audit of the
    state machine; deferred. See ``bLateHitBypassed`` in the Glossary.
-
--  **Sync-source change:** the late-hit state (``bSyncPulseReceived``,
-   ``lGlobalSamplesSinceSync``, ``lLastSyncPeriodSamples``) is reset to its initial
-   condition whenever ``Engine::update_sync_source()`` is called — i.e., whenever the
-   user changes the sync source. This prevents stale period measurements from the old
-   source affecting the first presses on the new one.
 
 -  **Window size and sample rate:** the effective maximum window is
    ``(lInputBufSize − 1) / fSampleRate`` seconds — approximately 682 ms at 48 kHz,
@@ -932,6 +951,12 @@ Known Issues and Future Work
 -  **Double log lines:** each button press produces two identical log entries because
    both channel instances (0:0 and 0:1) receive the same event and log independently.
    Expected behaviour, not a bug.
+
+-  **Sync-source change:** the late-hit state (``bSyncPulseReceived``,
+   ``lGlobalSamplesSinceSync``, ``lLastSyncPeriodSamples``) is reset to its initial
+   condition whenever ``Engine::update_sync_source()`` is called — i.e., whenever the
+   user changes the sync source. This prevents stale period measurements from the old
+   source affecting the first presses on the new one.
 
 -  **``SYNCWDEBUG`` is off by default.** Uncomment ``//#define SYNCWDEBUG``
    in ``plugin.cc`` to enable all debug output.  When enabled:
