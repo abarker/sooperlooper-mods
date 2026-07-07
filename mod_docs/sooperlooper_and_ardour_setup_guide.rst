@@ -20,7 +20,6 @@ https://github.com/abarker/sooperlooper-mods (branch ``late-hit-and-jack-midi``)
 - `1. Setup`_
 - `2. Latency: Concepts and Calibration`_
 - `3. Automating the Setup`_
-- `Appendix: Outstanding TODOs`_
 
 .. note::
 
@@ -73,6 +72,7 @@ Component                     Detail
 ============================  ===================================================
 OS                            Ubuntu 24.04
 Kernel                        Generic kernel (low-latency settings applied)
+JACK                          JACK2 standalone server
 SooperLooper                  1.7.9, forked: late-hit corrections + JACK MIDI
 MIDI footswitch               ActitioN four-button MIDI controller
 Audio interface               Behringer UMC404HD (four inputs)
@@ -91,6 +91,12 @@ Mixer                         Behringer Xenyx 802S
 
 1.1 JACK
 ---------
+
+This setup uses the **JACK2 standalone server**, launched via QJackctl or a
+startup script. Ubuntu 24.04 ships with a native PipeWire-JACK bridge that
+presents itself as JACK to applications, but it does not expose the hardware
+latency fine-tuning fields in QJackctl (Setup -> Advanced -> Latency I/O) that
+this setup relies on. Use the standalone JACK2 server instead.
 
 **Transport / timebase master**
 
@@ -224,8 +230,6 @@ is applied when recording. The correct setting differs by source:
 
 Right-click a track header and choose *Alignment* to set this per track.
 
-.. note:: **TODO** -- add reference link for the alignment options.
-
 For multitracking to work correctly, JACK must have accurate hardware latency
 information. See `2.4 Setting the QJackctl hardware latency`_ in the next section.
 
@@ -246,6 +250,11 @@ Round-trip audio latency through JACK has three main parts::
    total_roundtrip_frames = capture_hw_latency
                           + (periods_per_buffer × frames_per_period)
                           + playback_hw_latency
+
+Here ``total_roundtrip_frames`` is the total delay in audio samples (frames)
+from the moment a signal enters the ADC until the resulting output is heard
+from the DAC -- essentially the number of samples of end-to-end delay in the
+system.
 
 To convert frames to milliseconds::
 
@@ -345,8 +354,8 @@ JACK's internal buffer contribution::
 
    (nperiods + 1) × period_size = (3 + 1) × 256 = 1024 frames
 
-Measured round-trip (``jack_iodelay`` or drum-beat method): ~**1486 frames**
-(~**30.9 ms**).
+Measured round-trip (``jack_iodelay`` or drum-beat method): approximately
+**1486 frames** (**30.9 ms**).
 
 QJackctl hardware latency::
 
@@ -354,8 +363,8 @@ QJackctl hardware latency::
    each box   = 462 / 2     = 231 frames  (~4.8 ms)
 
 SooperLooper latency settings (compensating for the full round-trip directly,
-independent of QJackctl): ~**743 frames** (~**15.5 ms**) for both input and
-output, summing to ~1486 frames.
+independent of QJackctl): approximately **743 frames** (**15.5 ms**) for both
+SL input and SL output latency, summing to ~1486 frames.
 
 2.6 Why SooperLooper needs its own latency settings
 -----------------------------------------------------
@@ -367,6 +376,10 @@ full round-trip latency separates "when you heard it" from "when the soundcard
 saw it." SooperLooper's input and output latency settings shift newly recorded
 material earlier so the loop sits where you heard it, not where it physically
 arrived at the hardware.
+
+As a practical guide when calibrating: **increasing** either latency value
+moves the newly-recorded material to the **left** (earlier in time);
+**decreasing** it moves material to the **right** (later in time).
 
 2.7 The monitor-feedback calibration method
 --------------------------------------------
@@ -540,16 +553,11 @@ Once the setup is dialed in, automate the repetitive parts:
 * **SooperLooper session.** Save the full session to restore the loop/sync
   configuration and latency settings. Keep a separate file per buffer size
   since the latency settings differ: ``SL_session_save_256.slsess`` and
-  ``SL_session_save_512.slsess``.
+  ``SL_session_save_512.slsess``. SooperLooper has two save-session options
+  (both called "save session"): one saves configuration only -- loop counts,
+  sync settings, latency values, and so on -- and the other also saves the
+  recorded audio. For restoring a startup configuration, use the
+  configuration-only option.
 * **JACK connections.** Use a startup script with ``jack_connect`` or the JACK
   Python API to reconnect ports automatically. See the connection list in
   `1.1 JACK`_ for the key connections to include.
-
-
-Appendix: Outstanding TODOs
-=============================
-
-* Ardour alignment reference link (Section 1.3).
-* Keep all reference links up to date before publishing.
-* Images must be placed in an ``images/`` subdirectory alongside the RST file
-  in the repository.
