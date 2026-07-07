@@ -297,15 +297,32 @@ signal chain end-to-end rather than a loopback path.
 2.4 Setting the QJackctl hardware latency
 -------------------------------------------
 
-QJackctl's **Setup -> Advanced -> Latency I/O** has two boxes (the tooltip on
-each identifies which is which) for the *hardware converter* latency of the
-interface -- the ADC/DAC delays that JACK doesn't know about automatically.
-JACK's own buffer delays are already accounted for internally and must be
-subtracted first::
+QJackctl's **Setup -> Advanced -> Latency I/O** has two fields:
+
+* **Input Latency** -- the ADC delay: the time the interface takes to convert
+  an incoming analog signal (mic, instrument) into digital audio that JACK
+  can see.
+* **Output Latency** -- the DAC delay: the time the interface takes to convert
+  JACK's digital output back to an analog signal at the headphone or line
+  output.
+
+These are the hardware converter delays that JACK does not know about
+automatically. JACK already accounts for its own software buffer delays
+(determined by the frames/period and periods/buffer settings) internally, so
+those must be excluded when calculating what to enter here.
+
+**Using jack_iodelay:** Set both fields to zero first, then connect a patch
+cable from a JACK output back to a JACK input and run ``jack_iodelay``. It
+measures the total round-trip and reports the values to enter directly. You
+can also tweak the values slightly after an initial measurement if subsequent
+testing shows the compensation is a little too high or too low.
+
+**Using the drum-beat method:** Subtract JACK's known buffer contribution from
+the measured total and split the remainder evenly between the two fields::
 
    hw_latency_total = measured_offset - (nperiods + 1) × period_size
-   input_latency    = hw_latency_total / 2
-   output_latency   = hw_latency_total / 2
+   Input Latency    = hw_latency_total / 2
+   Output Latency   = hw_latency_total / 2
 
 Setting these correctly is necessary for **Ardour multitracking**: any time you
 record guitar, vocals, or other tracks in Ardour and expect them to line up
@@ -351,26 +368,7 @@ saw it." SooperLooper's input and output latency settings shift newly recorded
 material earlier so the loop sits where you heard it, not where it physically
 arrived at the hardware.
 
-2.7 Input vs. output split, and why it matters for overdubs
--------------------------------------------------------------
-
-Both SL latency settings shift newly recorded material earlier. For a **plain
-loop** -- record, then play -- only their *sum* matters; the whole ~1486 frames
-could go into either box.
-
-**Overdubs** are different. An overdub plays the existing loop back *while*
-recording new material on top, so playback delay and capture delay act on two
-different signals. That is why the total is split roughly evenly (~743 / ~743).
-
-*Overdub split test:* With sync enabled, engage overdub while the loop --
-which contains the recorded drum beat -- is already playing. The loop is
-periodic, so where in the cycle you enter overdub does not matter: both signals
-are the same repeating drum beat. If the split is right, the overdubbed and
-underlying beats merge into a single waveform throughout the loop (at least
-approximately, on average). If they don't, measure the distance between
-corresponding peaks and adjust the split.
-
-2.8 The monitor-feedback calibration method
+2.7 The monitor-feedback calibration method
 --------------------------------------------
 
 In normal performance the signal path is:
@@ -388,10 +386,22 @@ stands in for the looped guitar, for both plain loops and overdubs. With the
 player removed, all three reference signals can be compared as waveforms and
 any latency offset shows up directly.
 
+For this test, **turn the SooperLooper monitor down** so the guitar mic
+captures only the Hydrogen beat from the headphones. This gives a clean
+reference track representing what a player would have heard, with no SL
+playback bleed to confuse the comparison.
+
 Use a drum pattern where the downbeat is easy to pick out, and set
 SooperLooper's crossfade (``xfade``) to **0** for clean transition data. After
 recording, **renormalize** the reference tracks so waveform features are easier
 to compare.
+
+.. note::
+
+   If using late-hit correction, **do not use the first beat** as your
+   reference point. The first beat may be slightly delayed if the
+   stop-recording hit came in late and was corrected. Start measurements from
+   the second beat or later.
 
 The three signals to compare:
 
@@ -416,18 +426,91 @@ All three should align at the start of each beat:
 
 *Measuring the offset in Ardour:* First make the selection clock visible if it
 isn't already: **Edit -> Preferences -> Toolbar**, check the box to display the
-selection clock, then right-click it and choose **Samples** as the unit. The
-clock shows the begin, end, and **length** of any selected range.
+selection clock, then right-click it and choose **Samples** as the unit. Once
+enabled, the selection clock appears in the toolbar above the tracks and shows
+the **Start**, **End**, and **Length** of any selected range -- the Start and
+End values visible in the images below come from this clock. The **Length**
+field shown there is *not* simply End minus Start and should not be used; read
+the offset as End minus Start from the Start and End fields, or note that a
+correctly configured selection clock may show the length directly in some
+Ardour versions. When in doubt, compute End minus Start.
 
 Create a range with one end on a recognizable point in the in-sync waveform
 and the other end on the corresponding point in the off-sync waveform. Zooming
 in on the drum waveform makes it easy to identify matching transients -- a
 sharp attack at the start of a beat works well -- though the very start of the
-recording is also fine. The length shown in the selection clock is the offset
-to correct. Ranges are easy to create and drag to adjust, so you can line up
-the endpoints precisely before reading the value.
+recording is also fine. Ranges are easy to create and drag to adjust, so you
+can line up the endpoints precisely before reading the value.
 
-.. note:: **TODO** -- screenshot of aligned and misaligned drum waveforms.
+.. note::
+
+   Ardour's waveform display has some graphic quantization at high zoom levels:
+   range endpoints do not move in exact single-sample steps. As a result, the
+   measured offset may be off by a few samples from the true value. After
+   applying an initial correction, it is worth repeating the test and tweaking
+   the value slightly if the visual alignment still looks imperfect. For
+   example, a measured total of ~1476 samples might be entered as 738/738, but
+   zooming in further and comparing transients may show that 743/743 gives a
+   marginally better visual match -- a small difference, but one that can exceed
+   the apparent display resolution.
+
+The images below show the error state (latency 0/0, offset ~1475 samples) at
+normal and zoomed views, followed by the corrected state (738/738). In these
+recordings the vocal mic was placed on the floor next to the footswitch,
+capturing a spike on every button press -- visible as sharp transients on the
+vocal track. Some of that click noise also bled into the guitar mic, which
+muddies the loop transitions slightly. The range Start and End values visible
+in the selection clock above the tracks give the offset as End minus Start.
+
+.. image:: images/latency_error_example_not_zoomed.png
+   :width: 700px
+   :alt: Ardour session showing loop playback with incorrect latency (0/0), overview
+   :target: images/latency_error_example_not_zoomed.png
+
+.. image:: images/latency_error_example_zoomed.png
+   :width: 700px
+   :alt: Zoomed Ardour view showing ~1475-sample range selected between misaligned waveforms
+   :target: images/latency_error_example_zoomed.png
+
+.. image:: images/latency_error_example_corrected.png
+   :width: 700px
+   :alt: Ardour session after correction with input latency 738, output latency 738
+   :target: images/latency_error_example_corrected.png
+
+2.8 Input vs. output split, and why it matters for overdubs
+-------------------------------------------------------------
+
+Both SL latency settings shift newly recorded material earlier. For a **plain
+loop** -- record, then play -- only their *sum* matters; the whole ~1486 frames
+could go into either box.
+
+**Overdubs** are different. An overdub plays the existing loop back *while*
+recording new material on top, so playback delay and capture delay act on two
+different signals. That is why the total is split roughly evenly (SL input
+latency ~743 / SL output latency ~743).
+
+*Overdub split test:* For this test, **turn the SooperLooper monitor up**
+(the opposite of the regular calibration test described in section 2.7 above).
+With the SL monitor on, the guitar mic picks up both the Hydrogen beat from the
+headphones *and* the SL loop playback -- a double-beat signal. With sync
+enabled, engage overdub while the loop (which contains the recorded drum beat)
+is already playing. The loop is periodic, so where in the cycle you enter
+overdub does not matter. If the input/output split is correct, the two beats
+merge into a single waveform; if not, two offset peaks are visible. Measure
+the distance between corresponding peaks and adjust the split.
+
+The images below show an incorrect split (input latency 700, output 0) and the
+resulting ~782-sample offset visible when zoomed in:
+
+.. image:: images/overdub_error_example_test_not_zoomed.png
+   :width: 700px
+   :alt: Ardour session showing overdub test phases with incorrect latency split (input 700, output 0)
+   :target: images/overdub_error_example_test_not_zoomed.png
+
+.. image:: images/overdub_error_example_test_zoomed.png
+   :width: 700px
+   :alt: Zoomed view showing ~782-sample offset between overdubbed and loop beats
+   :target: images/overdub_error_example_test_zoomed.png
 
 2.9 Additional tests
 ---------------------
@@ -462,14 +545,11 @@ Once the setup is dialed in, automate the repetitive parts:
   Python API to reconnect ports automatically. See the connection list in
   `1.1 JACK`_ for the key connections to include.
 
-.. note:: **TODO** -- document the exact session-save and connection-restore
-   commands/scripts used here.
-
 
 Appendix: Outstanding TODOs
 =============================
 
 * Ardour alignment reference link (Section 1.3).
-* Waveform alignment screenshot(s) (Section 2.8).
-* Session-save / connection-restore automation details (Section 3).
 * Keep all reference links up to date before publishing.
+* Images must be placed in an ``images/`` subdirectory alongside the RST file
+  in the repository.
