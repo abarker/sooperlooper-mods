@@ -211,6 +211,73 @@ either locked to the beat or free-running.
    in the background as the click and sync source and is not captured into the
    loop.
 
+**A pedal-gesture arrangement (example)**
+
+This is the specific footswitch arrangement currently in use. It centers on
+three buttons -- **record/play**, **mute_trigger**, and **overdub** -- with the
+remapper adding long-press gestures on top.
+
+Gestures normally cost latency: to tell a long press apart from a plain press,
+the remapper must wait out a threshold before it knows which gesture occurred,
+and only then fire. **Record is the most latency-sensitive action in the
+setup**, so it cannot afford that wait. The remapper avoids the cost with an
+**eager single**: the single-press command fires *immediately*, and then --
+only if the button is still held past the long-press threshold -- the gesture's
+additional command(s) fire as well. The first press keeps zero added latency;
+only the follow-up gesture is delayed.
+
+A long press is used here rather than a double tap. A double tap could be
+triggered accidentally by a bad or doubled record hit in the heat of a
+performance, which on the record button is unacceptable; a deliberate hold is
+much harder to trigger by accident.
+
+**Long press on record -> mute and cancel the record, keeping the loop.** The
+goal is to hold the record button to drop to silence while preserving the
+current loop. Because the eager single has *already* fired a real ``record``,
+the long press cannot simply mute -- it also has to retract that record. It
+sends two commands, **``mute_on`` first, then ``undo``**. The order matters:
+muting first means the subsequent ``undo`` returns to the muted state rather
+than briefly to play, avoiding an audible blip (in the code, ``undo`` checks a
+"was muted" flag and reverts the loop in place while staying silent). The net
+effect is the previous loop, preserved and silent.
+
+How ``undo`` behaves here depends on how far the record has progressed:
+
+* If the eagerly-started record is still **waiting on the sync/quantize
+  boundary**, ``undo`` just cancels the pending record and returns to the
+  current state -- nothing was ever overwritten.
+* If the record has **crossed the boundary** and a prior loop exists, ``undo``
+  reverts that layer back to the previous loop.
+* If the record was the **first loop** with nothing underneath it, ``undo``
+  empties back to the off state -- there is no earlier loop to keep.
+
+.. note::
+
+   ``mute`` is itself latency-sensitive: an unquantized mute starts or stops the
+   audio the instant it lands, so *when* ``mute_on`` arrives matters. This is a
+   second reason the ordering and timing of the two commands matter, and there
+   are edge cases here (for example a quantized mute that has not yet taken hold
+   when the ``undo`` arrives) that would benefit from more testing.
+
+.. note::
+
+   Bind these as immediate (Note-on / CC) actions and let the remapper own all
+   gesture recognition. Do **not** also use SooperLooper's built-in Note
+   long-press: its long-press for Undo is *Undo All*, which clears the whole
+   loop stack rather than retracting a single record.
+
+**Cancelling a record -- an inherent trade-off.** Be cautious with the record
+long-press. There is **no way to avoid** the following: the start of a genuine
+record/play press is indistinguishable from the eager single that precedes a
+long press that may or may not arrive. The system cannot know a long press is
+coming, so the eager single must fire, and the loop can briefly become audible
+during the long-press wait interval before ``mute_on``/``undo`` retract it. The
+most likely accidental trigger is a lingering press on the **record-to-play**
+switch -- if the foot rests on the pedal past the long-press threshold, the
+gesture fires and cancels a take meant to be kept. Deliberately cancelling a
+fresh take is therefore done on the **mute_trigger** button instead, which
+drops to silence immediately with no audible wait interval.
+
 
 1.3 Ardour
 -----------
