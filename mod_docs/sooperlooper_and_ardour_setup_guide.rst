@@ -214,8 +214,10 @@ either locked to the beat or free-running.
 **A pedal-gesture arrangement (example)**
 
 This is the specific footswitch arrangement currently in use. It centers on
-three buttons -- **record/play**, **mute_trigger**, and **overdub** -- with the
-remapper adding long-press gestures on top.
+three looping buttons -- **record/play**, **mute_trigger**, and **overdub** --
+with the remapper adding long-press gestures on top. The four-button switch's
+fourth button toggles the Hydrogen drums on and off, and on a long press
+returns to the drum-control bank (patterns, tempo, and so on).
 
 Gestures normally cost latency: to tell a long press apart from a plain press,
 the remapper must wait out a threshold before it knows which gesture occurred,
@@ -231,15 +233,28 @@ triggered accidentally by a bad or doubled record hit in the heat of a
 performance, which on the record button is unacceptable; a deliberate hold is
 much harder to trigger by accident.
 
+.. note::
+
+   Overdub is less latency-sensitive than record, but not immune. Unlike a
+   record press, an overdub press does not define a loop boundary, so a small
+   delay does not create a sync error -- it only shifts where the overdub window
+   opens and closes. With **unquantized** overdub (used in this setup) a delayed
+   press clips a little material at the edges of the overdub region; with
+   **quantized** overdub the boundary snapping absorbs small delays entirely,
+   but a delay large enough to cross a quantize boundary jumps the start or end
+   by a whole quantize unit.
+
 **Long press on record -> mute and cancel the record, keeping the loop.** The
 goal is to hold the record button to drop to silence while preserving the
 current loop. Because the eager single has *already* fired a real ``record``,
 the long press cannot simply mute -- it also has to retract that record. It
-sends two commands, **``mute_on`` first, then ``undo``**. The order matters:
+sends two commands: ``mute_on`` first, then ``undo``. The order matters --
 muting first means the subsequent ``undo`` returns to the muted state rather
 than briefly to play, avoiding an audible blip (in the code, ``undo`` checks a
-"was muted" flag and reverts the loop in place while staying silent). The net
-effect is the previous loop, preserved and silent.
+"was muted" flag and reverts the loop in place while staying silent). The
+``undo`` also has to be **delayed** relative to the mute: in testing, a gap of
+about **300 ms** is needed, otherwise the mute has not taken hold and the undo
+does not work. The net effect is the previous loop, preserved and silent.
 
 How ``undo`` behaves here depends on how far the record has progressed:
 
@@ -253,10 +268,11 @@ How ``undo`` behaves here depends on how far the record has progressed:
 
 .. note::
 
-   ``mute`` is itself latency-sensitive: an unquantized mute starts or stops the
-   audio the instant it lands, so *when* ``mute_on`` arrives matters. This is a
-   second reason the ordering and timing of the two commands matter, and there
-   are edge cases here (for example a quantized mute that has not yet taken hold
+   Muting is itself latency-sensitive: an unquantized ``mute`` starts or stops
+   the audio the instant it lands, so *when* ``mute_on`` arrives matters. This
+   is a second reason the ordering and timing of the two commands matter -- the
+   ~300 ms delay noted above is the practical manifestation of it. There are
+   further edge cases (for example a quantized mute that has not yet taken hold
    when the ``undo`` arrives) that would benefit from more testing.
 
 .. note::
