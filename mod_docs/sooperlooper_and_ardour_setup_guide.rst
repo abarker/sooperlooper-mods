@@ -279,19 +279,12 @@ Accepted trade-off: if you meant to record and lingered anyway, the take
 dies. The long-press threshold (400 ms) needs to stay comfortably longer than
 a normal stomp.
 
-.. note::
-
-   **Previously** this was faked from the remapper by sending ``mute_on``,
-   then ``undo`` about **300 ms** later. That worked but was fragile. With
-   mute quantize on (which this rig enables whenever sync is on) a quantized
-   mute is deferred to the next boundary *by design*, so an immediate
-   ``undo`` still saw "not muted" and returned to play, audibly. The 300 ms
-   delay existed only to let the boundary pass. The remapper is also blind to
-   SooperLooper's state, so it could not tell a committed record from a
-   pending one, and would happily destroy a take you meant to keep.
-
-   The in-engine command has full state visibility and acts in one realtime
-   dispatch, so the ordering, the delay and the blip all disappear.
+The command being **state-aware** is what makes one switch able to carry both
+jobs. It can tell a record that actually started from one still waiting on
+the boundary, and it knows when there is no record to cancel at all -- so the
+same gesture that rescues a bad take is harmless when there is nothing to
+rescue. A remapper sending plain ``mute_on`` and ``undo`` cannot see any of
+that, and this replaces that older arrangement.
 
 .. note::
 
