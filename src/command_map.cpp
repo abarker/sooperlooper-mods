@@ -60,6 +60,12 @@ CommandMap::CommandMap()
 	_str_cmd_map["mute_on"]  = Event::MUTE_ON;
 	_str_cmd_map["mute_off"]  = Event::MUTE_OFF;
 	_str_cmd_map["mute_trigger"]  = Event::MUTE_TRIGGER;
+	//------ albBegin ----------------------------------
+	// Registering the name here is all that is needed for OSC
+	// (/sl/N/hit "cancel_record_mute"), .slb MIDI binding files, and the
+	// reverse enum->string map; they all read this table.
+	_str_cmd_map["cancel_record_mute"]  = Event::CANCEL_RECORD_MUTE;
+	//------ albEnd ----------------------------------
 	_str_cmd_map["pause"]  = Event::PAUSE;
 	_str_cmd_map["pause_on"]  = Event::PAUSE_ON;
 	_str_cmd_map["pause_off"]  = Event::PAUSE_OFF;

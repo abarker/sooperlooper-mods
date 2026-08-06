@@ -137,6 +137,22 @@ namespace SooperLooper {
 		    RECORD_OVERDUB_END_SOLO_TRIG,
 		    RECORD_OR_OVERDUB_SOLO_NEXT,
 		    RECORD_OR_OVERDUB_SOLO_PREV,
+		    //------ albBegin ----------------------------------
+		    // Cancel an in-progress or pending record, keeping the prior
+		    // take.  Mutes only if audio was actually captured; a merely
+		    // pending record is cancelled with the loop left playing.
+		    // No-op in every other state, which is what makes it safe as
+		    // the long-press partner of an eager-single record button.
+		    // Full design: mod_docs/ROADMAP.rst entry 1.
+		    //
+		    // MUST remain appended here, immediately before LAST_COMMAND.
+		    // plugin.cc:367-398 hardcodes MULTI_UNDO..MULTI_PAUSE_OFF as
+		    // integer literals 0-23 mirroring the first 24 values of this
+		    // enum.  Inserting anywhere inside that range shifts the enum
+		    // but not the literals, silently remapping those commands to
+		    // each other with no compile error.
+		    CANCEL_RECORD_MUTE,
+		    //------ albEnd ----------------------------------
 		    LAST_COMMAND
 	    } Command;
 

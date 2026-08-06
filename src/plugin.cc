@@ -404,6 +404,29 @@ static inline unsigned long effectiveLateHitWindow(const SooperLooperI *pLS,
 #define MULTI_RECORD_OVERDUB_END Event::RECORD_OVERDUB_END_SOLO
 #define MULTI_UNDO_TWICE     Event::UNDO_TWICE
 
+//====== albBegin ==================================================================================
+// Symbolic, never a literal: the numeric block above (0-23) mirrors the
+// first 24 Event::command_t values by hand, and CANCEL_RECORD_MUTE is
+// appended at the end of that enum where its ordinal is not fixed.
+#define MULTI_CANCEL_RECORD_MUTE Event::CANCEL_RECORD_MUTE
+
+// Guard the hand-maintained correspondence above.  The MULTI_UNDO..
+// MULTI_PAUSE_OFF literals (0-23) must stay aligned with the first 24
+// values of Event::command_t.  Insert an enum anywhere in that range and
+// the enum shifts while the literals do not, so commands silently begin
+// doing each other's jobs -- with no compiler diagnostic of any kind.
+//
+// PAUSE_OFF alone catches any insertion at or before ordinal 23; the
+// others localise which sub-range drifted.  Python-side counterpart:
+// commandOrdinalContract in test_plugin/testdef_cancel_record_mute.py.
+static_assert((int) Event::UNDO      == MULTI_UNDO,      "Event::command_t drifted from the MULTI_* literals (at/before UNDO)");
+static_assert((int) Event::RECORD    == MULTI_RECORD,    "Event::command_t drifted from the MULTI_* literals (at/before RECORD)");
+static_assert((int) Event::MUTE      == MULTI_MUTE,      "Event::command_t drifted from the MULTI_* literals (at/before MUTE)");
+static_assert((int) Event::UNDO_ALL  == MULTI_UNDO_ALL,  "Event::command_t drifted from the MULTI_* literals (at/before UNDO_ALL)");
+static_assert((int) Event::MUTE_ON   == MULTI_MUTE_ON,   "Event::command_t drifted from the MULTI_* literals (at/before MUTE_ON)");
+static_assert((int) Event::PAUSE_OFF == MULTI_PAUSE_OFF, "Event::command_t drifted from the MULTI_* literals (at/before PAUSE_OFF)");
+//====== albEnd ====================================================================================
+
 
 /*****************************************************************************/
 
@@ -2164,6 +2187,101 @@ runSooperLooper(LADSPA_Handle Instance,
 		  lMultiCtrl = MULTI_TRIGGER;
 	  }
   }
+  //====== albBegin ==================================================================================
+  // CANCEL_RECORD_MUTE -- cancel an in-progress or pending record, keep the
+  // prior take, and mute only if audio was actually captured.  No-op in every
+  // other state.  Full design and rationale: mod_docs/ROADMAP.rst entry 1.
+  //
+  // Implemented as a state-based remap onto MULTI_UNDO rather than as its own
+  // dispatch case, so the existing (well-tested) undo path does all the work.
+  // The only extra input is wasMuted, which MULTI_UNDO reads to decide where
+  // to land: pLS->state = pLS->wasMuted ? STATE_MUTE : STATE_PLAY.
+  //
+  // Deliberately does NOT route through mute_on.  This rig runs mute quantize
+  // whenever sync is on, and a quantized mute is deferred to the next boundary
+  // (see the MULTI_MUTE else-branch): it would convert STATE_RECORD into
+  // STATE_TRIG_STOP, commit the take, and leave wasMuted false -- so a
+  // following undo would land in STATE_PLAY, audible.  Setting wasMuted here
+  // bypasses the mute state machine entirely and is immediate.
+  else if (lMultiCtrl == MULTI_CANCEL_RECORD_MUTE) {
+	  if (pLS->state == STATE_RECORD) {
+		  // Committed record: audio was captured, so undo it and stay silent.
+		  // Forcing wasMuted makes MULTI_UNDO take its STATE_MUTE branch
+		  // (undoLoop with no crossfade back to play).
+		  //
+		  // Silence relies on the play fade already being at zero: entering
+		  // STATE_RECORD sets fPlayFadeDelta = -1/xfadeSamples, and the undo
+		  // path only *holds* the attenuation (fPlayFadeDelta = 0), it does
+		  // not ramp down.  That holds because the long-press threshold is
+		  // hundreds of ms against a crossfade of a few ms.  If the threshold
+		  // is ever shortened to near the crossfade, set fPlayFadeDelta here
+		  // explicitly instead of relying on the record entry.
+		  //
+		  // Safe to mutate wasMuted here: STATE_RECORD is in MULTI_UNDO's
+		  // case list, so the undo that consumes it always runs.  Do not set
+		  // it on any path where the remapped command might not execute.
+		  pLS->wasMuted = true;
+
+		  // Stop writing input into the loop buffer.  Entering STATE_RECORD
+		  // ramped fLoopFadeAtten up to 1.0, and MULTI_UNDO's STATE_MUTE
+		  // branch only touches fPlayFadeDelta -- it assumes the caller was
+		  // already muted, with the write gain long since at zero.  Arriving
+		  // there straight out of STATE_RECORD leaves the write gain pinned
+		  // at 1.0, and plugin.cc:5262 (in the play block, whose case group
+		  // at 5008-5017 includes STATE_MUTE) then runs
+		  //     loop = loop * fFeedFadeAtten + fLoopFadeAtten * input
+		  // every sample.  With both attenuations at 1.0 that is loop += input,
+		  // an accumulator with no decay: the restored take runs away into
+		  // gross clipping while muted, unnoticed until unmute.  Measured at
+		  // -10.3 with an input of -0.9 before this was added.
+		  //
+		  // Same values UNDO_ALL uses for the same purpose (3622-23), and set
+		  // here rather than in the shared STATE_MUTE branch so no other undo
+		  // caller changes behaviour.  Harmless in the no-prev sub-case, which
+		  // reaches UNDO_ALL and sets these identically.
+		  // Regression test: testResidueAfterCancelOverExistingTake.
+		  pLS->fLoopFadeDelta = -1.0f / xfadeSamples;
+		  pLS->fFeedFadeDelta =  1.0f / xfadeSamples;
+
+		  lMultiCtrl = MULTI_UNDO;
+	  }
+	  else if (pLS->state == STATE_TRIG_START) {
+		  // Pending record, nothing captured yet: drop the pending request
+		  // and carry on.  No mute -- there is no blip to hide.
+		  //
+		  // Cancelled in place rather than remapped to MULTI_UNDO.  The
+		  // late-hit path creates a fresh chunk when it starts recording
+		  // immediately (pushNewLoopChunk, ~2697), but the normal pending
+		  // path does not -- the TRIG_START fallback (~2808) only sets the
+		  // state.  So here headLoopChunk is still the *existing* take with
+		  // prev == NULL, and MULTI_UNDO would pop that take and fall
+		  // through to UNDO_ALL, i.e. destroy exactly what this command
+		  // exists to protect.  Measured before this was corrected: a
+		  // recorded take plus a pending record plus cancel left the looper
+		  // Off with an empty loop.
+		  //
+		  // Keyed on STATE_TRIG_START, NOT on waitingForSync: that flag is
+		  // also set for deferred mute and play transitions, which have
+		  // nothing to do with recording.
+		  //
+		  // Regression test: testPendingCancelKeepsExistingTake.
+		  pLS->waitingForSync = 0;
+		  pLS->nextState = -1;
+		  if (pLS->headLoopChunk && pLS->headLoopChunk->lLoopLength) {
+			  pLS->state = pLS->wasMuted ? STATE_MUTE : STATE_PLAY;
+		  } else {
+			  pLS->state = pLS->wasMuted ? STATE_OFF_MUTE : STATE_OFF;
+		  }
+		  lMultiCtrl = -1;   // handled here; nothing left to dispatch
+	  }
+	  else {
+		  // Everything else is a no-op, and that is the point of the command.
+		  // In particular STATE_TRIG_STOP -- a quantized record *end* waiting
+		  // on its boundary -- must not be cancelled: the take is being kept.
+		  lMultiCtrl = -1;
+	  }
+  }
+  //====== albEnd ====================================================================================
   else if (lMultiCtrl == MULTI_RECORD_OR_OVERDUB) {
 	  if (!pLS->headLoopChunk || pLS->state == STATE_OFF || pLS->state == STATE_OFF_MUTE || pLS->state == STATE_RECORD 
 	      || pLS->state == STATE_TRIG_START || pLS->state == STATE_TRIG_STOP 

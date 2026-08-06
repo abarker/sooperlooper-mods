@@ -72,6 +72,17 @@ testdef_simple_state_record_undo.py
 testdef_simple_state_record_undoall.py
     State after RECORD → RECORD → UNDO_ALL; parameterized over commands.
 
+testdef_cancel_record_mute.py
+    Regression tests for CANCEL_RECORD_MUTE ("cancel_record_mute"): cancels
+    an in-progress record keeping the prior take, muting only if audio was
+    actually captured, and is a no-op in every other state.  Also asserts
+    the command-ordinal contract between event.hpp, the positional
+    ``commands`` tuple in engine_wrapper.py, and the MULTI_* integer
+    literals in plugin.cc.  Covers the unquantized branches, the quantized
+    pending states (sync on, no pulse -- WaitStart and WaitStop), and audio
+    content via the input-injection / output-readback support in
+    TestLooper.  Design: ../../mod_docs/ROADMAP.rst entry 1.
+
 testdef_late_hit.py
     Regression tests for the late-hit recording correction patch.
     Requires the sync injection fields added to TestLooper (see

@@ -64,6 +64,32 @@ class TestLooper
 	 * using time.sleep(), making timing independent of JACK period size. */
 	volatile int process_count;
 
+	//------ albBegin ----------------------------------
+	/* Audio-content test support.  Lets a test put a known signal in and
+	 * read the resulting output back, so assertions can be made about what
+	 * actually landed in the loop rather than only about state values.
+	 *
+	 * Input: run() has never read the real JACK input port -- it has always
+	 * fed the plugin a constant buffer (see run()).  This only makes that
+	 * constant settable; the default -0.7 is the historical hardcoded value,
+	 * so every pre-existing test behaves identically.
+	 *
+	 * Output: run() samples channel 0's output buffer after the plugin has
+	 * run.  output_min/output_max accumulate until reset_output_stats(), which
+	 * is what a test wants when asking "did *any* part of the loop change?" --
+	 * a single block only ever covers a fraction of a loop period.
+	 *
+	 * Written from Python, read on the JACK thread (and vice versa) -- the
+	 * same single-float race as ports[] and sync_inject_*, acceptable here. */
+	float input_inject_value;
+
+	float output_min;      /* running min since reset_output_stats() */
+	float output_max;      /* running max since reset_output_stats() */
+	float output_last;     /* last sample of the most recent block     */
+
+	void reset_output_stats();
+	//------ albEnd ----------------------------------
+
 	int get_buffer_size() const { return (int)_buffersize; }
 
   protected:

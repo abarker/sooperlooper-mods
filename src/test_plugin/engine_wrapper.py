@@ -1,4 +1,35 @@
+import os
+import re
+
 import test_engine
+
+#------ albBegin ----------------------------------
+def _parse_command_enum():
+    """Ordered Event::command_t names, read straight from ../event.hpp.
+
+    The number handed to request_cmd() is the enum ordinal, and the
+    `commands` tuple below encodes that positionally -- but it only covers
+    the first 24 values.  Anything past those (CANCEL_RECORD_MUTE, the solo
+    and exclusive variants, ...) cannot get its number from a tuple index,
+    so it is read from the header instead.  Parsing keeps this correct by
+    itself if the enum ever changes.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "..", "event.hpp")
+    with open(path) as f:
+        src = f.read()
+    body = re.search(r"enum\s+command_t\s*\{(.*?)\}", src, re.S).group(1)
+    body = re.sub(r"//[^\n]*", "", body)            # drop comments
+    names = []
+    for entry in body.split(","):
+        name = entry.split("=")[0].strip()
+        if name and name not in ("UNKNOWN", "LAST_COMMAND"):
+            names.append(name)
+    return names
+
+# name -> ordinal, for every command in event.hpp
+command_ordinals = dict((n, i) for i, n in enumerate(_parse_command_enum()))
+#------ albEnd ----------------------------------
 
 class TwoWayDict(dict):
     def __len__(self):
@@ -77,7 +108,14 @@ typical =   [
 class Engine (test_engine.TestEngine):
 
     def request(self, command):
-          command_no = commands.index(command)
+          #------ albBegin ----------------------------------
+          # Positional lookup for the original 24 (unchanged behaviour for
+          # every existing test); header ordinal for anything beyond them.
+          if command in commands:
+              command_no = commands.index(command)
+          else:
+              command_no = command_ordinals[command]
+          #------ albEnd ----------------------------------
           self.looper.request_cmd(command_no)
           while (self.looper.request_pending):
               pass

@@ -48,6 +48,12 @@ TestLooper::TestLooper (jack_client_t* j, unsigned int index, unsigned int chan_
 	sync_inject_value   = 1.0f;
 	sync_inject_enabled = false;
 	process_count       = 0;
+	//------ albBegin ----------------------------------
+	/* -0.7 is the value run() used to hardcode; keep it as the default so
+	 * every test written before injection existed is unaffected. */
+	input_inject_value  = -0.7f;
+	reset_output_stats();
+	//------ albEnd ----------------------------------
 	_input_ports = 0;
 	_output_ports = 0;
 	_instances = 0;
@@ -213,19 +219,25 @@ TestLooper::run (jack_nframes_t offset, jack_nframes_t nframes)
 		//cerr << "reset to -1\n";
 	}
 
-    LADSPA_Data test_buf[nframes]; 
+    //------ albBegin ----------------------------------
+    // Was: test_buf[i] = -0.7;  input_inject_value defaults to -0.7.
+    LADSPA_Data test_buf[nframes];
     for (int i = 0; i < nframes; ++i)
     {
-        test_buf[i] = -0.7;
+        test_buf[i] = input_inject_value;
     }
+    //------ albEnd ----------------------------------
     //test_buf = (LADSPA_Data *) jack_port_get_buffer(_input_ports[0], nframes);
 
 	for (unsigned int i=0; i < _chan_count; ++i)
 	{
 		/* (re)connect audio ports */
-		
+
+		LADSPA_Data * out_buf =
+			(LADSPA_Data*) jack_port_get_buffer (_output_ports[i], nframes) + offset;
+
 		descriptor->connect_port (_instances[i], AudioInputPort, test_buf);
-		descriptor->connect_port (_instances[i], AudioOutputPort, (LADSPA_Data*) jack_port_get_buffer (_output_ports[i], nframes) + offset);
+		descriptor->connect_port (_instances[i], AudioOutputPort, out_buf);
 
 
 		if (i == 0) {
@@ -247,8 +259,31 @@ TestLooper::run (jack_nframes_t offset, jack_nframes_t nframes)
 		/* do it */
 		descriptor->run (_instances[i], nframes);
 
+		//------ albBegin ----------------------------------
+		/* Capture channel 0's output so tests can assert on audio content.
+		 * min/max accumulate across blocks because one block covers only a
+		 * fraction of a loop period. */
+		if (i == 0) {
+			for (jack_nframes_t n = 0; n < nframes; ++n) {
+				const float s = out_buf[n];
+				if (s < output_min) output_min = s;
+				if (s > output_max) output_max = s;
+			}
+			if (nframes > 0) output_last = out_buf[nframes - 1];
+		}
+		//------ albEnd ----------------------------------
 	}
 }
+
+//------ albBegin ----------------------------------
+void
+TestLooper::reset_output_stats ()
+{
+	output_min  =  1.0e30f;
+	output_max  = -1.0e30f;
+	output_last =  0.0f;
+}
+//------ albEnd ----------------------------------
 
 void
 TestLooper::set_buffer_size (nframes_t bufsize)
