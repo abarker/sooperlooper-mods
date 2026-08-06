@@ -1,8 +1,8 @@
 ## Modifications to SooperLooper 1.7.9
 
 This is a modified version of SooperLooper which adds late-hit correction
-for record start and record end operations, direct JACK MIDI ports, and
-BBT-based sync pulse placement.
+for record start and record end operations, direct JACK MIDI ports,
+BBT-based sync pulse placement, and a `cancel_record_mute` command.
 
 **Late-hit record correction.** When sync is active, a Record press that
 arrives within a configurable window after a sync boundary is corrected back
@@ -28,12 +28,24 @@ commands with sub-buffer sample-accurate timestamps.  A
 Transport Start/Stop messages, replacing the need for `a2jmidid` when
 driving external hardware.
 
+**`cancel_record_mute` command.**  Cancels a record that is in progress or
+still pending on a sync boundary, keeping the previous take, and is a no-op
+in every other state.  It exists so a single footswitch can carry both
+record and "abandon that take" — the press fires `record` immediately (no
+added latency), and only a long hold retracts it.  Because the command is
+in-engine it can see whether the record actually started, which a MIDI
+remapper cannot; a committed record is discarded and left muted, while a
+merely pending one is cancelled with the loop still playing.  Available
+over MIDI bindings and OSC as `cancel_record_mute`.
+
 For full details see the documentation in [`mod_docs/`](mod_docs/):
 
 - [`late_hit_patch_summary.rst`](mod_docs/late_hit_patch_summary.rst) —
   complete description of all modifications, configuration, and known issues.
 - [`sync_quantize_round_relsync.rst`](mod_docs/sync_quantize_round_relsync.rst) —
   background on SooperLooper's sync and quantize model.
+- [`ROADMAP.rst`](mod_docs/ROADMAP.rst) — designs worked out in full, the
+  reasoning behind them, and open investigations.
 
 All new code is bracketed with `albBegin` / `albEnd` markers; search for
 `albBegin` to locate every changed block.

@@ -244,36 +244,62 @@ much harder to trigger by accident.
    but a delay large enough to cross a quantize boundary jumps the start or end
    by a whole quantize unit.
 
-**Long press on record -> mute and cancel the record, keeping the loop.** The
-goal is to hold the record button to drop to silence while preserving the
-current loop. Because the eager single has *already* fired a real ``record``,
-the long press cannot simply mute -- it also has to retract that record. It
-sends two commands: ``mute_on`` first, then ``undo``. The order matters --
-muting first means the subsequent ``undo`` returns to the muted state rather
-than briefly to play, avoiding an audible blip (in the code, ``undo`` checks a
-"was muted" flag and reverts the loop in place while staying silent). The
-``undo`` also has to be **delayed** relative to the mute: in testing, a gap of
-about **300 ms** is needed, otherwise the mute has not taken hold and the undo
-does not work. The net effect is the previous loop, preserved and silent.
+**Long press on record -> cancel the record, keeping the loop.** The goal is
+to hold the record button to abandon a take you have just started, without
+losing what was already there. Because the eager single has *already* fired a
+real ``record``, the long press cannot simply mute -- it has to retract that
+record too.
 
-How ``undo`` behaves here depends on how far the record has progressed:
+This is now a single command, ``cancel_record_mute``, added to SooperLooper
+for this purpose. The remapper's long press sends it and nothing else::
 
-* If the eagerly-started record is still **waiting on the sync/quantize
-  boundary**, ``undo`` just cancels the pending record and returns to the
-  current state -- nothing was ever overwritten.
-* If the record has **crossed the boundary** and a prior loop exists, ``undo``
-  reverts that layer back to the previous loop.
-* If the record was the **first loop** with nothing underneath it, ``undo``
-  empties back to the off state -- there is no earlier loop to keep.
+    4 cc 65  hit cancel_record_mute -1  0 1  norm 0 127
+
+What it does depends on how far the record has progressed:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - State when the long press lands
+     - Result
+   * - Recording (past the boundary)
+     - The take is discarded, the previous loop is restored, and the looper
+       is left **muted**.
+   * - Record still pending on the sync boundary
+     - The pending record is cancelled and the loop **keeps playing** --
+       nothing was captured, so there is nothing to hide.
+   * - Anything else (playing, or ending a record)
+     - **Nothing at all happens.**
+
+That last row is what makes the gesture safe to overload. If you press to
+*end* a record and your foot lingers past the threshold, the take is kept.
+
+Accepted trade-off: if you meant to record and lingered anyway, the take
+dies. The long-press threshold (400 ms) needs to stay comfortably longer than
+a normal stomp.
 
 .. note::
 
-   Muting is itself latency-sensitive: an unquantized ``mute`` starts or stops
-   the audio the instant it lands, so *when* ``mute_on`` arrives matters. This
-   is a second reason the ordering and timing of the two commands matter -- the
-   ~300 ms delay noted above is the practical manifestation of it. There are
-   further edge cases (for example a quantized mute that has not yet taken hold
-   when the ``undo`` arrives) that would benefit from more testing.
+   **Previously** this was faked from the remapper by sending ``mute_on``,
+   then ``undo`` about **300 ms** later. That worked but was fragile. With
+   mute quantize on (which this rig enables whenever sync is on) a quantized
+   mute is deferred to the next boundary *by design*, so an immediate
+   ``undo`` still saw "not muted" and returned to play, audibly. The 300 ms
+   delay existed only to let the boundary pass. The remapper is also blind to
+   SooperLooper's state, so it could not tell a committed record from a
+   pending one, and would happily destroy a take you meant to keep.
+
+   The in-engine command has full state visibility and acts in one realtime
+   dispatch, so the ordering, the delay and the blip all disappear.
+
+.. note::
+
+   Open question from live use: in the *pending* case the command currently
+   leaves the loop playing rather than muting. If the long press is being
+   used as a general "stop" gesture -- and with sync on the pending case is
+   the common one -- muting there too may be preferable. See
+   ``ROADMAP.rst`` entry 1, decision 1.
 
 .. note::
 

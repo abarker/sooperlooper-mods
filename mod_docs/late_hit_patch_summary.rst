@@ -87,6 +87,12 @@ A concise inventory of all significant capabilities added to SooperLooper 1.7.9.
   hard-clamped to the input ring buffer depth.  Both values are saved in and loaded
   from the session file ``<Globals>`` node.
 
+- **New command** ``cancel_record_mute``.  Cancels a record that is in progress
+  or still pending on a sync boundary, keeps the previous take, and is a no-op
+  in every other state.  Lets one footswitch carry both record and "abandon
+  that take" without adding latency to the record press.  See
+  `New Command: cancel_record_mute`_.
+
 - **Direct JACK MIDI input port** (``sooperlooper:midi_in``).  Receives MIDI
   commands with sub-buffer sample-accurate timestamps, bypassing the ALSA /
   ``a2jmidid`` path.
@@ -320,6 +326,87 @@ API; no special handling is needed.
 Commenting out ``#define ALB_BBT_SYNC`` in ``audio_driver.hpp`` removes the BBT
 fields from ``TransportInfo`` entirely and restores verbatim stock
 ``generate_sync()`` behaviour.
+
+New Command: ``cancel_record_mute``
+------------------------------------
+
+Cancels a record that is in progress or still pending, keeping the previous
+take.  Mutes only if audio was actually captured.  **No-op in every other
+state**, which is what makes it safe to overload onto a footswitch that also
+fires ``record``.
+
+Motivation: a footswitch that must serve both "record" and "abandon that
+take" cannot wait to find out whether a press will become a long press --
+that would add latency to the most timing-critical action in the rig.  So the
+press fires a real ``record`` immediately and only a long hold retracts it.
+Doing the retraction from a MIDI remapper is unreliable because the remapper
+cannot see SooperLooper's state: it cannot tell a committed record from one
+still pending on a boundary, and cannot tell whether the loop was already
+muted.  An in-engine command has ``state``, ``waitingForSync``, ``wasMuted``
+and ``headLoopChunk``, and acts in a single realtime dispatch.
+
+Behaviour by state at the moment the command arrives:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - State
+     - Action
+   * - ``STATE_RECORD``
+     - Discard the take, restore the previous loop, end **muted**.
+   * - ``STATE_TRIG_START``
+     - Cancel the pending record; the loop **keeps playing** (nothing was
+       captured).  Cancelled in place -- see the note below.
+   * - ``STATE_TRIG_STOP``
+     - **No-op.**  A quantized record *end* is waiting on its boundary; the
+       take is being kept.
+   * - everything else
+     - **No-op.**
+
+.. important::
+
+   The two pending states must be distinguished, and the guard must key on
+   ``STATE_TRIG_START`` rather than ``waitingForSync`` -- that flag is also
+   set for deferred *mute* and *play* transitions.  A ``state ==
+   STATE_RECORD`` guard alone silently does nothing in the quantized case
+   the feature exists for; a loose "anything record-ish" guard destroys a
+   take in the case it is supposed to tolerate.
+
+Implementation
+~~~~~~~~~~~~~~
+
+A state-based remap in ``plugin.cc`` (the same idiom as ``MULTI_MUTE_ON``),
+rewriting ``lMultiCtrl`` rather than adding a dispatch case:
+
+- ``STATE_RECORD`` -> set ``wasMuted``, set the four mute fade deltas, remap
+  to ``MULTI_UNDO``.  The existing undo body then lands in ``STATE_MUTE``.
+- ``STATE_TRIG_START`` -> cancel in place (clear ``waitingForSync`` /
+  ``nextState``, restore state from ``headLoopChunk``) and set
+  ``lMultiCtrl = -1``.  It must **not** remap to ``MULTI_UNDO``: no chunk is
+  pushed on the pending path (``pushNewLoopChunk`` lives in the late-hit
+  branch only), so the undo would pop the existing take.
+- anything else -> ``lMultiCtrl = -1``.
+
+The fade deltas mirror ``transitionToNext``'s ``STATE_MUTE`` case, including
+the ``*Src*`` pair.  Setting only the non-Src pair leaves stale source-loop
+gains that corrupt a later ``MULTIPLY`` (``beginMultiply`` sets no fade
+deltas of its own; ``beginOverdub`` does, which is why overdub is immune).
+
+Files: ``event.hpp`` (enum appended before ``LAST_COMMAND``),
+``command_map.cpp`` (one line -- OSC and ``.slb`` bindings follow
+automatically), ``plugin.cc`` (``#define``, drift ``static_assert``\ s, the
+remap branch).
+
+.. warning::
+
+   The enum **must** be appended at the end.  ``plugin.cc`` hardcodes
+   ``MULTI_UNDO``..``MULTI_PAUSE_OFF`` as integer literals 0-23 mirroring the
+   first 24 ``Event::command_t`` values; inserting inside that range shifts
+   the enum but not the literals, silently remapping commands **with no
+   compile error**.  Six ``static_assert``\ s now guard this.
+
+Full design, measurements and open items: ``ROADMAP.rst`` entry 1.
 
 Configurable Window Size
 ------------------------
@@ -1075,6 +1162,51 @@ additions to support the late-hit tests:
    * - ``g_late_hit_max_quant_unit_fraction`` exposed via SWIG
      - Same mechanism as above.  Accessible as
        ``test_engine.cvar.g_late_hit_max_quant_unit_fraction``.
+
+Test harness additions for audio-content testing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Added alongside ``cancel_record_mute``.  Before these the harness could only
+assert on *state* values; it can now assert on what actually landed in the
+loop buffer, which is how the fade-residue bugs were found and fixed.
+
+.. list-table::
+   :header-rows: 1
+
+   * - Addition
+     - Description
+   * - ``TestLooper::input_inject_value`` (``float``, public)
+     - The constant fed to the plugin's audio input each block.  ``run()``
+       has never read the real JACK input port -- it always synthesised a
+       buffer -- so this only makes that constant settable.  Defaults to
+       ``-0.7``, the previously hardcoded value, so every test written
+       before this behaves identically.
+   * - ``TestLooper::output_min`` / ``output_max`` (``float``, public)
+     - Running min/max of channel 0's output, sampled after
+       ``descriptor->run()``.  They accumulate across blocks because one
+       block covers only a fraction of a loop period, so a single block can
+       miss a contaminated region entirely.
+   * - ``TestLooper::output_last`` (``float``, public)
+     - Last sample of the most recent block.
+   * - ``TestLooper::reset_output_stats()``
+     - Resets the three above.  Typical use: reset, spin a known number of
+       callbacks, then read the range.
+   * - ``engine_wrapper.command_ordinals``
+     - Command name -> ordinal, parsed from ``event.hpp``.  The number passed
+       to ``request_cmd()`` is the ``Event::command_t`` ordinal, and the
+       positional ``commands`` tuple only covers the first 24 values, so
+       anything past those must come from the header.
+
+Set ``DryLevel`` to 0 from the test so the output is purely loop content.
+
+.. note::
+
+   The harness is still hardcoded to **one** channel
+   (``test_engine.cpp``: ``TestLooper(jack, 0, 1)``) while the live rig runs
+   ``sooperlooper -c 2``.  Making it configurable was considered and
+   deferred -- see ``ROADMAP.rst``.  Note that channels above 0 have State,
+   LoopLength, LoopPosition and output wired to slave/dummy ports, so raising
+   the count alone would add no observability.
 
 Late-hit test cases (``testdef_late_hit.py``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
