@@ -2235,13 +2235,29 @@ runSooperLooper(LADSPA_Handle Instance,
 		  // gross clipping while muted, unnoticed until unmute.  Measured at
 		  // -10.3 with an input of -0.9 before this was added.
 		  //
-		  // Same values UNDO_ALL uses for the same purpose (3622-23), and set
-		  // here rather than in the shared STATE_MUTE branch so no other undo
-		  // caller changes behaviour.  Harmless in the no-prev sub-case, which
-		  // reaches UNDO_ALL and sets these identically.
+		  // These mirror transitionToNext()'s STATE_MUTE case (~1852-59),
+		  // which is the canonical "we are becoming muted" fade set.  Match
+		  // it exactly rather than picking a subset: an earlier version set
+		  // only fLoopFadeDelta/fFeedFadeDelta, which left the *Src* pair
+		  // stale.  Those two do not affect the play/mute block, but they
+		  // govern the identical accumulator on the source loop at 4464 /
+		  // 4712 / 4897, which runs in OVERDUB / REPLACE / SUBSTITUTE /
+		  // MULTIPLY / INSERT.  Entering any of those after a cancel would
+		  // start writing input into the source loop at a stale gain.
+		  //
+		  // Set here rather than in the shared STATE_MUTE branch of
+		  // MULTI_UNDO so no other undo caller changes behaviour.  Harmless
+		  // in the no-prev sub-case, which reaches UNDO_ALL and sets the
+		  // non-Src pair identically.
+		  // fPlayFadeDelta is deliberately NOT set here: MULTI_UNDO's
+		  // STATE_MUTE branch (~3620) assigns it 0.0f right after this,
+		  // so setting it would be dead code.  The play fade is already at
+		  // zero from the record entry, so holding it is correct.
 		  // Regression test: testResidueAfterCancelOverExistingTake.
-		  pLS->fLoopFadeDelta = -1.0f / xfadeSamples;
-		  pLS->fFeedFadeDelta =  1.0f / xfadeSamples;
+		  pLS->fLoopFadeDelta    = -1.0f / xfadeSamples;
+		  pLS->fLoopSrcFadeDelta = -1.0f / xfadeSamples;
+		  pLS->fFeedFadeDelta    =  1.0f / xfadeSamples;
+		  pLS->fFeedSrcFadeDelta =  1.0f / xfadeSamples;
 
 		  lMultiCtrl = MULTI_UNDO;
 	  }

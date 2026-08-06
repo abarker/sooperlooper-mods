@@ -256,6 +256,61 @@ class cancelRecordMuteAudio(_AudioHelpers, testdef_simple_state.simpleStateTest)
         self.assertAlmostEqual(mx, TAKE_LEVEL, places=3)
 
 
+class cancelThenSourceWritingState(_AudioHelpers,
+                                   testdef_simple_state.simpleStateTest):
+    """A cancel must not disturb a *later* command's source-loop writes.
+
+    plugin.cc:4464/4712/4897 (OVERDUB/REPLACE/SUBSTITUTE, MULTIPLY, INSERT)
+    run the same accumulator as 5262 but on the source loop, governed by
+    fLoopSrcFadeAtten / fFeedSrcFadeAtten.  Record entry ramps those to
+    1.0/0.0, so a cancel that does not reset them leaves the next
+    source-writing command starting from a stale gain.
+
+    beginOverdub re-initialises them itself and is immune; beginMultiply
+    sets no fade deltas at all and inherits whatever was left, so MULTIPLY
+    is where this shows.  Measured before the fix: -1.8 vs -0.4 after.
+    """
+
+    def setUp(self):
+        testdef_simple_state.simpleStateTest.setUp(self)
+        self.initAudio()
+
+    def multiplyRange(self, with_cancel):
+        """Run a MULTIPLY, optionally preceded by a cancel, return its range."""
+        self.recordTake(TAKE_LEVEL)
+        if with_cancel:
+            self.engine.request("RECORD")
+            self.waitBuffers(12)
+            self.assertState("Recording")
+            self.engine.request(CMD)
+            self.waitBuffers(5)
+            self.engine.request("MUTE_OFF")
+            self.waitBuffers(12)
+        self.looper.input_inject_value = NOISE_LEVEL
+        self.engine.request("MULTIPLY")
+        self.waitBuffers(60)
+        self.engine.request("MULTIPLY")
+        self.waitBuffers(20)
+        return self.outputRange(120)
+
+    def testCancelDoesNotDisturbLaterMultiply(self):
+        after_cancel = self.multiplyRange(with_cancel=True)
+
+        # Fresh engine for the reference run: a MULTIPLY with no cancel
+        # before it.  Comparing against real behaviour rather than a magic
+        # number keeps this valid if multiply's own semantics ever change.
+        self.tearDown()
+        self.setUp()
+        baseline = self.multiplyRange(with_cancel=False)
+
+        self.assertAlmostEqual(
+            after_cancel[0], baseline[0], places=1,
+            msg="multiply after a cancel gave %s but a plain multiply gives "
+                "%s -- the cancel left stale source-loop fades behind"
+                % (after_cancel, baseline))
+        self.assertAlmostEqual(after_cancel[1], baseline[1], places=1)
+
+
 class cancelRecordMuteQuantized(_AudioHelpers,
                                 testdef_simple_state.simpleStateTest):
     """The quantized branches: STATE_TRIG_START and STATE_TRIG_STOP.
