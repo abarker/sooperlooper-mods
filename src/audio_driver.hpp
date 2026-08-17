@@ -112,7 +112,9 @@ struct TransportInfo
 	int32_t  tick;           /**< tick within beat (0 .. ticks_per_beat-1) */
 	double   bar_start_tick; /**< cumulative ticks from transport origin to
 	                              start of current bar */
-	double   ticks_per_beat; /**< tick resolution (Hydrogen uses 1920.0) */
+	double   ticks_per_beat; /**< tick resolution, set by the timebase master;
+	                              never assume a value.  Hydrogen 1.2.4 reports
+	                              48.0 (observed on the rig 2026-08-17). */
 	bool     bbt_valid;      /**< true iff the above fields were populated
 	                              from JackPositionBBT this buffer */
 #endif // ALB_BBT_SYNC
