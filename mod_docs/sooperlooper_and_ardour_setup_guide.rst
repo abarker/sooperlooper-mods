@@ -190,13 +190,34 @@ setup automatically.)
    opposite of what it does. (``midi_bridge.cpp:477`` is the authority --
    it is a *skip* test, which is why the sense inverts.)
 
-   The practical trap is plain ``cc``: it suppresses nothing, so any switch
-   sending both a press and a release triggers the command **twice**. That
-   is how the ActitioN is programmed here -- momentary CC, press then
-   release -- though it is a configuration choice, not a property of the
-   pedal. Whenever a switch is set up that way, you almost always want
-   ``ccoff``. Every command in this setup's ``.slb`` uses it, except the two
-   bound as ``hit``.
+   **Why ``ccoff`` and not ``cc``.** What the release does depends on the
+   **command type** (``midi_bridge.cpp``, ``send_event``). A ``note``
+   command maps the value: non-zero becomes ``down``, zero becomes ``up``.
+   So with plain ``cc``, a press starts the command and the release
+   immediately ends it -- ``record`` switches on and straight back off.
+   That is the classic symptom, and ``ccoff`` is its cure: it drops the
+   zero message, so only ``down`` is ever delivered.
+
+   A ``hit`` command behaves differently again -- it is emitted unchanged
+   on both edges, so ``cc`` + ``hit`` really does fire the command twice
+   per stomp.
+
+   In this setup the point is now moot, on two independent grounds. The
+   remapper's **gesture** entries (a dict with ``single`` / ``long`` /
+   ...) consume the pedal's release and emit a single non-zero CC, so no
+   release reaches SooperLooper; and ``ccoff`` would discard one if it did.
+   The historical reason for ``ccoff`` was bindings learned when the
+   release *did* get through.
+
+   Worth knowing if you add one: the remapper's **direct** entries (a bare
+   list rather than a dict) do fire on both edges, and with a fixed
+   ``"value": 127`` the release sends 127 as well -- so ``ccoff`` cannot
+   save you there, because nothing is zero. That is what the remapper's
+   ``press_only`` flag is for.
+
+   The ActitioN is programmed here to send momentary CCs, press then
+   release, but that is a configuration choice rather than a property of
+   the pedal.
 
 On the ActitioN footswitch, each button sends a **momentary CC** event -- a
 press followed by a release. The remapper layers gestures on top of these raw
