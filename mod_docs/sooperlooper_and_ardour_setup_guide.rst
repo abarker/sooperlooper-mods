@@ -208,6 +208,11 @@ setup automatically.)
    they did. The historical reason for ``ccoff`` was bindings learned when
    the release *did* get through.
 
+   Confirmed on the rig 2026-08-18: ``record`` rebound to plain ``cc``
+   works, because no release arrives for it to act on. Either form is fine
+   as things stand, so keep ``ccoff`` as the safer default -- it costs
+   nothing and still protects if the signal path changes.
+
    Worth knowing if you add one: the remapper's **direct** entries (a bare
    list rather than a dict) do fire on both edges, and with a fixed
    ``"value": 127`` the release sends 127 as well -- so ``ccoff`` cannot
