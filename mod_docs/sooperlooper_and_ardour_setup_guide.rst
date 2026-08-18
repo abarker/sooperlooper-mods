@@ -203,11 +203,10 @@ setup automatically.)
    per stomp.
 
    In this setup the point is now moot, on two independent grounds. The
-   remapper's **gesture** entries (a dict with ``single`` / ``long`` /
-   ...) consume the pedal's release and emit a single non-zero CC, so no
-   release reaches SooperLooper; and ``ccoff`` would discard one if it did.
-   The historical reason for ``ccoff`` was bindings learned when the
-   release *did* get through.
+   remapper's **gesture** entries -- including a bare ``single`` -- do not
+   directly send the release event; and ``ccoff`` would discard one if
+   they did. The historical reason for ``ccoff`` was bindings learned when
+   the release *did* get through.
 
    Worth knowing if you add one: the remapper's **direct** entries (a bare
    list rather than a dict) do fire on both edges, and with a fixed
