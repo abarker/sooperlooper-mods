@@ -162,6 +162,42 @@ automatically. SooperLooper stores bindings in an ``.slb`` file; this setup
 uses ``sl_midi_config_actition_bindings.slb``. (Hydrogen remembers its MIDI
 setup automatically.)
 
+.. warning::
+
+   **A saved binding's event type decides whether it fires on press, on
+   release, or on both -- and the names read backwards.** This matters if
+   you ever read or hand-edit an ``.slb``. A line looks like::
+
+       4 ccoff 65  note cancel_record_mute -1  0 1  norm 0 127
+       │ │     │   │
+       │ │     │   └─ command type (note / hit / set)
+       │ │     └───── CC number
+       │ └─────────── event type
+       └───────────── MIDI channel
+
+   For control-change events there are three event types:
+
+   ==========  ==================================================
+   Event type  Fires on
+   ==========  ==================================================
+   ``ccoff``   **press** (any non-zero value)
+   ``ccon``    **release** (value 0)
+   ``cc``      **both** press and release
+   ==========  ==================================================
+
+   The suffix names what the binding **suppresses**, not what triggers it:
+   ``ccoff`` drops the *off* message and so fires on press. It reads as the
+   opposite of what it does. (``midi_bridge.cpp:477`` is the authority --
+   it is a *skip* test, which is why the sense inverts.)
+
+   The practical trap is plain ``cc``: it suppresses nothing, so any switch
+   sending both a press and a release triggers the command **twice**. That
+   is how the ActitioN is programmed here -- momentary CC, press then
+   release -- though it is a configuration choice, not a property of the
+   pedal. Whenever a switch is set up that way, you almost always want
+   ``ccoff``. Every command in this setup's ``.slb`` uses it, except the two
+   bound as ``hit``.
+
 On the ActitioN footswitch, each button sends a **momentary CC** event -- a
 press followed by a release. The remapper layers gestures on top of these raw
 events and handles bank switching.
@@ -253,7 +289,7 @@ record too.
 This is now a single command, ``cancel_record_mute``, added to SooperLooper
 for this purpose. The remapper's long press sends it and nothing else::
 
-    4 cc 65  hit cancel_record_mute -1  0 1  norm 0 127
+    4 ccoff 65  note cancel_record_mute -1  0 1  norm 0 127
 
 What it does depends on how far the record has progressed:
 
@@ -306,7 +342,8 @@ long-press. There is **no way to avoid** the following: the start of a genuine
 record/play press is indistinguishable from the eager single that precedes a
 long press that may or may not arrive. The system cannot know a long press is
 coming, so the eager single must fire, and the loop can briefly become audible
-during the long-press wait interval before ``mute_on``/``undo`` retract it. The
+during the long-press wait interval before ``cancel_record_mute`` retracts it.
+The
 most likely accidental trigger is a lingering press on the **record-to-play**
 switch -- if the foot rests on the pedal past the long-press threshold, the
 gesture fires and cancels a take meant to be kept. Deliberately cancelling a
