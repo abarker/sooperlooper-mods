@@ -209,9 +209,11 @@ setup automatically.)
    the release *did* get through.
 
    Confirmed on the rig 2026-08-18: ``record`` rebound to plain ``cc``
-   works, because no release arrives for it to act on. Either form is fine
-   as things stand, so keep ``ccoff`` as the safer default -- it costs
-   nothing and still protects if the signal path changes.
+   works, because no release arrives for it to act on. (That test ran
+   against a *direct* remapper entry carrying ``press_only``, which
+   likewise sends nothing on release -- so it holds for either mapping
+   style.) Keep ``ccoff`` as the default regardless: it costs nothing and
+   still protects if the signal path changes.
 
    Worth knowing if you add one: the remapper's **direct** entries (a bare
    list rather than a dict) do fire on both edges, and with a fixed
