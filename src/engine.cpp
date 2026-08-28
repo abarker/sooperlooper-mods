@@ -2423,6 +2423,18 @@ Engine::set_tempo (double tempo, bool rt)
 		}
 		else if (_tempo < 60.0) {
 			_eighth_cycle *= 2;
+			//------ albBegin ----------------------------------
+			// Stock has no ceiling here, unlike the max(1.0f,...) floor
+			// clamp on the halving branch just above.  This test re-fires
+			// on every call to set_tempo() while _tempo stays under 60
+			// (not just once per dip), and set_tempo() can be called once
+			// per buffer while rolling -- so an unclamped ramp/hover below
+			// 60 BPM lets _eighth_cycle grow rapidly and latch permanently.
+			// Bound it, mirroring the floor clamp's style. 128 is an
+			// arbitrary but generous ceiling (8x the 16.0f default); no
+			// existing max is defined for this port to mirror exactly.
+			_eighth_cycle = min(128.0f, _eighth_cycle);
+			//------ albEnd ----------------------------------
 			//cerr << "doubl 8ths to : " << _eighth_cycle << endl;
 			//_tempo *= 2.0;
 		}
