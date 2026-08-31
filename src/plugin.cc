@@ -147,6 +147,32 @@ float g_late_hit_window_ms = LATE_HIT_WINDOW_MS;
 #define LATE_HIT_MAX_QUANT_UNIT_FRACTION 100.0f
 float g_late_hit_max_quant_unit_fraction = LATE_HIT_MAX_QUANT_UNIT_FRACTION;
 
+//------ albBegin ----------------------------------
+// RECORD_FAILSAFE_SECONDS: if a record is left running in STATE_RECORD for
+// longer than this many seconds -- e.g. the performer got distracted and
+// never pressed anything to stop it -- treat it exactly as if the
+// long-press CANCEL_RECORD_MUTE command had just arrived: discard the take
+// and mute, same as cancelling by hand.  See the guard added at the
+// CANCEL_RECORD_MUTE remap in run(), and mod_docs/ROADMAP.rst entry 4.
+//
+// Deliberately NOT gated on STATE_TRIG_STOP too: that state is a brief,
+// self-resolving wait for the next quantize boundary (at most one loop
+// cycle) with no way to get stuck in it, unlike STATE_RECORD, which has no
+// automatic exit at all.
+//
+// Same non-LADSPA-port mechanism as g_late_hit_window_ms above, and for the
+// same reasons: a setup-time preference, not a real-time control, saved and
+// loaded as the XML property "record_failsafe_seconds" in the <Globals>
+// node by engine.cpp save_session/load_session.  The compile-time constant
+// below is the fallback for a session that predates this feature, and the
+// default when running standalone.
+//
+// <= 0.0f disables the failsafe entirely, matching the late-hit window's
+// "0 disables" convention.
+#define RECORD_FAILSAFE_SECONDS_DEFAULT 45.0f
+float g_record_failsafe_seconds = RECORD_FAILSAFE_SECONDS_DEFAULT;
+//------ albEnd ----------------------------------
+
 // Compile-time safety switch for the Multiply-end late-hit correction.
 // Set to 0 to disable only the Multiply-end correction while leaving
 // the Record/Stop correction (which has more test history) unaffected.
@@ -2155,6 +2181,38 @@ runSooperLooper(LADSPA_Handle Instance,
      pLS->lLastMultiCtrl = lMultiCtrl;
   }
 
+  //====== albBegin ==================================================================================
+  // RECORD_FAILSAFE -- auto-fire CANCEL_RECORD_MUTE if a record has been
+  // left running in STATE_RECORD longer than g_record_failsafe_seconds,
+  // instead of leaving it recording indefinitely because the performer
+  // never got back to press anything.  Full design: mod_docs/ROADMAP.rst
+  // entry 4.
+  //
+  // Computed here, as a plain statement pair ahead of the if/else-if chain
+  // below, rather than inline at the CANCEL_RECORD_MUTE branch itself: that
+  // chain is one long if/else-if sequence, and splicing a self-contained
+  // if/else in the middle of it (as a first attempt at this did) breaks it
+  // -- the next "else if" has nothing open to attach to.  bRecordFailsafeFired
+  // is then just one more term ORed into that branch's existing condition.
+  //
+  // lRecordFailsafeSamples accumulates SampleCount once per buffer while
+  // state is STATE_RECORD and resets to 0 the instant it is not -- so it
+  // measures unbroken time in STATE_RECORD only, never leaking across
+  // separate takes.  bRecordFailsafeFired can therefore only be true when
+  // pLS->state == STATE_RECORD (the counter is 0 otherwise), so it always
+  // lands in the CANCEL_RECORD_MUTE branch's STATE_RECORD case -- never its
+  // STATE_TRIG_START or no-op cases.
+  if (pLS->state == STATE_RECORD) {
+      pLS->lRecordFailsafeSamples += SampleCount;
+  } else {
+      pLS->lRecordFailsafeSamples = 0;
+  }
+  bool bRecordFailsafeFired =
+      g_record_failsafe_seconds > 0.0f &&
+      pLS->lRecordFailsafeSamples >
+          (unsigned long)(g_record_failsafe_seconds * pLS->fSampleRate);
+  //====== albEnd ====================================================================================
+
   // force use delay
   if (lMultiCtrl == MULTI_REDO && *pLS->pfRedoTapMode != 0)
   {
@@ -2191,6 +2249,9 @@ runSooperLooper(LADSPA_Handle Instance,
   // CANCEL_RECORD_MUTE -- cancel an in-progress or pending record, keep the
   // prior take, and mute only if audio was actually captured.  No-op in every
   // other state.  Full design and rationale: mod_docs/ROADMAP.rst entry 1.
+  // The "|| bRecordFailsafeFired" below is the only change from that design:
+  // a second, automatic way to reach this same branch.  See the
+  // RECORD_FAILSAFE block just above.
   //
   // Implemented as a state-based remap onto MULTI_UNDO rather than as its own
   // dispatch case, so the existing (well-tested) undo path does all the work.
@@ -2203,7 +2264,7 @@ runSooperLooper(LADSPA_Handle Instance,
   // STATE_TRIG_STOP, commit the take, and leave wasMuted false -- so a
   // following undo would land in STATE_PLAY, audible.  Setting wasMuted here
   // bypasses the mute state machine entirely and is immediate.
-  else if (lMultiCtrl == MULTI_CANCEL_RECORD_MUTE) {
+  else if (lMultiCtrl == MULTI_CANCEL_RECORD_MUTE || bRecordFailsafeFired) {
 	  if (pLS->state == STATE_RECORD) {
 		  // Committed record: audio was captured, so undo it and stay silent.
 		  // Forcing wasMuted makes MULTI_UNDO take its STATE_MUTE branch

@@ -65,6 +65,11 @@ extern float g_late_hit_window_ms;
 // Maximum fraction of one quantize cycle for the late-hit window.  Defined
 // and defaulted in plugin.cc; saved/loaded here alongside g_late_hit_window_ms.
 extern float g_late_hit_max_quant_unit_fraction;
+// Record failsafe timeout (seconds).  Defined and defaulted in plugin.cc;
+// declared extern here so engine.cpp can persist it in the Globals session
+// node, same pattern as the two late-hit globals above.  See the comment
+// block in plugin.cc for the full rationale.
+extern float g_record_failsafe_seconds;
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
@@ -3247,9 +3252,16 @@ Engine::load_session (std::string fname, string * readstr)
 				g_late_hit_max_quant_unit_fraction = val;
 			}
 		}
+		if ((prop = globals_node->property ("record_failsafe_seconds")) != 0) {
+			float val;
+			if (sscanf (prop->value().c_str(), "%g", &val) == 1 && val >= 0.0f) {
+				g_record_failsafe_seconds = val;
+			}
+		}
 		fprintf(stderr,
 		        "SooperLooper: late_hit_window_ms loaded from session: %.4g ms"
 		        " (quant_unit_fraction cap: %.4g)"
+		        "  record_failsafe_seconds: %.4g"
 #ifdef ALB_RT_SAFE_COND_SIGNAL
 		        "  rt_safe_cond_signal: ON"
 #else
@@ -3260,7 +3272,8 @@ Engine::load_session (std::string fname, string * readstr)
 #else
 		        "  tempo_only_when_rolling: OFF\n",
 #endif
-		        g_late_hit_window_ms, g_late_hit_max_quant_unit_fraction);
+		        g_late_hit_window_ms, g_late_hit_max_quant_unit_fraction,
+		        g_record_failsafe_seconds);
 		//------ albEnd ----------------------------------
 
 	}
@@ -3362,6 +3375,8 @@ Engine::save_session (std::string fname, bool write_audio, string * writestr)
 	globals_node->add_property ("late_hit_window_ms", buf);
 	snprintf(buf, sizeof(buf), "%.10g", g_late_hit_max_quant_unit_fraction);
 	globals_node->add_property ("late_hit_max_quant_unit_fraction", buf);
+	snprintf(buf, sizeof(buf), "%.10g", g_record_failsafe_seconds);
+	globals_node->add_property ("record_failsafe_seconds", buf);
 	//------ albEnd ----------------------------------
 
 	

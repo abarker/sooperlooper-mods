@@ -333,6 +333,15 @@ typedef struct {
 	bool bLateHitBypassed;
 	//------ albEnd ----------------------------------
 
+	//------ albBegin ----------------------------------
+	// lRecordFailsafeSamples: elapsed samples spent continuously in
+	// STATE_RECORD.  Reset to 0 whenever state is anything else; compared
+	// each buffer against g_record_failsafe_seconds (plugin.cc) to
+	// auto-fire CANCEL_RECORD_MUTE if a record is left running unattended.
+	// See mod_docs/ROADMAP.rst entry 4.
+	unsigned long lRecordFailsafeSamples;
+	//------ albEnd ----------------------------------
+
 	/* Ports:
 	   ------ */
 
