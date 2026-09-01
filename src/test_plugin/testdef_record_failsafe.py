@@ -7,11 +7,28 @@ table, same fade-residue fix, just a second way to reach that one branch.
 Design and rationale: mod_docs/ROADMAP.rst entry 4 (and entry 1 for the
 CANCEL_RECORD_MUTE branch itself, reused verbatim here).
 
+Specialized 2026-09-01: the failsafe only ever arms when the RECORD press
+that started this take interrupted an actively playing, unmuted loop
+(state was Playing or, structurally, OneShot -- see
+bRecordEnteredFromActivePlay in plugin.hpp/plugin.cc). A first/fresh
+recording from an empty loop, or a record started from Muted or Paused,
+can run indefinitely with no auto-cancel, same as before this feature
+existed. Motivation: the risky case is an eager-single RECORD that fired
+while the performer actually meant to hold for a long-press
+cancel_record_mute (or simply got distracted mid-overdub) -- there, an
+existing audible take is what's silently at stake. A fresh/empty
+recording has no such ambiguity with a "meant to mute" gesture and no
+prior take to protect, so it's left alone. See mod_docs/ROADMAP.rst
+entry 4's "Specialized to interrupted active playback only" section.
+
 g_record_failsafe_seconds is set to a small value for these tests via the
 SWIG-exposed global (test_engine.cvar), the same mechanism
 testdef_cancel_record_mute.py uses for g_late_hit_window_ms, so the timeout
-fires in around a second of real JACK callbacks instead of the 45-second
-production default.
+fires in around a second of real JACK callbacks. The compiled-in default is
+now 0.0 (off, see plugin.cc) since this feature can discard a take with no
+press at all; tests still exercise a representative non-zero value (45.0,
+this file's prior default) rather than 0 in setUp/tearDown so the "fires"
+tests remain meaningful.
 
 Timing budget (buffer period is real wall-clock time -- this harness runs
 against a live JACK server, not a simulated clock):
@@ -35,9 +52,13 @@ TAKE_LEVEL  =  0.5    # the take we want back
 NOISE_LEVEL = -0.9    # what the input is doing while the failsafe is armed
 
 # Small timeout so the failsafe fires within a couple of seconds of real
-# JACK callbacks instead of the 45-second production default.  Must clear
-# recordTake()'s own ~0.85s settle wait with margin.  Restored in tearDown.
+# JACK callbacks.  Must clear recordTake()'s own ~0.85s settle wait with
+# margin.  Restored in tearDown.
 _TEST_SECONDS = 1.5
+# Not the compiled-in default (that's 0.0, off) -- just a representative
+# non-zero value these tests restore between cases so an accidental leak of
+# _TEST_SECONDS into another test fails loudly instead of silently disabling
+# the feature for it.
 _DEFAULT_SECONDS = 45.0
 
 # Buffers to wait for the failsafe to have clearly fired at _TEST_SECONDS,
@@ -93,22 +114,28 @@ class recordFailsafe(_AudioHelpers, testdef_simple_state.simpleStateTest):
         test_engine.cvar.g_record_failsafe_seconds = _DEFAULT_SECONDS
         testdef_simple_state.simpleStateTest.tearDown(self)
 
-    def testFiresFromFirstRecord(self):
-        # No prior take: left recording past the timeout, same landing spot
-        # as a manual cancel from the same state -- OffMuted (compare
-        # testdef_cancel_record_mute.testCancelsFirstRecord).
+    def testDoesNotFireFromFirstRecord(self):
+        # No prior take -- entered STATE_RECORD from STATE_OFF, not an
+        # actively playing loop -- so bRecordEnteredFromActivePlay is
+        # false and the failsafe must never arm, no matter how long this
+        # runs.  Before the 2026-09-01 specialization this used to fire
+        # and land OffMuted (compare
+        # testdef_cancel_record_mute.testCancelsFirstRecord, which still
+        # covers that landing spot for the *manual* cancel path).
         self.engine.request("RECORD")
         self.waitBuffers(2)
         self.assertState("Recording")
         self.waitBuffers(_FIRE_WAIT_BUFFERS)
-        self.assertState("OffMuted")
+        self.assertState("Recording")   # still recording -- never fired
 
     def testFiresOverExistingTakeAndRestoresIt(self):
-        # A take exists; a second record left running past the timeout must
-        # be discarded and the prior take restored, muted -- with no
-        # residual audio leaking through (the same fade-residue class of
-        # bug CANCEL_RECORD_MUTE itself had to fix; this exercises the
-        # identical code path, just reached automatically).
+        # The canonical case the specialization keeps: a take is actively
+        # playing (unmuted) when a second record interrupts it and is then
+        # left running past the timeout.  Must be discarded and the prior
+        # take restored, muted -- with no residual audio leaking through
+        # (the same fade-residue class of bug CANCEL_RECORD_MUTE itself
+        # had to fix; this exercises the identical code path, just reached
+        # automatically).
         self.recordTake(TAKE_LEVEL)
 
         self.looper.input_inject_value = NOISE_LEVEL
@@ -161,8 +188,35 @@ class recordFailsafe(_AudioHelpers, testdef_simple_state.simpleStateTest):
 
     def testZeroDisablesFailsafe(self):
         # <= 0.0f must disable the feature entirely, matching the late-hit
-        # window's "0 disables" convention.
+        # window's "0 disables" convention.  Records over an existing take
+        # (bRecordEnteredFromActivePlay true) specifically so this isolates
+        # the g_record_failsafe_seconds guard -- a first/fresh recording
+        # would never fire regardless of this value (see
+        # testDoesNotFireFromFirstRecord), which would make this test pass
+        # for the wrong reason.
+        self.recordTake(TAKE_LEVEL)
         test_engine.cvar.g_record_failsafe_seconds = 0.0
+        self.looper.input_inject_value = NOISE_LEVEL
+        self.engine.request("RECORD")
+        self.waitBuffers(2)
+        self.assertState("Recording")
+        self.waitBuffers(_FIRE_WAIT_BUFFERS)
+        self.assertState("Recording")   # still recording -- never fired
+
+    def testDoesNotFireWhenEnteredFromMute(self):
+        # The other half of "active, unmuted": a take exists but is muted,
+        # not playing, when the second record starts.
+        # bRecordEnteredFromActivePlay must be false here even though a
+        # prior take exists to protect -- entering from STATE_MUTE is
+        # deliberately excluded (see the module docstring). Must behave
+        # like testDoesNotFireFromFirstRecord: runs past the timeout with
+        # no auto-cancel.
+        self.recordTake(TAKE_LEVEL)
+        self.engine.request("MUTE_ON")
+        self.waitBuffers(5)
+        self.assertState("Muted")
+
+        self.looper.input_inject_value = NOISE_LEVEL
         self.engine.request("RECORD")
         self.waitBuffers(2)
         self.assertState("Recording")

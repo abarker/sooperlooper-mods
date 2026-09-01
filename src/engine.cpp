@@ -2125,7 +2125,18 @@ Engine::process_nonrt_event (EventNonRT * event)
 		else if (gg_event->param == "eighth_per_cycle") {
 			gg_event->ret_value = _eighth_cycle;
 		}
-		
+		//------ albBegin ----------------------------------
+		else if (gg_event->param == "late_hit_window_ms") {
+			gg_event->ret_value = g_late_hit_window_ms;
+		}
+		else if (gg_event->param == "late_hit_max_quant_unit_fraction") {
+			gg_event->ret_value = g_late_hit_max_quant_unit_fraction;
+		}
+		else if (gg_event->param == "record_failsafe_seconds") {
+			gg_event->ret_value = g_record_failsafe_seconds;
+		}
+		//------ albEnd ----------------------------------
+
 		_osc->finish_global_get_event (*gg_event);
 	}
 	else if ((gs_event = dynamic_cast<GlobalSetEvent*> (event)) != 0)
@@ -2206,6 +2217,27 @@ Engine::process_nonrt_event (EventNonRT * event)
 			}
 			calculate_midi_tick();
 		}
+		//------ albBegin ----------------------------------
+		// Same guard the session-file loader uses (val >= 0.0f) -- see
+		// load_session's record_failsafe_seconds/late_hit_window_ms
+		// handling above. A negative value would go on to be cast to
+		// unsigned long in plugin.cc's threshold checks, which is unsafe.
+		else if (gs_event->param == "late_hit_window_ms") {
+			if (gs_event->value >= 0.0f) {
+				g_late_hit_window_ms = gs_event->value;
+			}
+		}
+		else if (gs_event->param == "late_hit_max_quant_unit_fraction") {
+			if (gs_event->value >= 0.0f) {
+				g_late_hit_max_quant_unit_fraction = gs_event->value;
+			}
+		}
+		else if (gs_event->param == "record_failsafe_seconds") {
+			if (gs_event->value >= 0.0f) {
+				g_record_failsafe_seconds = gs_event->value;
+			}
+		}
+		//------ albEnd ----------------------------------
 
 		ParamChanged(cmdmap.to_control_t(gs_event->param), -2); // emit
 	}

@@ -93,6 +93,22 @@ A concise inventory of all significant capabilities added to SooperLooper 1.7.9.
   that take" without adding latency to the record press.  See
   `New Command: cancel_record_mute`_.
 
+- **Record failsafe.**  If a record that interrupted an actively playing,
+  unmuted loop is left running in ``STATE_RECORD`` for longer than
+  ``g_record_failsafe_seconds`` (default **0**, i.e. off), the engine
+  automatically fires the same ``cancel_record_mute`` branch, as if the
+  long press had arrived on its own.  Covers "nobody pressed anything at
+  all" for that case, which ``cancel_record_mute`` cannot, since it still
+  requires a press.  Does **not** apply to a first/fresh recording of an
+  empty loop, or one started from mute or pause.  See
+  `New Feature: record_failsafe`_.
+
+- **OSC** ``/set``/``/get`` **for three session-file-only globals.**
+  ``record_failsafe_seconds``, ``late_hit_window_ms``, and
+  ``late_hit_max_quant_unit_fraction`` can now be read and changed live over
+  OSC, in addition to the session file.  See *Configurable Window Size*
+  below.
+
 - **Direct JACK MIDI input port** (``sooperlooper:midi_in``).  Receives MIDI
   commands with sub-buffer sample-accurate timestamps, bypassing the ALSA /
   ``a2jmidid`` path.
@@ -406,7 +422,84 @@ remap branch).
    the enum but not the literals, silently remapping commands **with no
    compile error**.  Six ``static_assert``\ s now guard this.
 
-Full design, measurements and open items: ``ROADMAP.rst`` entry 1.
+New Feature: ``record_failsafe``
+-----------------------------------
+
+If a record is left running in ``STATE_RECORD`` for longer than
+``g_record_failsafe_seconds``, the engine treats it exactly as if
+``cancel_record_mute``'s long press had just arrived: discard the take,
+restore the previous loop, end muted.  **Not a new command** -- it is a
+second, automatic way to reach the same ``CANCEL_RECORD_MUTE`` branch
+described above, so it inherits that command's guard table and
+fade-residue fix unchanged.
+
+Motivation: ``cancel_record_mute`` still requires a press -- a long hold on
+the record switch.  It does nothing if a record is simply left running
+because attention went elsewhere entirely, with no press at all, not even a
+fumbled one.  ``STATE_RECORD`` has no automatic exit on its own.
+
+**Scope: only fires for a record that interrupted an
+actively playing, unmuted loop.** It does *not* fire for a first/fresh
+recording of an empty loop, and does not fire for a record started from
+``STATE_MUTE`` or ``STATE_PAUSED``. Precisely: ``bRecordEnteredFromActivePlay``
+(a field on ``SooperLooperI``) is set once, at the moment ``RECORD`` is
+pressed, to ``(state == STATE_PLAY || state == STATE_ONESHOT)`` -- true only
+when an actively playing, audible loop existed and was unmuted at that
+instant. Rationale: the case actually worth an automatic safety net is the
+eager-single/long-press ambiguity ``cancel_record_mute`` itself is built
+around -- a tap fires a real ``record`` immediately, and only a long hold
+retracts it, so a performer who meant to hold for a long press (or who gets
+distracted before resolving the tap either way) can silently leave an
+*existing, audible* take replaced by whatever's being recorded over it. A
+first/fresh recording from an empty loop has no equivalent "meant to mute
+instead" story and no prior take at stake, so it is left to run
+indefinitely, same as before this feature existed.
+
+**Known trade-off:** if the performer genuinely did mean to start a brand
+new take right after ending a loop's playback -- not an accidental eager
+single -- that new take's available record time is now bounded by
+``g_record_failsafe_seconds``, the same constraint the feature applies to
+every other take entering from an active, unmuted loop.  The engine cannot
+tell "meant to record" from "meant to long-press to mute" apart at the
+moment the press lands, only from what happens afterward.
+
+Implementation: a sample counter, ``lRecordFailsafeSamples`` (a field on
+``SooperLooperI``), accumulates ``SampleCount`` once per buffer while
+``state == STATE_RECORD`` **and** ``bRecordEnteredFromActivePlay`` is true,
+and resets to 0 the instant state is anything else -- so it measures
+unbroken time in that one state, only for a take that qualifies, and never
+leaks across separate takes. ``bRecordFailsafeFired`` is true when that
+counter exceeds ``g_record_failsafe_seconds * fSampleRate`` and is ORed into
+the existing ``lMultiCtrl == MULTI_CANCEL_RECORD_MUTE`` branch condition in
+``plugin.cc`` -- zero new state-transition logic. Deliberately **not**
+gated on ``STATE_TRIG_STOP``: that state is a brief, self-resolving wait
+for the next quantize boundary (at most one loop cycle), unlike
+``STATE_RECORD``, which has no automatic exit at all.
+
+**Default is off** (``RECORD_FAILSAFE_SECONDS_DEFAULT`` = ``0.0f``), unlike
+the late-hit window's default-on convention above. Reason: this feature can
+discard an entire take with *no press at all*, so it ships opt-in.
+``<= 0.0f`` disables it, matching the late-hit window's own "0 disables"
+convention. To enable it, set ``record_failsafe_seconds`` to a positive
+value (seconds) either in the session file's ``<Globals>`` node or live via
+OSC -- see *Configurable Window Size* below, which now applies to this
+value too.
+
+Same non-LADSPA-port mechanism as ``g_late_hit_window_ms``, for the same
+reasons (see *Why Not a LADSPA Port* below): a plain ``extern`` global,
+saved/loaded as the ``record_failsafe_seconds`` property in the
+``<Globals>`` node by ``engine.cpp``'s ``save_session``/``load_session``.
+
+Files: ``plugin.hpp`` (``lRecordFailsafeSamples`` and
+``bRecordEnteredFromActivePlay`` fields), ``plugin.cc``
+(``RECORD_FAILSAFE_SECONDS_DEFAULT`` / ``g_record_failsafe_seconds``
+globals, the ``bRecordEnteredFromActivePlay`` set statement at the top of
+``MULTI_RECORD``, the counter-update statements, the
+``|| bRecordFailsafeFired`` addition), ``engine.cpp`` (``extern``
+declaration, XML load/save, OSC get/set, startup banner). No new
+``Event::command_t``, no ``command_map.cpp`` entry, and no pedal/MIDI
+remapping -- purely internal to the engine, invisible to the remapper and
+the ``.slb`` bindings.
 
 Configurable Window Size
 ------------------------
@@ -444,23 +537,62 @@ so that the fraction cap alone governs the effective window at all normal playin
 tempos (set ``g_late_hit_max_quant_unit_fraction`` to the desired cycle fraction and
 leave the ms cap at something like 2000).
 
+OSC Control
+~~~~~~~~~~~
+
+``late_hit_window_ms``, ``late_hit_max_quant_unit_fraction``, and
+``record_failsafe_seconds`` (see *New Feature: record_failsafe* above) can
+all be read and changed live over OSC, in addition to editing the session
+file. They are reachable through the engine's existing generic global
+parameter mechanism -- the same ``/set "sf"`` / ``/get "sss"`` methods
+already used for ``tempo``, ``eighth_per_cycle``, ``smart_eighths``, and
+other ``<Globals>`` values:
+
+.. code-block::
+
+    /set  s:param  f:value                     -- no reply
+    /get  s:param  s:return_url  s:return_path  -- replies to return_path
+                                                    with  i:-2  s:param  f:value
+
+For example, to read and then set the record failsafe over OSC from a
+client at ``osc.udp://127.0.0.1:9999/`` listening on ``/reply``::
+
+    /get "record_failsafe_seconds" "osc.udp://127.0.0.1:9999/" "/reply"
+    /set "record_failsafe_seconds" 45.0
+
+A negative value sent to ``/set`` for any of the three is silently ignored
+(the value is left unchanged) -- the same ``value >= 0.0f`` guard
+``load_session`` already applies to the session-file keys, needed because
+a negative float would otherwise reach an ``(unsigned long)`` cast in
+``plugin.cc``'s threshold checks.
+
+This is a smaller step than full OSC/GUI exposure: no ``command_map.cpp``
+``add_global_control`` registration and no LADSPA port were added for any
+of the three (see *Why Not a LADSPA Port* below), so none of them appear
+in ``slgui``, and OSC's ``/register_auto_update`` push-on-change mechanism
+-- which keys a listener's registration off ``CommandMap::to_control_t()``
+-- will not target them by name. Plain ``/set``/``/get`` are unaffected by
+that limitation.
+
 Why Not a LADSPA Port
 ~~~~~~~~~~~~~~~~~~~~~
 
 Every other engine parameter travels through the LADSPA port system: ``looper.cpp``
 allocates a float, calls ``connect_port()``, and ``plugin.cc`` reads it via a pointer on
-``SooperLooperI``. That is the correct mechanism for values that need OSC or GUI exposure
-or that change at runtime.
+``SooperLooperI``. That is the correct mechanism for a value that needs full GUI exposure
+(a slider in ``slgui``) or push-on-change OSC updates.
 
-``g_late_hit_window_ms`` is intentionally **not** a LADSPA port. It is a plain file-scope
-global in ``plugin.cc``, declared ``extern`` in ``engine.cpp`` and written during session
-load from the ``<Globals>`` node. This avoids touching the OSC dispatch layer, the LADSPA
-port descriptor table, and ``slgui``. The trade-off is that it only works in the
-standalone build where both translation units share an address space. When ``plugin.cc``
-is loaded as a true LADSPA plugin inside a DAW, ``engine.cpp`` is absent and the value
-stays at the compile-time default for the session, which is acceptable behaviour. If the
-value is ever promoted to a GUI control, the correct migration path is to add a proper
-LADSPA port and remove the global.
+``g_late_hit_window_ms``, ``g_late_hit_max_quant_unit_fraction``, and
+``g_record_failsafe_seconds`` are intentionally **not** LADSPA ports. Each is a plain
+file-scope global in ``plugin.cc``, declared ``extern`` in ``engine.cpp``, written during
+session load from the ``<Globals>`` node, and also reachable through the engine's generic
+``/set``/``/get`` dispatch (see *OSC Control* above). This still avoids
+the LADSPA port descriptor table and ``slgui`` wiring. The trade-off is that it only works
+in the standalone build where both translation units share an address space. When
+``plugin.cc`` is loaded as a true LADSPA plugin inside a DAW, ``engine.cpp`` is absent and
+the value stays at the compile-time default for the session, which is acceptable
+behaviour. If any of the three is ever promoted to a GUI control, the correct migration
+path is to add a proper LADSPA port and remove the global.
 
 
 Compile-Time Flags
@@ -484,14 +616,23 @@ struct layout visible to multiple translation units; the two ``ALB_`` flags in
      - ``plugin.cc``
      - ``100.0f``
      - Compile-time initial value for ``g_late_hit_window_ms`` (ms cap).
-       Overridden at runtime by the session file.  Do not use directly in
-       logic; read ``g_late_hit_window_ms`` instead.
+       Overridden at runtime by the session file or OSC ``/set``.  Do not
+       use directly in logic; read ``g_late_hit_window_ms`` instead.
    * - ``LATE_HIT_MAX_QUANT_UNIT_FRACTION``
      - ``plugin.cc``
      - ``100.0f``
      - Compile-time initial value for ``g_late_hit_max_quant_unit_fraction``
        (fraction cap).  100.0 effectively disables the fraction cap so the
-       ms cap always governs.  Overridden at runtime by the session file.
+       ms cap always governs.  Overridden at runtime by the session file or
+       OSC ``/set``.
+   * - ``RECORD_FAILSAFE_SECONDS_DEFAULT``
+     - ``plugin.cc``
+     - ``0.0f``
+     - Compile-time initial value for ``g_record_failsafe_seconds``.  ``0``
+       means the failsafe ships **off**; a record left running in
+       ``STATE_RECORD`` past this many seconds auto-fires
+       ``cancel_record_mute``'s branch (see *New Feature: record_failsafe*
+       above).  Overridden at runtime by the session file or OSC ``/set``.
    * - ``LATE_HIT_MULTIPLY_CORRECTION``
      - ``plugin.cc``
      - ``1``
@@ -1204,9 +1345,9 @@ Set ``DryLevel`` to 0 from the test so the output is purely loop content.
    The harness is still hardcoded to **one** channel
    (``test_engine.cpp``: ``TestLooper(jack, 0, 1)``) while the live rig runs
    ``sooperlooper -c 2``.  Making it configurable was considered and
-   deferred -- see ``ROADMAP.rst``.  Note that channels above 0 have State,
-   LoopLength, LoopPosition and output wired to slave/dummy ports, so raising
-   the count alone would add no observability.
+   deferred.  Note that channels above 0 have State, LoopLength,
+   LoopPosition and output wired to slave/dummy ports, so raising the
+   count alone would add no observability.
 
 Late-hit test cases (``testdef_late_hit.py``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

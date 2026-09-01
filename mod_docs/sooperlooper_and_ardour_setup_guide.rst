@@ -354,8 +354,7 @@ that, and this replaces that older arrangement.
    Open question from live use: in the *pending* case the command currently
    leaves the loop playing rather than muting. If the long press is being
    used as a general "stop" gesture -- and with sync on the pending case is
-   the common one -- muting there too may be preferable. See
-   ``ROADMAP.rst`` entry 1, decision 1.
+   the common one -- muting there too may be preferable.
 
 .. note::
 
@@ -376,6 +375,28 @@ switch -- if the foot rests on the pedal past the long-press threshold, the
 gesture fires and cancels a take meant to be kept. Deliberately cancelling a
 fresh take is therefore done on the **mute_trigger** button instead, which
 drops to silence immediately with no audible wait interval.
+
+**Record failsafe: a safety net for when nobody presses anything.**
+``cancel_record_mute`` above still needs a press. Tapping record to end a
+playing loop's playback fires a real recording immediately -- if that was
+actually meant to be a long press to cancel instead, or attention just
+went elsewhere before pressing anything else, that recording runs forever
+with the previous take gone underneath it. SooperLooper now has a timeout
+for exactly that: leave a loop recording past ``record_failsafe_seconds``
+after it cut off an existing, playing take, and it auto-cancels back to
+that take, muted, the same as if the long press had landed. It only ever
+fires for a record that interrupted playback -- a fresh recording into an
+empty loop is never affected.
+
+It ships **off by default**. To turn it on, add the key to the session
+file's ``<Globals>`` line and restart::
+
+    record_failsafe_seconds="45"
+
+(seconds; ``0`` or omitted means off). Pick a value comfortably longer than
+your longest legitimate take on this rig -- including a deliberate new
+take started right after stopping playback, since that also counts and
+gets cut off at the same timeout.
 
 
 1.3 Ardour

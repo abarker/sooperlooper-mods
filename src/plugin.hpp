@@ -342,6 +342,23 @@ typedef struct {
 	unsigned long lRecordFailsafeSamples;
 	//------ albEnd ----------------------------------
 
+	//------ albBegin ----------------------------------
+	// bRecordEnteredFromActivePlay: true iff the RECORD press that led to
+	// the current STATE_RECORD span interrupted an actively playing,
+	// unmuted loop (state was STATE_PLAY or STATE_ONESHOT at the moment
+	// RECORD was pressed). Set once, at command-arrival time, in the
+	// MULTI_RECORD case of plugin.cc's remap chain -- before the inner
+	// switch(state) dispatches, so it is correct regardless of which path
+	// (immediate late-hit entry or deferred STATE_TRIG_START) the press
+	// then takes. Gates the record_failsafe counter (BLOCK 0 area,
+	// ahead of the remap chain): the failsafe now only ever fires for a
+	// record that cut off a playing take, not a first/fresh recording
+	// from an empty loop. See mod_docs/ROADMAP.rst entry 4.
+	// calloc() zeroes the struct so default is false, matching
+	// bLateHitBypassed's convention above.
+	bool bRecordEnteredFromActivePlay;
+	//------ albEnd ----------------------------------
+
 	/* Ports:
 	   ------ */
 

@@ -169,7 +169,12 @@ float g_late_hit_max_quant_unit_fraction = LATE_HIT_MAX_QUANT_UNIT_FRACTION;
 //
 // <= 0.0f disables the failsafe entirely, matching the late-hit window's
 // "0 disables" convention.
-#define RECORD_FAILSAFE_SECONDS_DEFAULT 45.0f
+//
+// Default is OFF (0.0f), unlike g_late_hit_window_ms's "on" default above.
+// Reason: this feature can discard a take outright with no press at all,
+// so it ships opt-in -- set record_failsafe_seconds (> 0) explicitly in
+// the session file, or via OSC /set once that's wired up, to enable it.
+#define RECORD_FAILSAFE_SECONDS_DEFAULT 0.0f
 float g_record_failsafe_seconds = RECORD_FAILSAFE_SECONDS_DEFAULT;
 //------ albEnd ----------------------------------
 
@@ -2202,8 +2207,19 @@ runSooperLooper(LADSPA_Handle Instance,
   // pLS->state == STATE_RECORD (the counter is 0 otherwise), so it always
   // lands in the CANCEL_RECORD_MUTE branch's STATE_RECORD case -- never its
   // STATE_TRIG_START or no-op cases.
+  //
+  // Specialized 2026-09-01: only accumulate when this STATE_RECORD span
+  // interrupted an actively playing, unmuted loop (bRecordEnteredFromActivePlay,
+  // set once at RECORD press time in the MULTI_RECORD case above -- see
+  // plugin.hpp's comment on the field). A first/fresh recording from an
+  // empty loop, or one started from STATE_MUTE/STATE_PAUSED, never
+  // accumulates and so can never auto-cancel -- the failsafe now covers
+  // only the case where getting distracted mid-record means an existing,
+  // audible take stays silently replaced.
   if (pLS->state == STATE_RECORD) {
-      pLS->lRecordFailsafeSamples += SampleCount;
+      if (pLS->bRecordEnteredFromActivePlay) {
+          pLS->lRecordFailsafeSamples += SampleCount;
+      }
   } else {
       pLS->lRecordFailsafeSamples = 0;
   }
@@ -2538,7 +2554,17 @@ runSooperLooper(LADSPA_Handle Instance,
      {
 	case MULTI_RECORD:
 	{
-	   
+	   //------ albBegin ----------------------------------
+	   // Capture whether this press is interrupting an actively playing,
+	   // unmuted loop -- BEFORE the switch below changes pLS->state to
+	   // STATE_RECORD or STATE_TRIG_START.  Read later by the
+	   // record_failsafe gate ahead of the remap chain (BLOCK 0 area).
+	   // See plugin.hpp's comment on the field and mod_docs/ROADMAP.rst
+	   // entry 4.
+	   pLS->bRecordEnteredFromActivePlay =
+	       (pLS->state == STATE_PLAY || pLS->state == STATE_ONESHOT);
+	   //------ albEnd ----------------------------------
+
 	   switch(pLS->state) {
 	      case STATE_RECORD:
 		      
