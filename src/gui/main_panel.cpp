@@ -131,7 +131,7 @@ END_EVENT_TABLE()
     _add_discrete = true;
     _add_secs_channel = 40.0f;
 
-    _default_position.x = 100;    
+    _default_position.x = 100;
     _default_position.y = 100;
 
     _sliders_allow_mousewheel = false;

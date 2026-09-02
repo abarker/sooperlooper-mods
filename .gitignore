@@ -72,6 +72,7 @@ src/gui/slgui
 src/sooperlooper
 src/slregister
 src/slconsole
+src/big_state_display/slbigstate
 compile
 *.pyc
 *.pye

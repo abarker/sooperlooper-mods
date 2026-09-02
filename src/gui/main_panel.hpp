@@ -97,7 +97,7 @@ public:
 
         wxPoint get_default_position() const { return _default_position; }
         void set_default_position(wxPoint pos) { _default_position = pos; }
-    
+
 	void set_never_timeout(bool flag);
 	bool get_never_timeout() const { return _never_timeout; }
 
@@ -206,7 +206,7 @@ protected:
     bool _add_discrete;
     
     wxPoint _default_position;
-    
+
 	// keybindings
 
 	PrefsDialog * _prefs_dialog;

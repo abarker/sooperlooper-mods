@@ -109,6 +109,12 @@ A concise inventory of all significant capabilities added to SooperLooper 1.7.9.
   OSC, in addition to the session file.  See *Configurable Window Size*
   below.
 
+- ``slbigstate``: **a standalone at-a-distance state display.**  A
+  separate program, installed alongside ``sooperlooper``/``slgui``, that
+  shows one loop's current state in large, colored text over OSC --
+  readable from across a room, unlike ``slgui``'s own small indicators.
+  See `New Tool: slbigstate`_.
+
 - **Direct JACK MIDI input port** (``sooperlooper:midi_in``).  Receives MIDI
   commands with sub-buffer sample-accurate timestamps, bypassing the ALSA /
   ``a2jmidid`` path.
@@ -593,6 +599,71 @@ in the standalone build where both translation units share an address space. Whe
 the value stays at the compile-time default for the session, which is acceptable
 behaviour. If any of the three is ever promoted to a GUI control, the correct migration
 path is to add a proper LADSPA port and remove the global.
+
+
+New Tool: ``slbigstate``
+--------------------------
+
+A standalone, at-a-distance display of one loop's current state
+(Record / Playing / Overdub / Mute / ...) in large, high-contrast text
+with a per-state background color -- for visibility from across a room
+during a performance, where the normal ``slgui`` panel's small state
+indicators are too small to read. A separate program from ``slgui``, not
+a window inside it.
+
+Built and installed the same way as ``sooperlooper``/``slgui`` -- it is
+part of the same ``configure``/``make``/``make install`` this patch
+already uses, landing in the same ``bindir`` (e.g. ``/usr/local/bin``)
+once installed. Source lives in ``src/big_state_display/``.
+
+Usage::
+
+    slbigstate [options]
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Option
+     - Meaning
+   * - ``-H``, ``--host``
+     - Engine host to connect to (default ``127.0.0.1``).
+   * - ``-P``, ``--port``
+     - Engine OSC port to connect to (default ``9951``).
+   * - ``-l``, ``--loop``
+     - Loop index to display (default ``0``).
+   * - ``-X``, ``--screen-location``
+     - Window position, format ``<xpos>:<ypos>``.
+   * - ``-Z``, ``--size``
+     - Window size, format ``<width>x<height>``.
+   * - ``-T``, ``--stay-on-top``
+     - Keep the window above other applications.
+
+The window title includes the loop index (e.g. "SooperLooper State -
+Loop 0"), since more than one instance can be running at once.
+
+**Multiple loops:** run one ``slbigstate`` per loop, each with its own
+``--loop N`` (and, to avoid the windows overlapping, its own
+``--screen-location``/``--size``). There is no combined multi-loop
+display -- each instance shows exactly one loop, and the engine has no
+trouble serving several independent instances of it at once.
+
+**How it talks to the engine:** plain OSC, the same generic mechanism
+``tempo``/``smart_eighths``/etc. already use elsewhere in this patch.
+On startup it sends one ``/sl/<loop>/register_auto_update`` request for
+that loop's ``state`` control; the engine then pushes an update whenever
+that value actually changes (not on a fixed schedule), and the
+registration is refreshed defensively every 20 seconds so the display
+recovers on its own if the engine restarts. No connection to
+``libslcore.a`` or any of this patch's engine-side code -- it is a
+independent client of the engine's existing OSC interface, and works
+identically against a GUI-managed engine (started by ``slgui``) or a
+standalone headless ``sooperlooper``.
+
+**Remembering its window position:** its own preferences file,
+``~/.big_state_display/config.xml`` -- separate from ``slgui``'s own
+``~/.sooperlooper/gui_config.xml``, since the two are independent
+processes with no way to coordinate a shared file safely.
 
 
 Compile-Time Flags

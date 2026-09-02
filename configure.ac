@@ -327,7 +327,12 @@ then
             AC_SUBST(WX_CFLAGS)
             AC_SUBST(WX_LIBS)
             AC_SUBST(WX_CONFIG)
-            SL_DIRS=". gui"
+            #------ albBegin ----------------------------------
+            # big_state_display: standalone at-a-distance state display,
+            # gated on the same wx-found branch as gui since it also
+            # needs wxWidgets. See mod_docs/ROADMAP.rst entry 6.
+            SL_DIRS=". gui big_state_display"
+            #------ albEnd ----------------------------------
         else
             SL_DIRS="."
         fi
@@ -387,9 +392,16 @@ then
         AC_CONFIG_SUBDIRS(libs)
 
 
+        # albBegin/albEnd: a comment placed *inside* the bracketed list
+        # below breaks autoconf -- "#------" gets parsed as a literal
+        # filename, not a comment (confirmed: autoconf errored with
+        # "`#------' is already registered with AC_CONFIG_FILES").
+        # Marker placed here instead: the one added line is
+        # src/big_state_display/Makefile, mod_docs/ROADMAP.rst entry 6.
         AC_OUTPUT([
                    Makefile
                    src/Makefile
                    src/gui/Makefile
+                   src/big_state_display/Makefile
                    version.h
                    ])

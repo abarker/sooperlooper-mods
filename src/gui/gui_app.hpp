@@ -84,7 +84,7 @@ class GuiApp : public wxApp
 	bool  _stay_on_top;
         wxPoint   _screen_pos;
         bool _override_screenpos;
-        
+
         wxString _load_session;
 	bool _inited;
 	

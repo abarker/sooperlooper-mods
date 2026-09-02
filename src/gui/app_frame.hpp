@@ -45,33 +45,33 @@ class KeyboardTarget;
 class HelpWindow;
 class PrefsDialog;
 class MainPanel;
-	
+
 class AppFrame
 	: public wxFrame,  public sigc::trackable
 {
 public:
-	
+
 	// ctor(s)
 	AppFrame(const wxString& title, const wxPoint& pos, const wxSize& size, bool stay_on_top=false, bool embedded=false);
 	virtual ~AppFrame();
-	
+
 	// event handlers (these functions should _not_ be virtual)
 	void OnQuit(wxCommandEvent& event);
 	void OnHide(wxCommandEvent &event);
 	void OnClose(wxCloseEvent &event);
-	
+
 	void OnActivate(wxActivateEvent &ev);
-	
+
 	MainPanel * get_main_panel() { return _mainpanel; }
 
 protected:
 
 	void init();
-	
+
 	void on_add_loop (wxCommandEvent &ev);
 	void on_add_custom_loop (wxCommandEvent &ev);
 	void on_remove_loop (wxCommandEvent &ev);
-	
+
 	void on_view_menu (wxCommandEvent &ev);
 
 	void on_about (wxCommandEvent &ev);
@@ -84,12 +84,12 @@ protected:
 	void on_timer_event(wxTimerEvent &ev);
 
 	MainPanel * _mainpanel;
-	
+
 	wxBoxSizer * _topsizer;
 
 	PrefsDialog * _prefs_dialog;
 	HelpWindow *  _help_window;
-	
+
     wxToolBar * _toolbar;
     
 	wxString  _rcdir;

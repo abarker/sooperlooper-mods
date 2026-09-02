@@ -143,7 +143,7 @@ AppFrame::AppFrame(const wxString& title, const wxPoint& pos, const wxSize& size
 AppFrame::~AppFrame()
 {
 	get_main_panel()->set_default_position(GetScreenPosition());
-                
+
 	_mainpanel->save_rc();
     
     //wxLogWarning(wxT("appframe destroy"));
@@ -199,8 +199,8 @@ AppFrame::init()
 
         //wxMenu *menuView = new wxMenu(wxT(""));
         //menuBar->Append(menuView, wxT("&View"));
-        
-        
+
+
         wxMenu *menuHelp = new wxMenu(wxT(""));
         menuHelp->Append(ID_HelpTipsMenu, wxT("&Usage Tips..."), wxT("Show Usage Tips window"));
         menuHelp->Append(ID_AboutMenu, wxT("&About..."), wxT("Show about dialog"));

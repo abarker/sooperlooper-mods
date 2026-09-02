@@ -196,7 +196,7 @@ GuiApp::parse_options (int argc, wxChar **argv)
             }
         }
 
-        
+
 	return true;
 }
 	
