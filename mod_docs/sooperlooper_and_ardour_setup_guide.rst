@@ -405,13 +405,16 @@ meant to be playing, or playing when you meant to be muted. This lets a
 press shortly after the beat act immediately instead, the same idea as
 the Record late-hit correction above, applied to mute and unmute.
 
-It ships **off by default**. To turn it on, add the key to the session
-file's ``<Globals>`` line and restart::
+It ships **on by default** (100 ms, matching the Record late-hit
+correction above) -- no setup needed to get it. To turn it off, or to
+use a different window, add the key to the session file's ``<Globals>``
+line and restart::
 
-    mute_late_hit_ms="30"
+    mute_late_hit_ms="0"
 
-(milliseconds; ``0`` or omitted means off). Start small -- this is meant
-to catch a slightly-late press, not to make mute-quantize sloppy.
+(milliseconds; ``0`` disables it). Keep it small if you tune it -- this
+is meant to catch a slightly-late press, not to make mute-quantize
+sloppy.
 
 
 1.3 Ardour

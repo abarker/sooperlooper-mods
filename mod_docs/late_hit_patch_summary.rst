@@ -85,7 +85,8 @@ A concise inventory of all significant capabilities added to SooperLooper 1.7.9.
 - **Late-hit mute/unmute correction.** A ``MUTE``/``MUTE_ON``/``MUTE_OFF``
   press arriving within a separate, plain-ms window after a sync boundary
   is treated as on-time in either direction (entering mute or unmuting),
-  instead of waiting for the next boundary. Off by default.
+  instead of waiting for the next boundary. On by default (100 ms,
+  matching the Record late-hit window).
 
 - **Bug fix: quantized Pause from Muted.** A stock 1.7.9 bug -- Pause
   pressed while Muted, with mute-quantize on, used to resolve to
@@ -533,7 +534,8 @@ this is a pure branch-selection decision -- immediate vs. wait -- not a
 backfill/trim operation.
 
 **Governed by its own window, ``g_mute_late_hit_ms``** (milliseconds,
-default ``0.0`` -- **off**). Deliberately a plain millisecond value with
+default ``100.0`` -- **on**, matching ``g_late_hit_window_ms``'s own
+default exactly). Deliberately a plain millisecond value with
 no cycle-fraction cap, unlike ``g_late_hit_window_ms`` above: the
 fraction cap exists there to keep a late *Record* press unambiguously
 attributed to one boundary before backfilling/trimming real audio --
@@ -543,11 +545,16 @@ apply, and an over-generous value only ever degrades gracefully
 mis-corrected). ``0`` disables the feature entirely, matching the
 "0 disables" convention used throughout this patch. Independent of
 ``g_late_hit_window_ms`` and ``g_record_failsafe_seconds`` -- can be
-turned on or off, or tuned, without affecting either.
+turned on or off, or tuned, without affecting either. Defaults on
+because, unlike ``record_failsafe`` (which can discard an entire take
+with no press at all), this feature can only ever turn a "wait for the
+next boundary" into "act now" -- never lose content -- the same
+default-on reasoning ``g_late_hit_window_ms`` itself already uses.
 
-To enable: set ``mute_late_hit_ms`` to a positive value (milliseconds)
-either in the session file's ``<Globals>`` node or live via OSC -- see
-*OSC Control* below, which now covers this value too.
+To disable, or to change the window, set ``mute_late_hit_ms`` (``0`` for
+off, any other value for the window in milliseconds) either in the
+session file's ``<Globals>`` node or live via OSC -- see *OSC Control*
+below, which now covers this value too.
 
 Same non-LADSPA-port mechanism as the other three globals (see *Why Not
 a LADSPA Port* below): a plain ``extern`` global, saved/loaded as the
@@ -826,11 +833,13 @@ struct layout visible to multiple translation units; the two ``ALB_`` flags in
        correction only, leaving Record start/stop correction active.
    * - ``MUTE_LATE_HIT_MS_DEFAULT``
      - ``plugin.cc``
-     - ``0.0f``
-     - Compile-time initial value for ``g_mute_late_hit_ms``.  ``0``
-       means the mute/unmute late-hit correction ships **off** (see
-       *New Feature: mute/unmute late-hit correction* above).
-       Overridden at runtime by the session file or OSC ``/set``.
+     - ``100.0f``
+     - Compile-time initial value for ``g_mute_late_hit_ms``.  On by
+       default, matching ``LATE_HIT_WINDOW_MS`` exactly (see *New
+       Feature: mute/unmute late-hit correction* above for why this
+       defaults on rather than off, unlike ``record_failsafe``).  ``0``
+       disables the correction entirely.  Overridden at runtime by the
+       session file or OSC ``/set``.
    * - ``PAUSE_FROM_MUTE_FIX``
      - ``plugin.cc``
      - ``1``

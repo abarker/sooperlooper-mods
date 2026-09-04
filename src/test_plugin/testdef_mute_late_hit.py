@@ -27,7 +27,7 @@ import unittest
 import test_engine
 import engine_wrapper
 
-_DEFAULT_WINDOW_MS = 0.0   # compiled-in default (off); restore in tearDown
+_DEFAULT_WINDOW_MS = 100.0  # compiled-in default (on, matches g_late_hit_window_ms); restore in tearDown
 
 
 class MuteLateHitTestCase(unittest.TestCase):
@@ -183,9 +183,9 @@ class TestUnmuteLateHit(MuteLateHitTestCase):
                          "correction must not fire")
 
     def testUnmuteZeroDisablesCorrection(self):
-        """0.0 (the compiled-in default) must disable the feature
-        entirely -- same "0 disables" convention as the other late-hit/
-        failsafe globals."""
+        """0.0 must disable the feature entirely -- same "0 disables"
+        convention as the other late-hit/failsafe globals. (The
+        compiled-in default is 100.0, on -- see _DEFAULT_WINDOW_MS.)"""
         test_engine.cvar.g_mute_late_hit_ms = 0.0
         self._mute_it()
         self.prime_pulse()
@@ -274,8 +274,8 @@ class TestMuteLateHit(MuteLateHitTestCase):
                          "correction must not fire")
 
     def testMuteZeroDisablesCorrection(self):
-        """0.0 (the compiled-in default) must disable the feature
-        entirely."""
+        """0.0 must disable the feature entirely (compiled-in default is
+        100.0, on -- see _DEFAULT_WINDOW_MS)."""
         test_engine.cvar.g_mute_late_hit_ms = 0.0
         self.record_a_loop()
         self.prime_pulse()

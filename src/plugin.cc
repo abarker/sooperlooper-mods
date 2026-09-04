@@ -205,11 +205,19 @@ float g_record_failsafe_seconds = RECORD_FAILSAFE_SECONDS_DEFAULT;
 // real-time control, saved/loaded as the XML property "mute_late_hit_ms"
 // in the <Globals> node by engine.cpp save_session/load_session.
 //
-// 0.0f (default) disables the feature entirely -- same "0 disables"
-// convention as g_late_hit_window_ms / g_record_failsafe_seconds. Off by
-// default: like record_failsafe, this changes mute/unmute behaviour a
-// performer did not necessarily ask for, so it ships opt-in.
-#define MUTE_LATE_HIT_MS_DEFAULT 0.0f
+// 0.0f disables the feature entirely -- same "0 disables" convention as
+// g_late_hit_window_ms / g_record_failsafe_seconds.
+//
+// Default is ON at 100.0f, matching g_late_hit_window_ms's own default
+// exactly -- unlike record_failsafe (which can silently discard an
+// entire take), this feature can only ever turn a "wait for the next
+// boundary" into "act now," never lose content, so it carries the same
+// default-on rationale as Record's own late-hit correction rather than
+// record_failsafe's opt-in one. Confirmed working live on the rig
+// 2026-09-04 ("tested live, I didn't notice any anomalies in muting")
+// before this default was flipped from the original 0.0f (off) it
+// shipped with.
+#define MUTE_LATE_HIT_MS_DEFAULT 100.0f
 float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 //------ albEnd ----------------------------------
 
