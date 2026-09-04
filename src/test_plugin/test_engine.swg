@@ -6,6 +6,7 @@
 extern float g_late_hit_window_ms;
 extern float g_late_hit_max_quant_unit_fraction;
 extern float g_record_failsafe_seconds;
+extern float g_mute_late_hit_ms;
 using namespace SooperLooper;
 %}
 
@@ -14,6 +15,8 @@ extern float g_late_hit_window_ms;
 extern float g_late_hit_max_quant_unit_fraction;
 /* Expose the record-failsafe timeout so tests can set it precisely. */
 extern float g_record_failsafe_seconds;
+/* Expose the mute/unmute late-hit window so tests can set it precisely. */
+extern float g_mute_late_hit_ms;
 
 %include "test_engine.hpp"
 %include "test_looper.hpp"

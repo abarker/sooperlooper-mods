@@ -178,11 +178,84 @@ float g_late_hit_max_quant_unit_fraction = LATE_HIT_MAX_QUANT_UNIT_FRACTION;
 float g_record_failsafe_seconds = RECORD_FAILSAFE_SECONDS_DEFAULT;
 //------ albEnd ----------------------------------
 
+//------ albBegin ----------------------------------
+// MUTE_LATE_HIT_MS: window (in milliseconds) within which a MUTE press --
+// either entering mute from an actively playing loop, or leaving mute
+// (unmute) -- arriving just after a sync boundary is treated as if it had
+// arrived exactly at that boundary, instead of waiting for the NEXT
+// boundary (up to a full quantize cycle later). See mod_docs/ROADMAP.rst
+// entry 5.
+//
+// Deliberately a PLAIN ms-only value, unlike g_late_hit_window_ms's dual
+// ms/cycle-fraction cap (see g_late_hit_max_quant_unit_fraction above).
+// That fraction cap exists to keep a late RECORD press unambiguously
+// attributed to a single boundary before backfilling/trimming real buffer
+// content. Mute/unmute never reconstructs content -- it only chooses
+// immediate-vs-wait -- so that content-correctness risk does not apply
+// here. T (lGlobalSamplesSinceSync) is itself always bounded to one
+// quantize cycle by construction (reset at every sync pulse), so a
+// too-generous g_mute_late_hit_ms only ever degrades gracefully --
+// mute-quantize is effectively bypassed at that tempo, never
+// mis-corrected -- and is self-limiting for any value a performer would
+// actually set (tens of ms of button-press slop, not a fraction of a
+// cycle).
+//
+// Same non-LADSPA-port mechanism as the other late-hit/failsafe globals
+// above, and for the same reasons: a setup-time preference, not a
+// real-time control, saved/loaded as the XML property "mute_late_hit_ms"
+// in the <Globals> node by engine.cpp save_session/load_session.
+//
+// 0.0f (default) disables the feature entirely -- same "0 disables"
+// convention as g_late_hit_window_ms / g_record_failsafe_seconds. Off by
+// default: like record_failsafe, this changes mute/unmute behaviour a
+// performer did not necessarily ask for, so it ships opt-in.
+#define MUTE_LATE_HIT_MS_DEFAULT 0.0f
+float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
+//------ albEnd ----------------------------------
+
 // Compile-time safety switch for the Multiply-end late-hit correction.
 // Set to 0 to disable only the Multiply-end correction while leaving
 // the Record/Stop correction (which has more test history) unaffected.
 // The Insert-end correction (not yet implemented) will use the same flag.
 #define LATE_HIT_MULTIPLY_CORRECTION 1
+
+//------ albBegin ----------------------------------
+// PAUSE_FROM_MUTE_FIX: compile-time safety switch for a stock
+// SooperLooper 1.7.9 bug fix (not fork-introduced -- verified present
+// verbatim in original_plugin.cc). See mod_docs/ROADMAP.rst entry 7 for
+// the full writeup.
+//
+// The bug: with mute-quantize on and sync active, pressing Pause while
+// Muted has to wait for the next sync boundary. The wait-for-sync
+// resolution logic (MULTI_MUTE/MULTI_PAUSE case) only special-cases the
+// reverse direction (Paused+Mute -> Mute); it has no case for
+// Mute+Pause -> Paused, so it falls through to the generic "resolve to
+// Playing" branch instead. The *immediate*-action path a few lines
+// above already handles this exact transition correctly and
+// symmetrically in both directions, so this is confidently a stock
+// omission, not intended behaviour.
+//
+// The fix has two parts, both gated by this one flag:
+//   1. Add the missing case to the wait-for-sync branch (the
+//      MULTI_MUTE/MULTI_PAUSE case's STATE_MUTE/STATE_ONESHOT/
+//      STATE_PAUSED sub-case).
+//   2. transitionToNext()'s STATE_PAUSED case currently sets
+//      wasMuted = false unconditionally. Once part 1 can reach it from
+//      STATE_MUTE, that would leave wasMuted wrong (read by several
+//      undo/cancel resolution points to decide whether an Undo lands
+//      back in Mute or Play), so wasMuted is instead derived from
+//      pLS->state (still the pre-transition value at that point) --
+//      true only when actually coming from Mute, matching the
+//      immediate path's own semantics. Verified this branch has zero
+//      existing callers before this fix (nothing else in the file ever
+//      sets nextState to STATE_PAUSED), so this is provably
+//      zero-regression: there is no prior behaviour to break.
+//
+// Set to 0 to revert both parts to exact stock (buggy) behaviour --
+// same "just in case" escape hatch LATE_HIT_MULTIPLY_CORRECTION already
+// provides for a different correction.
+#define PAUSE_FROM_MUTE_FIX 1
+//------ albEnd ----------------------------------
 
 //====== albBegin ==================================================================================
 // SYNCWDEBUG: master switch for ALL debug output in this file.
@@ -1890,7 +1963,23 @@ static LoopChunk * transitionToNext(SooperLooperI *pLS, LoopChunk *loop, int nex
 	      pLS->wasMuted = true;
 	      if (nextstate == STATE_PAUSED && loop) {
 		      pLS->dPausedPos = loop->dCurrPos;
+		      //------ albBegin ----------------------------------
+		      // See PAUSE_FROM_MUTE_FIX's comment block near the top of
+		      // this file and mod_docs/ROADMAP.rst entry 7. pLS->state
+		      // still holds the pre-transition value here (only
+		      // overwritten below, after this whole switch), so this is
+		      // exactly the information needed to mirror the immediate
+		      // path's own wasMuted semantics -- true only when actually
+		      // coming from STATE_MUTE. Provably zero-regression: before
+		      // PAUSE_FROM_MUTE_FIX part 1 (above), nothing in this file
+		      // ever set nextState/nextstate to STATE_PAUSED, so this
+		      // branch had no caller to have any observed behaviour yet.
+#if PAUSE_FROM_MUTE_FIX
+		      pLS->wasMuted = (pLS->state == STATE_MUTE);
+#else
 		      pLS->wasMuted = false;
+#endif
+		      //------ albEnd ----------------------------------
 	      }
 	      break;
 
@@ -3425,6 +3514,34 @@ runSooperLooper(LADSPA_Handle Instance,
 	case MULTI_MUTE:
 	case MULTI_PAUSE:
 	{
+	   //------ albBegin ----------------------------------
+	   // Late-hit window check for mute/unmute -- computed once here, used
+	   // by both the unmute branch (STATE_MUTE case below) and the
+	   // entering-mute branch (default: case below). Same T
+	   // (lGlobalSyncAtButtonPress) and guard shape as Record's own
+	   // late-hit correction; deliberately NOT effectiveLateHitWindow() --
+	   // see g_mute_late_hit_ms's comment block near the top of this file
+	   // for why the cycle-fraction cap does not apply here. See also
+	   // mod_docs/ROADMAP.rst entry 5.
+	   unsigned long muteShiftSamples =
+	       (unsigned long)(g_mute_late_hit_ms * 0.001f * pLS->fSampleRate);
+	   unsigned long muteT = lGlobalSyncAtButtonPress;
+	   bool withinMuteWindow = (muteT > 0
+	                            && muteT <= muteShiftSamples
+	                            && fSyncMode > 0.0f
+	                            && pLS->bSyncPulseReceived
+	                            && !pLS->bLateHitBypassed);
+
+	   SYNCWDBG(SL_LOG_RT(
+	       "\n%u:%u  MUTE/PAUSE button: lGlobalSyncAtButtonPress=%llu"
+	       "  windowSamples=%lu  withinMuteWindow=%d  fromState=%d"
+	       "  multiCtrl=%ld  (%.2f ms since boundary, window=%.1f ms)\n",
+	       pLS->lLoopIndex, pLS->lChannelIndex,
+	       lGlobalSyncAtButtonPress, muteShiftSamples,
+	       (int)withinMuteWindow, (int)pLS->state, lMultiCtrl,
+	       muteT * 1000.0f / pLS->fSampleRate,
+	       muteShiftSamples * 1000.0f / pLS->fSampleRate));
+	   //------ albEnd ----------------------------------
 
 	   switch(pLS->state) {
 
@@ -3446,7 +3563,23 @@ runSooperLooper(LADSPA_Handle Instance,
 	       case STATE_ONESHOT:
 	       case STATE_PAUSED:
 	       // this enters play mode but from the continuous position
-		       if (loop && ((fMuteQuantized == 0.0f) || (fSyncMode == 0.0f && fQuantizeMode == QUANT_OFF) || pLS->state == STATE_PAUSED)) {
+	       {
+		       //------ albBegin ----------------------------------
+		       // Late-hit unmute: scoped to STATE_MUTE + MULTI_MUTE
+		       // specifically, so it cannot affect STATE_ONESHOT,
+		       // STATE_PAUSED, or the MULTI_PAUSE (pause/resume) paths
+		       // sharing this case. Wrapped in its own block so this
+		       // declaration's scope ends before the STATE_MULTIPLY/
+		       // STATE_INSERT/STATE_DELAY/default: labels further down
+		       // this same switch(pLS->state) -- otherwise a direct jump
+		       // to one of those (e.g. pLS->state == STATE_MULTIPLY)
+		       // would illegally cross this initializer. See
+		       // mod_docs/ROADMAP.rst entry 5.
+		       bool unmuteLateHit = (pLS->state == STATE_MUTE
+		                            && lMultiCtrl == MULTI_MUTE
+		                            && withinMuteWindow);
+		       //------ albEnd ----------------------------------
+		       if (loop && ((fMuteQuantized == 0.0f) || (fSyncMode == 0.0f && fQuantizeMode == QUANT_OFF) || pLS->state == STATE_PAUSED || unmuteLateHit)) {
 			       if (pLS->state == STATE_MUTE && lMultiCtrl == MULTI_PAUSE) {
 				       pLS->state = STATE_PAUSED;
 				       pLS->wasMuted = true;
@@ -3484,12 +3617,24 @@ runSooperLooper(LADSPA_Handle Instance,
 			       if (pLS->state == STATE_PAUSED && lMultiCtrl == MULTI_MUTE) {
 				       pLS->nextState = STATE_MUTE;
 			       }
+			       //------ albBegin ----------------------------------
+			       // See PAUSE_FROM_MUTE_FIX's comment block near the top
+			       // of this file and mod_docs/ROADMAP.rst entry 7. Missing
+			       // case in stock 1.7.9: waiting in STATE_MUTE to resolve
+			       // into STATE_PAUSED was never handled, so it fell through
+			       // to the generic STATE_PLAY branch below.
+#if PAUSE_FROM_MUTE_FIX
+			       else if (pLS->state == STATE_MUTE && lMultiCtrl == MULTI_PAUSE) {
+				       pLS->nextState = STATE_PAUSED;
+			       }
+#endif
+			       //------ albEnd ----------------------------------
 			       else {
 				       pLS->nextState = STATE_PLAY;
 			       }
-			       pLS->waitingForSync = 1;	 
+			       pLS->waitingForSync = 1;
 		       }
-		 
+	       }
 		 break;
 
 	      case STATE_MULTIPLY:
@@ -3515,8 +3660,22 @@ runSooperLooper(LADSPA_Handle Instance,
 		 // continue through to default
 
 	      default:
-		   if (loop && ((fMuteQuantized == 0.0f) || (fSyncMode == 0.0f && fQuantizeMode == QUANT_OFF))
-			  && !(pLS->state == STATE_RECORD && bRoundIntegerTempo))
+		   //------ albBegin ----------------------------------
+		   // Late-hit correction for entering mute -- the symmetric case
+		   // to unmute above. Scoped to STATE_PLAY specifically, so it
+		   // structurally cannot affect STATE_RECORD/STATE_TRIG_STOP (the
+		   // output-latency compensation branch just below, which needs
+		   // its own separate timing story), STATE_DELAY (which falls
+		   // through into this default: case from above), or MULTI_PAUSE.
+		   // See mod_docs/ROADMAP.rst entry 5.
+		   bool muteLateHit = (pLS->state == STATE_PLAY
+		                       && lMultiCtrl == MULTI_MUTE
+		                       && withinMuteWindow);
+		   bool muteImmediateOK =
+		       ((fMuteQuantized == 0.0f) || (fSyncMode == 0.0f && fQuantizeMode == QUANT_OFF))
+		       && !(pLS->state == STATE_RECORD && bRoundIntegerTempo);
+		   //------ albEnd ----------------------------------
+		   if (loop && (muteImmediateOK || muteLateHit))
 		   {
 		     if (pLS->state == STATE_RECORD || pLS->state == STATE_TRIG_STOP) {
 			 // we need to increment loop position by output latency (+ IL ?)

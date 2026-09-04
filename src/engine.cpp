@@ -70,6 +70,11 @@ extern float g_late_hit_max_quant_unit_fraction;
 // node, same pattern as the two late-hit globals above.  See the comment
 // block in plugin.cc for the full rationale.
 extern float g_record_failsafe_seconds;
+// Mute/unmute late-hit window (ms). Defined and defaulted in plugin.cc;
+// declared extern here so engine.cpp can persist it in the Globals session
+// node, same pattern as the globals above. See the comment block in
+// plugin.cc for the full rationale (entry 5, mod_docs/ROADMAP.rst).
+extern float g_mute_late_hit_ms;
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
@@ -2135,6 +2140,9 @@ Engine::process_nonrt_event (EventNonRT * event)
 		else if (gg_event->param == "record_failsafe_seconds") {
 			gg_event->ret_value = g_record_failsafe_seconds;
 		}
+		else if (gg_event->param == "mute_late_hit_ms") {
+			gg_event->ret_value = g_mute_late_hit_ms;
+		}
 		//------ albEnd ----------------------------------
 
 		_osc->finish_global_get_event (*gg_event);
@@ -2235,6 +2243,11 @@ Engine::process_nonrt_event (EventNonRT * event)
 		else if (gs_event->param == "record_failsafe_seconds") {
 			if (gs_event->value >= 0.0f) {
 				g_record_failsafe_seconds = gs_event->value;
+			}
+		}
+		else if (gs_event->param == "mute_late_hit_ms") {
+			if (gs_event->value >= 0.0f) {
+				g_mute_late_hit_ms = gs_event->value;
 			}
 		}
 		//------ albEnd ----------------------------------
@@ -3290,10 +3303,17 @@ Engine::load_session (std::string fname, string * readstr)
 				g_record_failsafe_seconds = val;
 			}
 		}
+		if ((prop = globals_node->property ("mute_late_hit_ms")) != 0) {
+			float val;
+			if (sscanf (prop->value().c_str(), "%g", &val) == 1 && val >= 0.0f) {
+				g_mute_late_hit_ms = val;
+			}
+		}
 		fprintf(stderr,
 		        "SooperLooper: late_hit_window_ms loaded from session: %.4g ms"
 		        " (quant_unit_fraction cap: %.4g)"
 		        "  record_failsafe_seconds: %.4g"
+		        "  mute_late_hit_ms: %.4g"
 #ifdef ALB_RT_SAFE_COND_SIGNAL
 		        "  rt_safe_cond_signal: ON"
 #else
@@ -3305,7 +3325,7 @@ Engine::load_session (std::string fname, string * readstr)
 		        "  tempo_only_when_rolling: OFF\n",
 #endif
 		        g_late_hit_window_ms, g_late_hit_max_quant_unit_fraction,
-		        g_record_failsafe_seconds);
+		        g_record_failsafe_seconds, g_mute_late_hit_ms);
 		//------ albEnd ----------------------------------
 
 	}
@@ -3409,6 +3429,8 @@ Engine::save_session (std::string fname, bool write_audio, string * writestr)
 	globals_node->add_property ("late_hit_max_quant_unit_fraction", buf);
 	snprintf(buf, sizeof(buf), "%.10g", g_record_failsafe_seconds);
 	globals_node->add_property ("record_failsafe_seconds", buf);
+	snprintf(buf, sizeof(buf), "%.10g", g_mute_late_hit_ms);
+	globals_node->add_property ("mute_late_hit_ms", buf);
 	//------ albEnd ----------------------------------
 
 	

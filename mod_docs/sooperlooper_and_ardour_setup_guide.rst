@@ -398,6 +398,21 @@ your longest legitimate take on this rig -- including a deliberate new
 take started right after stopping playback, since that also counts and
 gets cut off at the same timeout.
 
+**Mute/unmute late-hit correction.** With mute-quantize on, pressing
+mute or unmute a moment after the beat normally waits for the *next*
+beat before acting -- up to a full extra cycle either muted when you
+meant to be playing, or playing when you meant to be muted. This lets a
+press shortly after the beat act immediately instead, the same idea as
+the Record late-hit correction above, applied to mute and unmute.
+
+It ships **off by default**. To turn it on, add the key to the session
+file's ``<Globals>`` line and restart::
+
+    mute_late_hit_ms="30"
+
+(milliseconds; ``0`` or omitted means off). Start small -- this is meant
+to catch a slightly-late press, not to make mute-quantize sloppy.
+
 
 1.3 Ardour
 -----------

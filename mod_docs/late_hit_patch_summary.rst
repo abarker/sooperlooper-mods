@@ -82,6 +82,16 @@ A concise inventory of all significant capabilities added to SooperLooper 1.7.9.
   end; guarded by the ``LATE_HIT_MULTIPLY_CORRECTION`` compile flag (disable with
   value 0 if regressions appear).
 
+- **Late-hit mute/unmute correction.** A ``MUTE``/``MUTE_ON``/``MUTE_OFF``
+  press arriving within a separate, plain-ms window after a sync boundary
+  is treated as on-time in either direction (entering mute or unmuting),
+  instead of waiting for the next boundary. Off by default.
+
+- **Bug fix: quantized Pause from Muted.** A stock 1.7.9 bug -- Pause
+  pressed while Muted, with mute-quantize on, used to resolve to
+  Playing once its wait-for-sync boundary arrived, instead of Paused.
+  Fixed; guarded by the ``PAUSE_FROM_MUTE_FIX`` compile flag (default on).
+
 - **Configurable two-cap window.** The correction fires only within
   ``min(g_late_hit_window_ms, g_late_hit_max_quant_unit_fraction × cycle_samples)``,
   hard-clamped to the input ring buffer depth.  Both values are saved in and loaded
@@ -507,8 +517,110 @@ declaration, XML load/save, OSC get/set, startup banner). No new
 remapping -- purely internal to the engine, invisible to the remapper and
 the ``.slb`` bindings.
 
+New Feature: mute/unmute late-hit correction
+-----------------------------------------------
+
+Extends the late-hit idea to ``MUTE``/``MUTE_ON``/``MUTE_OFF``: with
+mute-quantize on and sync/quantize active, a press arriving just after a
+sync boundary is treated as if it arrived exactly at that boundary,
+instead of waiting for the *next* one (up to a full quantize cycle
+later) -- in **both** directions, entering mute and leaving it (unmute).
+
+Unlike Record's correction, neither direction reconstructs buffer
+content: ``dCurrPos`` keeps advancing every buffer while muted (the
+loop's content is already sitting at the correct phase throughout), so
+this is a pure branch-selection decision -- immediate vs. wait -- not a
+backfill/trim operation.
+
+**Governed by its own window, ``g_mute_late_hit_ms``** (milliseconds,
+default ``0.0`` -- **off**). Deliberately a plain millisecond value with
+no cycle-fraction cap, unlike ``g_late_hit_window_ms`` above: the
+fraction cap exists there to keep a late *Record* press unambiguously
+attributed to one boundary before backfilling/trimming real audio --
+mute/unmute never touches buffer content, so that concern does not
+apply, and an over-generous value only ever degrades gracefully
+(mute-quantize effectively bypassed at very fast tempos, never
+mis-corrected). ``0`` disables the feature entirely, matching the
+"0 disables" convention used throughout this patch. Independent of
+``g_late_hit_window_ms`` and ``g_record_failsafe_seconds`` -- can be
+turned on or off, or tuned, without affecting either.
+
+To enable: set ``mute_late_hit_ms`` to a positive value (milliseconds)
+either in the session file's ``<Globals>`` node or live via OSC -- see
+*OSC Control* below, which now covers this value too.
+
+Same non-LADSPA-port mechanism as the other three globals (see *Why Not
+a LADSPA Port* below): a plain ``extern`` global, saved/loaded as the
+``mute_late_hit_ms`` property in the ``<Globals>`` node by
+``engine.cpp``'s ``save_session``/``load_session``.
+
+Files: ``plugin.cc`` (``MUTE_LATE_HIT_MS_DEFAULT``/``g_mute_late_hit_ms``
+globals, the shared window check at the top of the ``MULTI_MUTE``/
+``MULTI_PAUSE`` case, one added disjunct in the unmute branch and one in
+the entering-mute branch), ``engine.cpp`` (``extern`` declaration, XML
+load/save, OSC get/set). No new ``Event::command_t``, no
+``command_map.cpp`` entry, and no pedal/MIDI remapping.
+
+New Fix: quantized Pause from Muted now resolves to Paused
+---------------------------------------------------------------
+
+**A stock SooperLooper 1.7.9 bug, not introduced by this fork** --
+confirmed present verbatim in the untouched upstream reference copy
+kept in this tree. Found by accident while testing the mute/unmute
+late-hit feature above, then fixed on its own merits since it is
+unrelated to late-hit correction.
+
+**The bug:** with mute-quantize on and sync active, pressing Pause while
+a loop is Muted has to wait for the next sync boundary before acting --
+the same "wait for sync" mechanism mute-quantize always uses. Once that
+boundary arrived, the loop ended up **Playing**, not **Paused**. The
+performer pressed Pause and got audible playback instead.
+
+**Why this was confidently a bug, not intended behaviour:** SooperLooper
+already handles this exact transition correctly when it acts
+*immediately* (mute-quantize off, or sync/quantize off) -- pressing
+Pause while Muted goes straight to Paused, explicitly, and the reverse
+(pressing Mute while Paused) goes straight back to Muted, also
+explicitly. Both directions, named in the code, deliberate. The
+*deferred* "wait for sync" version of the same logic only implemented
+one of those two symmetric directions; the other silently fell through
+to the same generic branch used for an ordinary unmute. Quantization is
+only supposed to delay *when* an action happens, never change *what*
+the action resolves to -- a deferred press and an immediate press
+pressing the same button in the same state should always end up in the
+same place, just possibly later. Implementing only one of two mirrored
+cases the code already implements immediately above is the signature of
+an omission made when that deferred branch was originally written, not
+a deliberate design choice.
+
+**The fix has two parts.** The obvious one -- adding the missing case so
+a deferred Mute->Pause resolves to Paused -- turned out to have a
+non-obvious second half: the engine also tracks whether a loop *was*
+muted before it changed state, so that a later Undo can correctly put it
+back in Mute rather than Play. That tracking needed fixing too, or the
+primary fix alone would have landed in the right state but with an Undo
+fired later resuming to the wrong place. Both parts sit inside the same
+generic function the engine already uses for every other deferred state
+transition, so the fix is small and self-contained -- about four lines
+total, not counting the safety switch below.
+
+**Guarded by a compile-time flag, off if wanted.** ``PAUSE_FROM_MUTE_FIX``
+(``plugin.cc``, default ``1``) wraps both parts, matching
+``LATE_HIT_MULTIPLY_CORRECTION``'s own established role in this file: a
+correction with its own independent escape hatch, in case it ever needs
+pulling without touching anything else. Set it to ``0`` and rebuild to
+revert to exact stock (buggy) behaviour. This is compile-time, not a
+session-file/OSC value like the parameters above -- there is nothing to
+tune, only a bug to have fixed or not, so a rebuild-time switch fits
+better than a runtime one.
+
 Configurable Window Size
 ------------------------
+
+Covers the Record late-hit window (``g_late_hit_window_ms``/
+``g_late_hit_max_quant_unit_fraction``) specifically. ``g_mute_late_hit_ms``
+(above) is a separate, single plain-ms value with no fraction cap -- see
+its own section for why.
 
 The window size has two independent limits; the smaller of the two applies.
 
@@ -546,13 +658,14 @@ leave the ms cap at something like 2000).
 OSC Control
 ~~~~~~~~~~~
 
-``late_hit_window_ms``, ``late_hit_max_quant_unit_fraction``, and
-``record_failsafe_seconds`` (see *New Feature: record_failsafe* above) can
-all be read and changed live over OSC, in addition to editing the session
-file. They are reachable through the engine's existing generic global
-parameter mechanism -- the same ``/set "sf"`` / ``/get "sss"`` methods
-already used for ``tempo``, ``eighth_per_cycle``, ``smart_eighths``, and
-other ``<Globals>`` values:
+``late_hit_window_ms``, ``late_hit_max_quant_unit_fraction``,
+``record_failsafe_seconds`` (see *New Feature: record_failsafe* above),
+and ``mute_late_hit_ms`` (see *New Feature: mute/unmute late-hit
+correction* above) can all be read and changed live over OSC, in
+addition to editing the session file. They are reachable through the
+engine's existing generic global parameter mechanism -- the same
+``/set "sf"`` / ``/get "sss"`` methods already used for ``tempo``,
+``eighth_per_cycle``, ``smart_eighths``, and other ``<Globals>`` values:
 
 .. code-block::
 
@@ -566,7 +679,7 @@ client at ``osc.udp://127.0.0.1:9999/`` listening on ``/reply``::
     /get "record_failsafe_seconds" "osc.udp://127.0.0.1:9999/" "/reply"
     /set "record_failsafe_seconds" 45.0
 
-A negative value sent to ``/set`` for any of the three is silently ignored
+A negative value sent to ``/set`` for any of the four is silently ignored
 (the value is left unchanged) -- the same ``value >= 0.0f`` guard
 ``load_session`` already applies to the session-file keys, needed because
 a negative float would otherwise reach an ``(unsigned long)`` cast in
@@ -574,7 +687,7 @@ a negative float would otherwise reach an ``(unsigned long)`` cast in
 
 This is a smaller step than full OSC/GUI exposure: no ``command_map.cpp``
 ``add_global_control`` registration and no LADSPA port were added for any
-of the three (see *Why Not a LADSPA Port* below), so none of them appear
+of the four (see *Why Not a LADSPA Port* below), so none of them appear
 in ``slgui``, and OSC's ``/register_auto_update`` push-on-change mechanism
 -- which keys a listener's registration off ``CommandMap::to_control_t()``
 -- will not target them by name. Plain ``/set``/``/get`` are unaffected by
@@ -588,8 +701,9 @@ allocates a float, calls ``connect_port()``, and ``plugin.cc`` reads it via a po
 ``SooperLooperI``. That is the correct mechanism for a value that needs full GUI exposure
 (a slider in ``slgui``) or push-on-change OSC updates.
 
-``g_late_hit_window_ms``, ``g_late_hit_max_quant_unit_fraction``, and
-``g_record_failsafe_seconds`` are intentionally **not** LADSPA ports. Each is a plain
+``g_late_hit_window_ms``, ``g_late_hit_max_quant_unit_fraction``,
+``g_record_failsafe_seconds``, and ``g_mute_late_hit_ms`` are
+intentionally **not** LADSPA ports. Each is a plain
 file-scope global in ``plugin.cc``, declared ``extern`` in ``engine.cpp``, written during
 session load from the ``<Globals>`` node, and also reachable through the engine's generic
 ``/set``/``/get`` dispatch (see *OSC Control* above). This still avoids
@@ -597,7 +711,7 @@ the LADSPA port descriptor table and ``slgui`` wiring. The trade-off is that it 
 in the standalone build where both translation units share an address space. When
 ``plugin.cc`` is loaded as a true LADSPA plugin inside a DAW, ``engine.cpp`` is absent and
 the value stays at the compile-time default for the session, which is acceptable
-behaviour. If any of the three is ever promoted to a GUI control, the correct migration
+behaviour. If any of the four is ever promoted to a GUI control, the correct migration
 path is to add a proper LADSPA port and remove the global.
 
 
@@ -710,6 +824,23 @@ struct layout visible to multiple translation units; the two ``ALB_`` flags in
      - When 1, the late-hit correction is applied to Multiply end
        (``multStopInWindow`` path).  Set to 0 to disable Multiply-end
        correction only, leaving Record start/stop correction active.
+   * - ``MUTE_LATE_HIT_MS_DEFAULT``
+     - ``plugin.cc``
+     - ``0.0f``
+     - Compile-time initial value for ``g_mute_late_hit_ms``.  ``0``
+       means the mute/unmute late-hit correction ships **off** (see
+       *New Feature: mute/unmute late-hit correction* above).
+       Overridden at runtime by the session file or OSC ``/set``.
+   * - ``PAUSE_FROM_MUTE_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: quantized
+       Pause from Muted correctly resolves to Paused instead of
+       Playing (see *New Fix: quantized Pause from Muted now resolves
+       to Paused* above).  Set to 0 to revert to exact stock (buggy)
+       behaviour.  Unlike the other flags/globals here, this is a bug
+       fix with an escape hatch, not a tunable parameter -- no
+       session-file or OSC equivalent.
    * - ``SYNCWDEBUG``
      - ``plugin.cc``
      - *(commented out)*
