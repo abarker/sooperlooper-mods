@@ -725,7 +725,7 @@ path is to add a proper LADSPA port and remove the global.
 New Tool: ``slbigstate``
 --------------------------
 
-A standalone, at-a-distance display of one loop's current state
+A standalone, at-a-distance display of one or more loops' current state
 (Record / Playing / Overdub / Mute / ...) in large, high-contrast text
 with a per-state background color -- for visibility from across a room
 during a performance, where the normal ``slgui`` panel's small state
@@ -752,39 +752,91 @@ Usage::
    * - ``-P``, ``--port``
      - Engine OSC port to connect to (default ``9951``).
    * - ``-l``, ``--loop``
-     - Loop index to display (default ``0``).
+     - Show exactly one loop, the original single-window mode. Mutually
+       exclusive with ``-L``/``--loops``.
+   * - ``-L``, ``--loops``
+     - Comma/range list of loops to stack in one window, e.g.
+       ``0,2-4``, in the order given. If neither ``-l`` nor ``-L`` is
+       given, all of the engine's loops are shown, auto-detected --
+       see *Multiple loops* below.
    * - ``-X``, ``--screen-location``
      - Window position, format ``<xpos>:<ypos>``.
    * - ``-Z``, ``--size``
-     - Window size, format ``<width>x<height>``.
+     - Per-row window size, format ``<width>x<height>`` -- the size one
+       loop's row takes; the whole window's height is this times the
+       number of loops shown.
    * - ``-T``, ``--stay-on-top``
      - Keep the window above other applications.
+   * - ``-M``, ``--margin``
+     - Pixels reserved on every side of the label when fitting the
+       font (default 20). Turn this down for text that sits closer to
+       each row's edges, or up for more breathing room.
 
-The window title includes the loop index (e.g. "SooperLooper State -
-Loop 0"), since more than one instance can be running at once.
+The window title includes which loop(s) are shown -- "SooperLooper
+State - Loop 0" for a single loop, "SooperLooper State - Loops 0,2,3"
+for a stack -- since more than one instance can be running at once.
 
-**Multiple loops:** run one ``slbigstate`` per loop, each with its own
-``--loop N`` (and, to avoid the windows overlapping, its own
-``--screen-location``/``--size``). There is no combined multi-loop
-display -- each instance shows exactly one loop, and the engine has no
-trouble serving several independent instances of it at once.
+**Text size adjusts to fit.** The label font grows or shrinks to fill
+whatever labels are actually showing right now (BigStateWindow's own
+current one; every row's current one for a stack), recalculated
+whenever the window is resized or any row's state changes. Sizing is
+still one shared computation across every row of a stack at a given
+moment, so rows never disagree with each other on size -- it is just
+no longer padded out for hypothetical labels nothing on screen is
+currently showing (the longest possible one is "Substitute," which
+would otherwise leave a short label like "Off" using only a small
+fraction of the available space). The trade-off: the font can now
+change size when a row's own state changes to a longer or shorter
+word, where an earlier version held it perfectly still across every
+state change.
+
+**Multiple loops: one window, stacked, by default.** Running
+``slbigstate`` with no ``-l``/``-L`` at all shows *every* loop the
+engine currently has, one row per loop, stacked top to bottom in loop
+order, each row exactly the size a single-loop window would be (same
+``--size``/default) -- a single-loop rig therefore gets a window
+pixel-identical to the original single-loop-only display, with no
+flags needed. A thin black divider line separates adjacent rows, so
+two loops in the same state (both Playing, say) don't read as one
+undivided block. To show a specific subset, in a specific order, use
+``-L``, e.g. ``slbigstate -L 2,0-1`` shows loop 2, then loops 0 and 1,
+top to bottom in that order. To force the original single-loop-only
+window for exactly one loop (skipping the auto-detect), use
+``-l N`` instead -- both remain available; ``-l`` and ``-L`` cannot be
+combined.
 
 **How it talks to the engine:** plain OSC, the same generic mechanism
 ``tempo``/``smart_eighths``/etc. already use elsewhere in this patch.
-On startup it sends one ``/sl/<loop>/register_auto_update`` request for
-that loop's ``state`` control; the engine then pushes an update whenever
-that value actually changes (not on a fixed schedule), and the
-registration is refreshed defensively every 20 seconds so the display
-recovers on its own if the engine restarts. No connection to
-``libslcore.a`` or any of this patch's engine-side code -- it is a
+For each loop shown, it sends one ``/sl/<loop>/register_auto_update``
+request for that loop's ``state`` control; the engine then pushes an
+update whenever that value actually changes (not on a fixed schedule),
+and each loop's registration is refreshed defensively every 20 seconds
+so the display recovers on its own if the engine restarts -- N loops
+means N independent registrations sharing one process and one window,
+not N separate processes. When no ``-l``/``-L`` is given, one extra,
+one-shot exchange happens first, before any window opens: a plain
+``/ping`` to ask the engine how many loops it currently has (the same
+reply -- host, version, loop count -- ``slgui`` itself already reads
+for its own reconnect handling), so the display knows how many rows to
+build; a 2-second timeout with no reply falls back to showing loop 0
+alone rather than failing to start. No connection to ``libslcore.a`` or
+any of this patch's engine-side code either way -- it is an
 independent client of the engine's existing OSC interface, and works
 identically against a GUI-managed engine (started by ``slgui``) or a
 standalone headless ``sooperlooper``.
 
 **Remembering its window position:** its own preferences file,
-``~/.big_state_display/config.xml`` -- separate from ``slgui``'s own
-``~/.sooperlooper/gui_config.xml``, since the two are independent
-processes with no way to coordinate a shared file safely.
+``~/.sooperlooper/slbigstate_config.xml`` -- separate from ``slgui``'s
+own ``~/.sooperlooper/gui_config.xml`` (same directory, different file:
+only the *file* needs to be exclusive to avoid the two independent
+processes' writes colliding, not the whole directory). A stack of two
+or more loops uses a second file,
+``~/.sooperlooper/slbigstate_stack_config.xml``, so its remembered
+position doesn't collide with a single-loop instance's -- but showing
+exactly one loop, whether via ``-l`` or a ``-L``/auto-detect result
+that resolves to just one, always uses the original single-loop file,
+so a one-loop rig's remembered window position carries over exactly as
+it was before this feature existed.
 
 
 Compile-Time Flags

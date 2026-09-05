@@ -29,8 +29,9 @@
 
 using namespace std;
 
-DisplayConfig::DisplayConfig ()
-	: _position(150, 150)
+DisplayConfig::DisplayConfig (const wxString & filename)
+	: _filename(filename)
+	, _position(150, 150)
 	, _size(400, 200)
 {
 }
@@ -53,7 +54,7 @@ DisplayConfig::config_dir () const
 wxString
 DisplayConfig::config_path () const
 {
-	return config_dir() + wxFileName::GetPathSeparator() + wxT("slbigstate_config.xml");
+	return config_dir() + wxFileName::GetPathSeparator() + _filename;
 }
 
 void

@@ -15,7 +15,10 @@ slbigstate_LDADD = @BASE_LIBS@ @LOSC_LIBS@ @WX_LIBS@ @XML_LIBS@
 slbigstate_SOURCES = \
 	main.cpp \
 	osc_state_client.cpp \
+	state_render.cpp \
+	state_row_panel.cpp \
 	big_state_window.cpp \
+	big_state_stack_window.cpp \
 	display_config.cpp
 
 noinst_HEADERS = $(wildcard *.hpp *.h)

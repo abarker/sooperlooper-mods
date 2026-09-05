@@ -46,7 +46,15 @@
 class DisplayConfig
 {
   public:
-	DisplayConfig ();
+	// filename: which file under config_dir() this instance reads/writes.
+	// Default is the original single-loop file, unchanged -- the
+	// multi-loop stack window (mod_docs/ROADMAP.rst entry 6, "multi-loop
+	// stacked display") passes a different name so its own remembered
+	// position doesn't collide with a single-loop instance's, if both
+	// happen to run at once. Same "own file, not a shared one" reasoning
+	// as this class already applies to slgui's gui_config.xml above --
+	// just a second instance of that same reasoning, not a new one.
+	DisplayConfig (const wxString & filename = wxT("slbigstate_config.xml"));
 
 	// Fills in whatever was saved last time; leaves defaults (150,150 /
 	// 400x200) untouched for anything not found or if the file/directory
@@ -66,6 +74,7 @@ class DisplayConfig
 	wxString config_dir () const;
 	wxString config_path () const;
 
+	wxString _filename;
 	wxPoint _position;
 	wxSize  _size;
 };
