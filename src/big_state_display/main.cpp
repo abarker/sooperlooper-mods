@@ -270,6 +270,7 @@ class BigStateApp : public wxApp
 	                           const wxPoint & pos, const wxSize & row_size);
 	void rebuild_stack_window (int new_count);
 	void start_loop_count_watch ();
+	void send_register_and_ping ();
 	void on_config_watch_timer (wxTimerEvent & ev);
 
 	static int _config_ack_handler (const char *path, const char *types, lo_arg **argv,
@@ -547,6 +548,44 @@ BigStateApp::rebuild_stack_window (int new_count)
 }
 
 void
+BigStateApp::send_register_and_ping ()
+{
+	// Both messages share the same retpath ("/configack") and the same
+	// handler (_config_ack_handler), and are safe to repeat
+	// unconditionally on every call:
+	//   /register -- confirmed idempotent via
+	//     ControlOSC::finish_register_event() (de-duplicated by
+	//     (returl, retpath)) -- keeps this process on the engine's
+	//     push list for FUTURE /loop_add//loop_del events, including
+	//     re-establishing it after a real engine restart (a new
+	//     instance starts with an empty list, forgetting any earlier
+	//     registration).
+	//   /ping -- real bug found live, 2026-09-05: /register alone does
+	//     not cover an engine that already came back from a restart
+	//     with a DIFFERENT loop count from birth, with nothing further
+	//     changing afterward -- ControlOSC::finish_register_event()
+	//     only adds the caller to a list, it does not reply, so a
+	//     freshly-(re-)registered client has no way to learn the
+	//     CURRENT count, only future changes to it. /ping does reply
+	//     immediately, with the exact same "ssi" /pingack shape
+	//     send_all_config() itself pushes on a real change -- so
+	//     resending one every tick, alongside /register, catches
+	//     "count was already different by the time we noticed the
+	//     engine restarted" too, not just a live change to an engine
+	//     already being watched.
+	char portbuf[16];
+	snprintf (portbuf, sizeof(portbuf), "%ld", _port);
+	lo_address engine_addr = lo_address_new (_host.ToAscii(), portbuf);
+	if (engine_addr) {
+		char * url = lo_server_thread_get_url (_config_server);
+		lo_send (engine_addr, "/register", "ss", url, "/configack");
+		lo_send (engine_addr, "/ping", "ss", url, "/configack");
+		free (url);
+		lo_address_free (engine_addr);
+	}
+}
+
+void
 BigStateApp::start_loop_count_watch ()
 {
 	_config_server = lo_server_thread_new (0, 0);
@@ -556,30 +595,19 @@ BigStateApp::start_loop_count_watch ()
 	lo_server_thread_add_method (_config_server, "/configack", "ssi", _config_ack_handler, this);
 	lo_server_thread_start (_config_server);
 
-	char portbuf[16];
-	snprintf (portbuf, sizeof(portbuf), "%ld", _port);
-	lo_address engine_addr = lo_address_new (_host.ToAscii(), portbuf);
-	if (engine_addr) {
-		char * url = lo_server_thread_get_url (_config_server);
-		lo_send (engine_addr, "/register", "ss", url, "/configack");
-		free (url);
-		lo_address_free (engine_addr);
-	}
+	send_register_and_ping ();
 
 	_watching_loop_count = true;
 	_config_watch_timer = new wxTimer (this);
 	Connect (_config_watch_timer->GetId(), wxEVT_TIMER,
 	          wxTimerEventHandler (BigStateApp::on_config_watch_timer));
 	// A few seconds, not milliseconds (the standing rule from the
-	// 2026-09-01 live-rig OSC near-miss) -- this timer does two cheap
-	// things: check a flag the OSC thread may have set, and defensively
-	// re-send the same idempotent /register (confirmed via
-	// ControlOSC::finish_register_event(): de-duplicated by (returl,
-	// retpath), safe to repeat) so a real engine restart (a new
-	// instance, empty registration table) does not silently drop this
-	// registration forever, the same defensive-re-registration pattern
-	// OscStateClient::maintain() already uses for its own per-loop
-	// registrations.
+	// 2026-09-01 live-rig OSC near-miss) -- send_register_and_ping()
+	// itself is two small, cheap, idempotent sends; the real cost this
+	// interval bounds is how often on_config_watch_timer() below might
+	// call rebuild_stack_window() in the worst case (a genuine change
+	// on every single tick), still nowhere near a real-time concern at
+	// this cadence.
 	_config_watch_timer->Start (5000);
 }
 
@@ -600,20 +628,22 @@ BigStateApp::on_config_watch_timer (wxTimerEvent & ev)
 {
 	if (_config_changed) {
 		_config_changed = false;
-		rebuild_stack_window (_pushed_loop_count);
+		// Only the /ping half of send_register_and_ping() can report a
+		// count that already matches what is currently on screen (an
+		// actual /loop_add//loop_del push only ever fires when
+		// something really changed) -- guard here rather than in
+		// _config_ack_handler(), which runs on liblo's own thread and
+		// has no safe way to read _stack_clients (only ever touched
+		// from the main thread). Skipping a no-op rebuild avoids a
+		// pointless window teardown/recreate (and the accompanying
+		// visible flicker) every single tick once nothing is actually
+		// changing any more.
+		if (_pushed_loop_count != (int) _stack_clients.size()) {
+			rebuild_stack_window (_pushed_loop_count);
+		}
 	}
 
-	// Defensive re-registration -- see start_loop_count_watch()'s own
-	// comment for why this is safe to repeat unconditionally.
-	char portbuf[16];
-	snprintf (portbuf, sizeof(portbuf), "%ld", _port);
-	lo_address engine_addr = lo_address_new (_host.ToAscii(), portbuf);
-	if (engine_addr) {
-		char * url = lo_server_thread_get_url (_config_server);
-		lo_send (engine_addr, "/register", "ss", url, "/configack");
-		free (url);
-		lo_address_free (engine_addr);
-	}
+	send_register_and_ping ();
 }
 
 int

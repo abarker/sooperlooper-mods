@@ -817,17 +817,23 @@ one process and one window, not N separate processes.
 
 **If the loop count actually changes** -- a loop added or removed live
 from within a running engine (SooperLooper's own ``/loop_add``/
-``/loop_del``, e.g. from ``slgui`` itself), or the engine coming back
-from a restart with a different count -- the *auto-detect* stack
-window (no ``-l``/``-L`` given, the default) notices and rebuilds
-itself: it registers once for the engine's own config-changed
-notification and reacts within a few seconds, tearing down and
-rebuilding its rows to match, in either direction, without needing to
-be restarted itself. An explicit ``-l``/``-L`` window deliberately does
-not do this -- you asked for a specific loop or set, so a count change
-elsewhere leaves it alone; if a loop *you explicitly chose* is itself
-removed, that row just freezes at its last known state, same as a
-plain engine restart with the same loop count but different content.
+``/loop_del``, e.g. from ``slgui`` itself), *or* the engine coming back
+from a restart with a different count already set from its own
+startup -- the *auto-detect* stack window (no ``-l``/``-L`` given, the
+default) notices and rebuilds itself within a few seconds, tearing
+down and rebuilding its rows to match, in either direction, without
+needing to be restarted itself. Covers both cases because it uses two
+mechanisms together: the engine's own config-changed push (immediate,
+for a live add/remove on an engine it is already watching) plus a
+periodic active re-check (catches a *new* engine instance that already
+had a different count from the moment it started, which a passive push
+alone cannot -- nothing "changes" for it to push if the count was
+already different before anyone was watching). An explicit ``-l``/
+``-L`` window deliberately does not do any of this -- you asked for a
+specific loop or set, so a count change elsewhere leaves it alone; if a
+loop *you explicitly chose* is itself removed, that row just freezes at
+its last known state, same as a plain engine restart with the same
+loop count but different content.
 When no ``-l``/``-L`` is given, one extra,
 one-shot exchange happens first, before any window opens: a plain
 ``/ping`` to ask the engine how many loops it currently has (the same
