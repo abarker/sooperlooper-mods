@@ -205,6 +205,75 @@ class BigStateApp : public wxApp
 	BigStateStackWindow * _stack_window;
 
 	DisplayConfig * _config;
+	// Which config file _config currently points at -- true for the
+	// classic single-loop file, false for the stack file. Tracked
+	// separately rather than added to DisplayConfig's own small API,
+	// since only rebuild_stack_window() below ever needs to know it (to
+	// decide whether a live loop-count change crossed the 1-vs-many
+	// boundary and _config needs to be swapped for the other file).
+	bool _config_is_single_file;
+
+	// Old DisplayConfig objects retired by rebuild_stack_window() when a
+	// live loop-count change crosses the 1-vs-many boundary -- see that
+	// method's own comment for why they cannot be deleted immediately
+	// (the just-Destroy()-ed old BigStateStackWindow's own destructor,
+	// which still holds a reference to one of these, has not actually
+	// run yet at that point -- wx defers a top-level window's real C++
+	// destruction to its next idle pass). Freed for real in OnExit(),
+	// by which point every window is long gone.
+	std::vector<DisplayConfig *> _retired_configs;
+
+	// Saved from the command line so rebuild_stack_window() can use them
+	// again later -- only ever relevant to the auto-detect stack path
+	// (see _watching_loop_count below), never touched by an explicit
+	// --loop/--loops invocation.
+	wxString _host;
+	long     _port;
+	long     _margin;
+	bool     _stay_on_top;
+
+	// Real bug found live, 2026-09-05: user pointed out that loops can
+	// be added or removed from a RUNNING engine (SooperLooper's own
+	// /loop_add and /loop_del OSC commands, e.g. from slgui itself),
+	// not just by restarting it with a different -l N -- so "restart
+	// slbigstate alongside sooperlooper" (this feature's own documented
+	// fix for an engine *restart* with a different count) does not
+	// cover this case at all: nothing about the engine restarts, so
+	// there is no natural moment to think to restart slbigstate either.
+	//
+	// Fixed properly, not documented as a workaround, once the
+	// mechanism was actually read rather than assumed: the engine
+	// already pushes an updated /pingack (s:hosturl s:version
+	// i:loopcount, control_osc.cpp's send_all_config(), called from
+	// both on_loop_added() and on_loop_removed()) to every address that
+	// has sent it a plain /register <returl> <retpath> -- the *same*
+	// push-not-poll shape every other OSC interaction in this program
+	// already uses, not a new pattern invented for this. Only wired up
+	// for the auto-detect stack path (neither --loop nor --loops given)
+	// -- an explicit --loop/--loops means the user asked for a specific
+	// loop or set, which a live count change elsewhere should not
+	// override.
+	bool              _watching_loop_count;
+	lo_server_thread  _config_server;
+	wxTimer *         _config_watch_timer;
+	// Set from the OSC callback (a DIFFERENT thread, liblo's own
+	// server thread, never wx's main thread) -- kept as plain data,
+	// exactly the same shape as OscStateClient's own _state/_have_state
+	// fields, and read/cleared only from on_config_watch_timer() on the
+	// main thread via wxTimer, the same split every other OSC handler
+	// in this codebase already uses to keep wx calls off a non-main
+	// thread.
+	volatile bool     _config_changed;
+	volatile int      _pushed_loop_count;
+
+	void build_stack_window (const std::vector<int> & loop_list,
+	                           const wxPoint & pos, const wxSize & row_size);
+	void rebuild_stack_window (int new_count);
+	void start_loop_count_watch ();
+	void on_config_watch_timer (wxTimerEvent & ev);
+
+	static int _config_ack_handler (const char *path, const char *types, lo_arg **argv,
+	                                   int argc, void *data, void *user_data);
 };
 
 IMPLEMENT_APP(BigStateApp)
@@ -253,6 +322,16 @@ BigStateApp::OnInit ()
 	_window = 0;
 	_stack_window = 0;
 	_config = 0;
+	_config_is_single_file = true;
+	_host = host;
+	_port = port;
+	_margin = margin;
+	_stay_on_top = stay_on_top;
+	_watching_loop_count = false;
+	_config_server = 0;
+	_config_watch_timer = 0;
+	_config_changed = false;
+	_pushed_loop_count = 0;
 
 	wxString posstr;
 	bool have_pos = parser.Found (wxT("X"), &posstr);
@@ -330,9 +409,10 @@ BigStateApp::OnInit ()
 		}
 	}
 
+	_config_is_single_file = (loop_list.size() == 1);
 	_config = new DisplayConfig (
-		loop_list.size() == 1 ? wxT("slbigstate_config.xml")
-		                       : wxT("slbigstate_stack_config.xml"));
+		_config_is_single_file ? wxT("slbigstate_config.xml")
+		                          : wxT("slbigstate_stack_config.xml"));
 	_config->load ();
 	wxPoint pos = _config->get_position();
 	wxSize row_size = _config->get_size();
@@ -356,6 +436,22 @@ BigStateApp::OnInit ()
 		}
 	}
 
+	build_stack_window (loop_list, pos, row_size);
+
+	// Only for the auto-detect default (neither --loop nor --loops) --
+	// see _watching_loop_count's own header comment for why an explicit
+	// --loop/--loops deliberately does not get this.
+	if (!have_loops) {
+		start_loop_count_watch ();
+	}
+
+	return true;
+}
+
+void
+BigStateApp::build_stack_window (const std::vector<int> & loop_list,
+                                    const wxPoint & pos, const wxSize & row_size)
+{
 	fprintf (stderr, "slbigstate: displaying loop%s:",
 	         loop_list.size() == 1 ? "" : "s");
 	for (size_t i = 0; i < loop_list.size(); ++i) {
@@ -365,17 +461,159 @@ BigStateApp::OnInit ()
 
 	for (size_t i = 0; i < loop_list.size(); ++i) {
 		_stack_clients.push_back (
-			new OscStateClient (std::string (host.ToAscii()), (int) port, loop_list[i]));
+			new OscStateClient (std::string (_host.ToAscii()), (int) _port, loop_list[i]));
 	}
 
-	long style = wxDEFAULT_FRAME_STYLE | (stay_on_top ? wxSTAY_ON_TOP : 0);
+	long style = wxDEFAULT_FRAME_STYLE | (_stay_on_top ? wxSTAY_ON_TOP : 0);
 	_stack_window = new BigStateStackWindow (_stack_clients, *_config, pos, row_size, style,
-	                                            wxT("BigStateStackWin"), (int) margin);
+	                                            wxT("BigStateStackWin"), (int) _margin);
 
 	SetTopWindow (_stack_window);
 	_stack_window->Show (true);
+}
 
-	return true;
+void
+BigStateApp::rebuild_stack_window (int new_count)
+{
+	if (new_count < 1) {
+		new_count = 1;
+	}
+
+	// Capture the OLD window's current (possibly user-dragged) geometry
+	// explicitly, ourselves, rather than relying on its own destructor's
+	// equivalent save into _config -- wx defers a top-level window's
+	// actual C++ destruction from Destroy() to idle time, so _config
+	// would not reflect it yet by the time this function reads it,
+	// moments later in this same call.
+	wxPoint pos = _config->get_position();
+	wxSize row_size = _config->get_size();
+	if (_stack_window) {
+		pos = _stack_window->GetScreenPosition();
+		wxSize total = _stack_window->GetSize();
+		int old_rows = (int) _stack_clients.size();
+		row_size = (old_rows > 0)
+			? wxSize (total.GetWidth(), total.GetHeight() / old_rows)
+			: total;
+
+		_stack_window->Destroy();
+		_stack_window = 0;
+	}
+
+	for (size_t i = 0; i < _stack_clients.size(); ++i) {
+		delete _stack_clients[i];
+	}
+	_stack_clients.clear();
+
+	std::vector<int> loop_list;
+	for (int i = 0; i < new_count; ++i) {
+		loop_list.push_back (i);
+	}
+
+	bool want_single_file = (loop_list.size() == 1);
+	if (want_single_file != _config_is_single_file) {
+		// Real bug found live, 2026-09-05: deleting the OLD _config here
+		// synchronously is a use-after-free waiting to happen.
+		// _stack_window->Destroy() above only SCHEDULES the old
+		// BigStateStackWindow's actual C++ destruction for wx's next
+		// idle pass -- it has not run yet at this point in this same
+		// function call. That destructor still holds a DisplayConfig&
+		// reference to whatever _config pointed to when IT was
+		// constructed, and writes through it (saving final position/
+		// size) whenever it does eventually run. Deleting that object
+		// out from under it here corrupts/crashes on that later write
+		// (confirmed live: "I/O error: Is a directory" from a garbled
+		// filename read back out of freed memory). Retiring it into
+		// _retired_configs instead keeps it alive and valid for that
+		// still-pending destructor call, at the cost of a few dozen
+		// bytes staying allocated until OnExit() -- only on an actual
+		// 1-vs-many crossing, not on every rebuild, so bounded and rare
+		// even across a very long-running session.
+		_retired_configs.push_back (_config);
+		_config = new DisplayConfig (
+			want_single_file ? wxT("slbigstate_config.xml")
+			                    : wxT("slbigstate_stack_config.xml"));
+		_config->load ();
+		_config_is_single_file = want_single_file;
+	}
+	// Regardless of which file _config now points at, keep showing the
+	// window right where it already was rather than snapping to
+	// whatever position that file happened to have saved from a past
+	// run at this same loop count.
+	_config->set_position (pos);
+	_config->set_size (row_size);
+
+	fprintf (stderr, "slbigstate: loop count changed live -- rebuilding\n");
+	build_stack_window (loop_list, pos, row_size);
+}
+
+void
+BigStateApp::start_loop_count_watch ()
+{
+	_config_server = lo_server_thread_new (0, 0);
+	if (!_config_server) {
+		return;
+	}
+	lo_server_thread_add_method (_config_server, "/configack", "ssi", _config_ack_handler, this);
+	lo_server_thread_start (_config_server);
+
+	char portbuf[16];
+	snprintf (portbuf, sizeof(portbuf), "%ld", _port);
+	lo_address engine_addr = lo_address_new (_host.ToAscii(), portbuf);
+	if (engine_addr) {
+		char * url = lo_server_thread_get_url (_config_server);
+		lo_send (engine_addr, "/register", "ss", url, "/configack");
+		free (url);
+		lo_address_free (engine_addr);
+	}
+
+	_watching_loop_count = true;
+	_config_watch_timer = new wxTimer (this);
+	Connect (_config_watch_timer->GetId(), wxEVT_TIMER,
+	          wxTimerEventHandler (BigStateApp::on_config_watch_timer));
+	// A few seconds, not milliseconds (the standing rule from the
+	// 2026-09-01 live-rig OSC near-miss) -- this timer does two cheap
+	// things: check a flag the OSC thread may have set, and defensively
+	// re-send the same idempotent /register (confirmed via
+	// ControlOSC::finish_register_event(): de-duplicated by (returl,
+	// retpath), safe to repeat) so a real engine restart (a new
+	// instance, empty registration table) does not silently drop this
+	// registration forever, the same defensive-re-registration pattern
+	// OscStateClient::maintain() already uses for its own per-loop
+	// registrations.
+	_config_watch_timer->Start (5000);
+}
+
+int
+BigStateApp::_config_ack_handler (const char *path, const char *types, lo_arg **argv,
+                                     int argc, void *data, void *user_data)
+{
+	BigStateApp * app = static_cast<BigStateApp *> (user_data);
+	if (argc >= 3) {
+		app->_pushed_loop_count = argv[2]->i;
+		app->_config_changed = true;
+	}
+	return 0;
+}
+
+void
+BigStateApp::on_config_watch_timer (wxTimerEvent & ev)
+{
+	if (_config_changed) {
+		_config_changed = false;
+		rebuild_stack_window (_pushed_loop_count);
+	}
+
+	// Defensive re-registration -- see start_loop_count_watch()'s own
+	// comment for why this is safe to repeat unconditionally.
+	char portbuf[16];
+	snprintf (portbuf, sizeof(portbuf), "%ld", _port);
+	lo_address engine_addr = lo_address_new (_host.ToAscii(), portbuf);
+	if (engine_addr) {
+		char * url = lo_server_thread_get_url (_config_server);
+		lo_send (engine_addr, "/register", "ss", url, "/configack");
+		free (url);
+		lo_address_free (engine_addr);
+	}
 }
 
 int
@@ -395,6 +633,19 @@ BigStateApp::OnExit ()
 	}
 
 	delete _config;
+
+	for (size_t i = 0; i < _retired_configs.size(); ++i) {
+		delete _retired_configs[i];
+	}
+
+	if (_config_watch_timer) {
+		_config_watch_timer->Stop();
+		delete _config_watch_timer;
+	}
+	if (_config_server) {
+		lo_server_thread_stop (_config_server);
+		lo_server_thread_free (_config_server);
+	}
 
 	return wxApp::OnExit();
 }

@@ -811,9 +811,24 @@ For each loop shown, it sends one ``/sl/<loop>/register_auto_update``
 request for that loop's ``state`` control; the engine then pushes an
 update whenever that value actually changes (not on a fixed schedule),
 and each loop's registration is refreshed defensively every 20 seconds
-so the display recovers on its own if the engine restarts -- N loops
-means N independent registrations sharing one process and one window,
-not N separate processes. When no ``-l``/``-L`` is given, one extra,
+so the display recovers on its own if the engine restarts *with the
+same loop count* -- N loops means N independent registrations sharing
+one process and one window, not N separate processes.
+
+**If the loop count actually changes** -- a loop added or removed live
+from within a running engine (SooperLooper's own ``/loop_add``/
+``/loop_del``, e.g. from ``slgui`` itself), or the engine coming back
+from a restart with a different count -- the *auto-detect* stack
+window (no ``-l``/``-L`` given, the default) notices and rebuilds
+itself: it registers once for the engine's own config-changed
+notification and reacts within a few seconds, tearing down and
+rebuilding its rows to match, in either direction, without needing to
+be restarted itself. An explicit ``-l``/``-L`` window deliberately does
+not do this -- you asked for a specific loop or set, so a count change
+elsewhere leaves it alone; if a loop *you explicitly chose* is itself
+removed, that row just freezes at its last known state, same as a
+plain engine restart with the same loop count but different content.
+When no ``-l``/``-L`` is given, one extra,
 one-shot exchange happens first, before any window opens: a plain
 ``/ping`` to ask the engine how many loops it currently has (the same
 reply -- host, version, loop count -- ``slgui`` itself already reads
