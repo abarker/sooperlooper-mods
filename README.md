@@ -1,26 +1,36 @@
 ## Modifications to SooperLooper 1.7.9
 
 This is a modified version of SooperLooper which adds late-hit correction
-for record start and record end operations, direct JACK MIDI ports,
-BBT-based sync pulse placement, and a `cancel_record_mute` command.
+for record, mute/unmute, and multiply operations, two new commands around
+recording safety, direct JACK MIDI ports, BBT-based sync pulse placement,
+and a standalone at-a-distance loop-state display.
 
-**Late-hit record correction.** When sync is active, a Record press that
-arrives within a configurable window after a sync boundary is corrected back
-to that boundary, as if the button had been pressed on time.  This applies
-to both the press that starts recording and the press that ends it (a second
-Record press, or another button such as Mute that exits the record state).
-Late record starts are perfectly corrected.  Late record ends are corrected
-on all plays except at the beginning of the first loop of an immediate-play
-loop (this is due to obvious realtime constraints).
+**Late-hit correction.** When sync is active, a press that lands within a
+configurable window after a sync boundary is corrected back to that
+boundary instead of waiting for the next one — covering Record start/end,
+Mute/Unmute, and Multiply end. The window defaults to 100ms, narrowable to
+a fraction of the current quantize cycle, and is configurable via the
+session file or live over OSC. Also fixes a stock 1.7.9 bug where a
+quantized Pause press while Muted resolved to Playing instead of Paused.
 
-The default correction window is 100ms beyond the sync points; it can be
-narrowed by a fractional cap tied to the current quantize cycle length.  Both
-values are saved in and loaded from the session file `<Globals>` node:
-
-```xml
-<Globals tempo="108" eighth_per_cycle="1" ... sync_source="-1"
-         late_hit_window_ms="100" late_hit_max_quant_unit_fraction="0.5"/>
-```
+**`cancel_record_mute` and `record_failsafe`.**  Plain `record` already
+carries a loop from recording into play on its own — that part needs
+nothing new.  What `cancel_record_mute` adds is a clean way to stop that
+play again — the same job `mute_trigger` would do — without needing a
+second button.  An optional second trigger on the same switch does the
+stopping: a long hold or a quick double tap, always following the eager
+`record` that started it.  It always fires immediately and eagerly;
+waiting to see whether a second trigger will follow would cost the very
+timing accuracy this patch exists to protect.  A separate button bound to
+`mute_trigger` would do the same job, but costs a second pedal and is one
+more control to remember under performance pressure.  Internally
+`cancel_record_mute` works by discarding the take and restoring the
+previous loop muted, but that's implementation, not intent — the performer
+isn't undoing a mistake, they're choosing to stop play in favor of
+silence, on the same pedal.  A companion setting, `record_failsafe` (off by
+default), covers the
+case where that second trigger never comes at all — a record simply left
+running too long, with no press of any kind.
 
 **Direct JACK MIDI ports.**  A `sooperlooper:midi_in` port accepts MIDI
 commands with sub-buffer sample-accurate timestamps.  A
@@ -28,14 +38,9 @@ commands with sub-buffer sample-accurate timestamps.  A
 Transport Start/Stop messages, replacing the need for `a2jmidid` when
 driving external hardware.
 
-**`cancel_record_mute` command.**  Abandons a take you have just started:
-it cancels a record that is in progress or still pending on a sync
-boundary, keeps the previous loop, and does nothing at all in any other
-state.  A record that had already begun capturing is discarded and the
-looper is left muted; one still waiting on the boundary is simply
-cancelled, leaving the loop playing.  This lets a single footswitch carry
-both record and "abandon that take" without adding latency to the record
-press.  Bind it like any other command, over MIDI or OSC.
+**`slbigstate`.**  A standalone program showing one or more loops' current
+state in large, high-contrast text — readable from across a room, unlike
+slgui's own small indicators.
 
 For full details see the documentation in [`mod_docs/`](mod_docs/):
 
@@ -43,6 +48,8 @@ For full details see the documentation in [`mod_docs/`](mod_docs/):
   complete description of all modifications, configuration, and known issues.
 - [`sync_quantize_round_relsync.rst`](mod_docs/sync_quantize_round_relsync.rst) —
   background on SooperLooper's sync and quantize model.
+- [`sooperlooper_and_ardour_setup_guide.rst`](mod_docs/sooperlooper_and_ardour_setup_guide.rst) —
+  a practical low-budget live-looping setup and latency-calibration guide.
 
 All new code is bracketed with `albBegin` / `albEnd` markers; search for
 `albBegin` to locate every changed block.
@@ -82,7 +89,7 @@ Future plans include a VST plugin version for both Windows and Mac.
 
 This software is licensed under the GPL, thus the source code is free,
 open and available.  It is fully functional, no nagging, no activation
-keys, nothing to waste qbut time if you find it doesn't suit your
+keys, nothing to waste but time if you find it doesn't suit your
 needs.  Best of all, because the source is open, there will always be
 someone around who can fix any problems, or add new features.  You are
 welcome to copy it, give copies to your friends, and modify it.  But

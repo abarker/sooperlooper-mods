@@ -1,5 +1,4 @@
 .. SooperLooper + Ardour live-looping setup and latency guide
-.. Draft -- collaborative working document
 
 =========================================================================
 Live Looping with SooperLooper and Ardour: A Low-Budget Example Setup

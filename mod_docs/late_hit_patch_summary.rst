@@ -4,8 +4,11 @@ SooperLooper Late-Hit Recording Modification Summary
 | **Base version:** SooperLooper 1.7.9
 | **Modified files:** ``src/plugin.cc``, ``src/plugin.hpp``, ``src/engine.cpp``,
 | ``src/engine.hpp``, ``src/looper.cpp``, ``src/looper.hpp``, ``src/audio_driver.hpp``,
-| ``src/jack_audio_driver.hpp``, ``src/jack_audio_driver.cpp``,
-| and some test files in ``src/test_plugin``.
+| ``src/jack_audio_driver.hpp``, ``src/jack_audio_driver.cpp``, ``src/event.hpp``,
+| ``src/command_map.cpp``, and some test files in ``src/test_plugin``.
+| **New files** (not modifications, so not listed above) are documented in
+| their own sections: ``src/big_state_display/`` in `New Tool: slbigstate`_,
+| new test files in `Test Suite`_.
 | **All new code sections** are bracketed with ``albBegin`` / ``albEnd`` markers.
 | In ``plugin.cc`` and ``plugin.hpp`` the markers are ``//====== albBegin`` /
 | ``//====== albEnd``; in all other files they are ``//------ albBegin`` /
@@ -129,8 +132,8 @@ A concise inventory of all significant capabilities added to SooperLooper
 - **New command** ``cancel_record_mute``.  Cancels a record that is in progress
   or still pending on a sync boundary, keeps the previous take, and is a no-op
   in every other state.  Lets one button, firing eagerly on the first press,
-  carry record, play, and then end play (go to mute) in sequence -- without
-  a latency penalty at any step.  See
+  carry ``record``, play, and then end play (go to mute) in sequence --
+  without a latency penalty at any step.  See
   `New Command: cancel_record_mute`_.
 
 - **Record failsafe.**  If a record that interrupted an actively playing,
@@ -168,7 +171,7 @@ A concise inventory of all significant capabilities added to SooperLooper
   for ``a2jmidid`` when driving external hardware from SooperLooper.
 
 - **BBT-based JackSync pulse placement** (``ALB_BBT_SYNC``).
-  ``Engine::generate_sync()`` uses JACK BBT position fields supplied by the
+  The sync-pulse generator uses JACK BBT position fields supplied by the
   timebase master (``bar_start_tick``, ``beat``, ``bpm``, ``ticks_per_beat``)
   to anchor sync pulses to the master's musical grid.  Correctly handles
   locates to non-zero transport positions and mid-transport Eighths/Cycle
@@ -304,24 +307,34 @@ take.  Mutes only if audio was actually captured.  **No-op in every other
 state**, which is what makes it safe to overload onto a footswitch that also
 fires ``record``.
 
-Motivation: a footswitch that must serve both "record" and "abandon that
-take" cannot wait to find out whether a press will become a long press --
-that would add latency to the most timing-critical action in the rig.  So
-the press fires a real ``record`` immediately and *eagerly*, every time,
-with no wait-and-see delay; a second, separate gesture retracts it if that
-first press turns out to have been a mistake.  A long hold on the same
-switch is one natural choice for that second gesture (the pedal is already
-down); a quick double tap works just as well -- the first tap firing the
-eager ``record`` as always, a second tap within a short window mapped to
+Motivation: plain ``record`` already carries a loop from recording into
+play on its own -- that part needs nothing new.  What ``cancel_record_mute``
+adds is a clean way to stop that play again -- the same job ``mute_trigger``
+would do -- without needing a second button.  An optional second
+trigger on the same switch does the stopping: a long hold or a quick double
+tap, always following the eager ``record`` that started it.  It always
+fires immediately and *eagerly* on the first press, with no
+wait-and-see delay: delaying to find out whether a second trigger will
+follow would cost the very timing accuracy the whole late-hit correction
+system exists to protect.  A long hold on the same switch is one natural
+choice for that second, optional trigger (the pedal is already down); a
+quick double tap works just as well -- the first tap firing the eager
+``record`` as always, a second tap within a short window mapped to
 ``cancel_record_mute`` instead of a second ``record``.  The command itself
 is indifferent to which gesture triggers it: all it needs is that an eager
-``record`` has already landed.  Doing the retraction externally -- in
-whatever software or hardware maps the pedal's MIDI -- is unreliable
-because that layer cannot see SooperLooper's state: it cannot tell a
-committed record from one still pending on a boundary, and cannot tell
-whether the loop was already muted.  An in-engine command has ``state``,
-``waitingForSync``, ``wasMuted`` and ``headLoopChunk``, and acts in a
-single realtime dispatch.
+``record`` has already landed.  A separate button bound to ``mute_trigger``
+would do the same job, but costs a second pedal and is one more control to
+consciously reach for under performance pressure, instead of an extension
+of the gesture already in progress.  Internally the command works by
+discarding the take just captured and restoring the previous loop muted --
+that is implementation, not intent: the performer is not undoing a
+mistake, they are choosing to stop play in favor of silence, on the same
+pedal, in one motion.  Doing the retraction externally -- in whatever
+software or hardware maps the pedal's MIDI -- is unreliable because that
+layer cannot see SooperLooper's state: it cannot tell a committed record
+from one still pending on a boundary, and cannot tell whether the loop was
+already muted.  An in-engine command has ``state``, ``waitingForSync``,
+``wasMuted`` and ``headLoopChunk``, and acts in a single realtime dispatch.
 
 Behaviour by state at the moment the command arrives:
 
@@ -370,8 +383,8 @@ Motivation: ``cancel_record_mute`` still requires a second command trigger,
 after the eager ``record`` -- a long hold or a double tap, whichever gesture
 the pedal is set up to send it as.  It does nothing if a record is simply
 left running because attention went elsewhere entirely, with no second
-trigger at all, not even a fumbled one.  ``STATE_RECORD`` has no automatic
-exit on its own.
+trigger at all, not even a fumbled one.  The record state itself has no
+automatic exit.
 
 **Scope: only fires for a record that interrupted an
 actively playing, unmuted loop.** It does *not* fire for a first/fresh
@@ -382,9 +395,10 @@ pressed, to ``(state == STATE_PLAY || state == STATE_ONESHOT)`` -- true only
 when an actively playing, audible loop existed and was unmuted at that
 instant. Rationale: the case actually worth an automatic safety net is the
 eager-single/long-press ambiguity ``cancel_record_mute`` itself is built
-around -- a tap fires a real ``record`` immediately, and only a long hold
-retracts it, so a performer who meant to hold for a long press (or who gets
-distracted before resolving the tap either way) can silently leave an
+around -- a tap fires a real ``record`` immediately, and only a second
+trigger (long hold or double tap) retracts it, so a performer who meant to
+send that second trigger (or who gets distracted before resolving it
+either way) can silently leave an
 *existing, audible* take replaced by whatever's being recorded over it. A
 first/fresh recording from an empty loop has no equivalent "meant to mute
 instead" story and no prior take at stake, so it is left to run
@@ -403,8 +417,8 @@ Implementation: a sample counter, ``lRecordFailsafeSamples`` (a field on
 ``state == STATE_RECORD`` **and** ``bRecordEnteredFromActivePlay`` is true,
 and resets to 0 the instant state is anything else -- so it measures
 unbroken time in that one state, only for a take that qualifies, and never
-leaks across separate takes. ``bRecordFailsafeFired`` is true when that
-counter exceeds ``g_record_failsafe_seconds * fSampleRate`` and is ORed into
+leaks across separate takes. A flag, ``bRecordFailsafeFired``, is true when
+that counter exceeds ``g_record_failsafe_seconds * fSampleRate`` and is ORed into
 the existing ``lMultiCtrl == MULTI_CANCEL_RECORD_MUTE`` branch condition in
 ``plugin.cc`` -- zero new state-transition logic. Deliberately **not**
 gated on ``STATE_TRIG_STOP``: that state is a brief, self-resolving wait
@@ -414,8 +428,8 @@ for the next quantize boundary (at most one loop cycle), unlike
 **Default is off** (``RECORD_FAILSAFE_SECONDS_DEFAULT`` = ``0.0f``), unlike
 the late-hit window's default-on convention above. Reason: this feature can
 discard an entire take with *no press at all*, so it ships opt-in.
-``<= 0.0f`` disables it, matching the late-hit window's own "0 disables"
-convention. To enable it, set ``record_failsafe_seconds`` to a positive
+Any value at or below zero disables it, matching the late-hit window's own
+"0 disables" convention. To enable it, set ``record_failsafe_seconds`` to a positive
 value (seconds) either in the session file's ``<Globals>`` node or live via
 OSC -- see `OSC Control`_ below, which now applies to this value too.
 
@@ -459,7 +473,7 @@ attributed to one boundary before backfilling/trimming real audio --
 mute/unmute never touches buffer content, so that concern does not
 apply, and an over-generous value only ever degrades gracefully
 (mute-quantize effectively bypassed at very fast tempos, never
-mis-corrected). ``0`` disables the feature entirely, matching the
+mis-corrected). A value of zero disables the feature entirely, matching the
 "0 disables" convention used throughout this patch. Independent of
 ``g_late_hit_window_ms`` and ``g_record_failsafe_seconds`` -- can be
 turned on or off, or tuned, without affecting either. Defaults on
@@ -489,9 +503,9 @@ Record Late-Hit Window Size
 ----------------------------
 
 Covers the Record late-hit window (``g_late_hit_window_ms``/
-``g_late_hit_max_quant_unit_fraction``) specifically. ``g_mute_late_hit_ms``
-(above) is a separate, single plain-ms value with no fraction cap -- see
-its own section for why.
+``g_late_hit_max_quant_unit_fraction``) specifically. The mute/unmute
+window, ``g_mute_late_hit_ms`` (above), is a separate, single plain-ms
+value with no fraction cap -- see its own section for why.
 
 The window size has two independent limits; the smaller of the two applies.
 
@@ -516,8 +530,8 @@ session file under the key ``late_hit_max_quant_unit_fraction`` in the
 ``<Globals>`` node; if absent, the compile-time default
 ``LATE_HIT_MAX_QUANT_UNIT_FRACTION`` (100.0) is used.
 
-``effectiveLateHitWindow()`` in ``plugin.cc`` evaluates both limits each buffer and
-returns the smaller value in samples. The ms cap is additionally clamped to
+Both limits are evaluated each buffer by ``effectiveLateHitWindow()`` in
+``plugin.cc``, which returns the smaller value in samples. The ms cap is additionally clamped to
 ``lInputBufSize − 1`` (32767 samples, approximately 682 ms at 48 kHz), ensuring the
 window never exceeds the depth of the input ring buffer regardless of what
 ``g_late_hit_window_ms`` is set to. Setting the ms cap above this ceiling is silently
@@ -529,10 +543,10 @@ leave the ms cap at something like 2000).
 OSC Control
 ~~~~~~~~~~~
 
-``late_hit_window_ms``, ``late_hit_max_quant_unit_fraction``,
+All four globals -- ``late_hit_window_ms``, ``late_hit_max_quant_unit_fraction``,
 ``record_failsafe_seconds`` (see `New Feature: record_failsafe`_ above),
 and ``mute_late_hit_ms`` (see `New Feature: mute/unmute late-hit
-correction`_ above) can all be read and changed live over OSC, in
+correction`_ above) -- can all be read and changed live over OSC, in
 addition to editing the session file. They are reachable through the
 engine's existing generic global parameter mechanism -- the same
 ``/set "sf"`` / ``/get "sss"`` methods already used for ``tempo``,
@@ -615,12 +629,13 @@ the timebase master uses.  Both problems are avoided in practice by always
 locating to position 0 before recording, but the BBT path makes the code
 correct unconditionally.
 
-``JackAudioDriver::get_transport_info()`` now populates five additional fields in
-``TransportInfo`` when the timebase master has set the ``JackPositionBBT`` valid
-bit: ``bar``, ``beat``, ``bar_start_tick``, ``ticks_per_beat``, and the
-``bbt_valid`` flag.  (``tick`` is also copied but is not used by the formula;
-see the bug-fix note in `What This Patch Adds at a Glance`_.)
-``generate_sync()`` checks ``bbt_valid`` and, when true, computes:
+Five additional fields are now populated in ``TransportInfo`` by
+``JackAudioDriver::get_transport_info()`` when the timebase master has set
+the ``JackPositionBBT`` valid bit: ``bar``, ``beat``, ``bar_start_tick``,
+``ticks_per_beat``, and the ``bbt_valid`` flag.  (``tick`` is also copied
+but is not used by the formula; see the bug-fix note in
+`What This Patch Adds at a Glance`_.)
+If ``bbt_valid`` is true, ``generate_sync()`` computes:
 
 .. code-block::
 
@@ -629,10 +644,11 @@ see the bug-fix note in `What This Patch Adds at a Glance`_.)
     frame_in_cycle  = (framepos + offset) − phase_shift
     thisval         = lrint(fmod(frame_in_cycle, _tempo_frames))
 
-``bar_start_tick`` is an exact integer supplied by the timebase master, so
-``bar_start_frame`` is computed without rounding through an integer tick
-accumulator.  ``phase_shift`` is the frame of the most-recent cycle boundary
-on or before ``bar_start_frame``, which aligns the ``fmod`` grid to the
+Because ``bar_start_tick`` is an exact integer supplied by the timebase
+master, ``bar_start_frame`` is computed without rounding through an
+integer tick accumulator.  The ``phase_shift`` value is the frame of the
+most-recent cycle boundary on or before ``bar_start_frame``, which aligns
+the ``fmod`` grid to the
 master's bar grid.  The result is numerically equivalent to the stock
 ``fmod(framepos, _tempo_frames)`` formula when starting from the transport
 origin, and correctly re-anchors after any locate.
@@ -794,8 +810,8 @@ Compile-Time Flags
 
 All flags are collected here for reference.  Each is also documented at its
 definition site.  Flags in ``plugin.cc`` are purely local to that translation
-unit.  ``ALB_BBT_SYNC`` is defined in ``audio_driver.hpp`` because it controls
-struct layout visible to multiple translation units; the two ``ALB_`` flags in
+unit.  One flag, ``ALB_BBT_SYNC``, is defined in ``audio_driver.hpp`` because
+it controls struct layout visible to multiple translation units; the two ``ALB_`` flags in
 ``engine.cpp`` are local to that file.
 
 .. list-table::
@@ -928,8 +944,8 @@ remap branch).
 
 .. warning::
 
-   The enum **must** be appended at the end.  ``plugin.cc`` hardcodes
-   ``MULTI_UNDO``..``MULTI_PAUSE_OFF`` as integer literals 0-23 mirroring the
+   The enum **must** be appended at the end.  Elsewhere, ``plugin.cc``
+   hardcodes ``MULTI_UNDO``..``MULTI_PAUSE_OFF`` as integer literals 0-23 mirroring the
    first 24 ``Event::command_t`` values; inserting inside that range shifts
    the enum but not the literals, silently remapping commands **with no
    compile error**.  Six ``static_assert``\ s now guard this.
@@ -996,9 +1012,9 @@ allocates a float, calls ``connect_port()``, and ``plugin.cc`` reads it via a po
 ``SooperLooperI``. That is the correct mechanism for a value that needs full GUI exposure
 (a slider in ``slgui``) or push-on-change OSC updates.
 
-``g_late_hit_window_ms``, ``g_late_hit_max_quant_unit_fraction``,
-``g_record_failsafe_seconds``, and ``g_mute_late_hit_ms`` are
-intentionally **not** LADSPA ports. Each is a plain
+The four globals themselves -- ``g_late_hit_window_ms``,
+``g_late_hit_max_quant_unit_fraction``, ``g_record_failsafe_seconds``, and
+``g_mute_late_hit_ms`` -- are intentionally **not** LADSPA ports. Each is a plain
 file-scope global in ``plugin.cc``, declared ``extern`` in ``engine.cpp``, written during
 session load from the ``<Globals>`` node, and also reachable through the engine's generic
 ``/set``/``/get`` dispatch (see `OSC Control`_ earlier in this document). This still avoids
@@ -1008,6 +1024,20 @@ in the standalone build where both translation units share an address space. Whe
 the value stays at the compile-time default for the session, which is acceptable
 behaviour. If any of the four is ever promoted to a GUI control, the correct migration
 path is to add a proper LADSPA port and remove the global.
+
+Live-Performance Audit
+~~~~~~~~~~~~~~~~~~~~~~~
+
+A companion document, ``live_performance_review.rst``, is a
+live-performance-suitability code audit of the modifications, graded by
+severity, live-performance impact, and confidence, with every item's
+resolution status tracked explicitly.  It was written before most of its
+own findings were addressed, so it now reads as a closed-out historical
+record rather than a live list of concerns -- every CRITICAL item is
+either implemented or deliberately deferred with stated rationale.  It is
+kept, and referenced here, because two source-code comments (in
+``looper.cpp`` and ``plugin.cc``) cite specific findings by issue number,
+e.g. ``C1``.
 
 
 Glossaries
