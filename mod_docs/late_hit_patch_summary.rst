@@ -11,6 +11,9 @@ SooperLooper Late-Hit Recording Modification Summary
 | ``//====== albEnd``; in all other files they are ``//------ albBegin`` /
 | ``//------ albEnd``. Search for ``albBegin`` to locate every changed block.
 
+.. contents:: Table of Contents
+   :local:
+   :depth: 3
 
 .. tip:: **Compiling on Ubuntu 24.04**
 
@@ -50,24 +53,35 @@ SooperLooper Late-Hit Recording Modification Summary
 
           late_hit_max_quant_unit_fraction="0.5" late_hit_window_ms="100"
 
-      A complete ``<Globals>`` element looks like this (your other values will
-      differ)::
+      A complete ``<Globals>`` element looks like this, taken from a real
+      session file (your other values will differ). This one also carries
+      ``record_failsafe_seconds`` and ``mute_late_hit_ms`` -- the two other
+      globals covered later in this document -- which this two-key walkthrough
+      does not require you to add yourself::
 
-          <Globals tempo="108" eighth_per_cycle="1" common_dry="0" common_wet="1"
+          <Globals tempo="170" eighth_per_cycle="2" common_dry="0" common_wet="1"
            input_gain="1" sync_source="-1" auto_disable_latency="1"
            jack_timebase_master="0" output_midi_clock="0" use_midi_start="0"
            use_midi_stop="0" send_midi_start_on_trigger="0" smart_eighths="0"
-           late_hit_max_quant_unit_fraction="0.5" late_hit_window_ms="100"/>
+           late_hit_window_ms="200" late_hit_max_quant_unit_fraction="0.5"
+           record_failsafe_seconds="120.0" mute_late_hit_ms="100"/>
 
    3. **Restart SooperLooper** with the session file::
 
           sooperlooper --load-session yourfile.slsess
 
+   These values (and two related ones, ``record_failsafe_seconds`` and
+   ``mute_late_hit_ms``) can also be read and changed live over OSC instead
+   of editing the session file -- see `OSC Control`_.
+
 
 What This Patch Adds at a Glance
 ---------------------------------
 
-A concise inventory of all significant capabilities added to SooperLooper 1.7.9.
+A concise inventory of all significant capabilities added to SooperLooper
+1.7.9, grouped by area.
+
+.. rubric:: Late-Hit Timing Corrections
 
 - **Late-hit Record start correction.** A Record press arriving within the
   configurable window after a sync boundary immediately creates the loop buffer,
@@ -88,20 +102,35 @@ A concise inventory of all significant capabilities added to SooperLooper 1.7.9.
   instead of waiting for the next boundary. On by default (100 ms,
   matching the Record late-hit window).
 
-- **Bug fix: quantized Pause from Muted.** A stock 1.7.9 bug -- Pause
-  pressed while Muted, with mute-quantize on, used to resolve to
-  Playing once its wait-for-sync boundary arrived, instead of Paused.
-  Fixed; guarded by the ``PAUSE_FROM_MUTE_FIX`` compile flag (default on).
+- **Pause-from-Mute correction.** With mute-quantize on, a Pause press
+  while Muted now resolves to Paused once its wait-for-sync boundary
+  arrives -- matching the immediate (non-quantized) behavior already used
+  elsewhere in the engine. Stock SooperLooper 1.7.9 resolves this to
+  Playing instead. Guarded by the ``PAUSE_FROM_MUTE_FIX`` compile flag
+  (default on).  See `Quantized Pause from Muted Now Resolves to Paused`_
+  in the appendix.
 
 - **Configurable two-cap window.** The correction fires only within
   ``min(g_late_hit_window_ms, g_late_hit_max_quant_unit_fraction × cycle_samples)``,
   hard-clamped to the input ring buffer depth.  Both values are saved in and loaded
   from the session file ``<Globals>`` node.
 
+- **Late-hit correction robustness.** A slave channel in internal sync mode
+  always uses the stock timing path (``bLateHitBypassed``), preventing L/R
+  divergence from independently computed *T* values. Changing the sync
+  source resets the correction's tracked state
+  (``Looper::reset_late_hit_state()`` clears ``bSyncPulseReceived``,
+  ``lGlobalSamplesSinceSync``, and ``lLastSyncPeriodSamples``) so stale
+  period data from the old source can't affect the first presses on the
+  new one.
+
+.. rubric:: New Commands and Safety Features
+
 - **New command** ``cancel_record_mute``.  Cancels a record that is in progress
   or still pending on a sync boundary, keeps the previous take, and is a no-op
-  in every other state.  Lets one footswitch carry both record and "abandon
-  that take" without adding latency to the record press.  See
+  in every other state.  Lets one button, firing eagerly on the first press,
+  carry record, play, and then end play (go to mute) in sequence -- without
+  a latency penalty at any step.  See
   `New Command: cancel_record_mute`_.
 
 - **Record failsafe.**  If a record that interrupted an actively playing,
@@ -114,17 +143,14 @@ A concise inventory of all significant capabilities added to SooperLooper 1.7.9.
   empty loop, or one started from mute or pause.  See
   `New Feature: record_failsafe`_.
 
-- **OSC** ``/set``/``/get`` **for three session-file-only globals.**
-  ``record_failsafe_seconds``, ``late_hit_window_ms``, and
-  ``late_hit_max_quant_unit_fraction`` can now be read and changed live over
-  OSC, in addition to the session file.  See *Configurable Window Size*
-  below.
+- **Four globals, one persistence path.** ``late_hit_window_ms``,
+  ``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds``, and
+  ``mute_late_hit_ms`` are all written and read in the ``<Globals>`` node of
+  the ``.slsess`` session file, and all readable/settable live over OSC
+  ``/get``/``/set``, in addition to the session file.  See `Record Late-Hit
+  Window Size`_ and `OSC Control`_ below.
 
-- ``slbigstate``: **a standalone at-a-distance state display.**  A
-  separate program, installed alongside ``sooperlooper``/``slgui``, that
-  shows one loop's current state in large, colored text over OSC --
-  readable from across a room, unlike ``slgui``'s own small indicators.
-  See `New Tool: slbigstate`_.
+.. rubric:: JACK MIDI I/O
 
 - **Direct JACK MIDI input port** (``sooperlooper:midi_in``).  Receives MIDI
   commands with sub-buffer sample-accurate timestamps, bypassing the ALSA /
@@ -170,6 +196,8 @@ A concise inventory of all significant capabilities added to SooperLooper 1.7.9.
   stock ``fmod(framepos, _tempo_frames)`` formula for normal operation and
   correctly re-anchors to the master's grid after a locate.
 
+.. rubric:: RT-Safety Fixes
+
 - **RT-safety: suppressed** ``pthread_cond_signal`` **from RT callback**
   (``ALB_RT_SAFE_COND_SIGNAL``).  Three calls in ``generate_sync()`` that
   can cause priority inversion and xruns are suppressed; the main event loop's
@@ -180,21 +208,16 @@ A concise inventory of all significant capabilities added to SooperLooper 1.7.9.
   transport is actually rolling, preventing spurious non-RT-safe ``set_tempo()``
   calls during locate transitions.
 
-- **Session persistence for late-hit parameters.**  ``late_hit_window_ms`` and
-  ``late_hit_max_quant_unit_fraction`` are written and read in the ``<Globals>``
-  node of the ``.slsess`` session file.
+.. rubric:: Tools
 
-- **Stereo safety in internal sync mode.**  ``bLateHitBypassed`` is set on slave
-  channels whenever one looper drives another, preventing L/R divergence that
-  would otherwise arise from different *T* values on each channel.
+- ``slbigstate``: **a standalone at-a-distance state display.**  A
+  separate program, installed alongside ``sooperlooper``/``slgui``, that
+  shows one loop's current state in large, colored text over OSC --
+  readable from across a room, unlike ``slgui``'s own small indicators.
+  See `New Tool: slbigstate`_.
 
-- **Sync-source change reset.**  ``Looper::reset_late_hit_state()`` clears
-  ``bSyncPulseReceived``, ``lGlobalSamplesSinceSync``, and
-  ``lLastSyncPeriodSamples`` whenever the sync source changes, preventing stale
-  period data from the old source affecting the first presses on the new one.
-
-Problem Being Solved
---------------------
+The Late-Hit Sync Problem
+---------------------------
 
 With sync mode enabled, SooperLooper corrects *early* button presses by waiting
 for the next sync boundary before acting.  It does nothing for *late* presses —
@@ -210,7 +233,7 @@ What the Patch Does
 When the per-loop **Sync checkbox is on** and a **sync source is selected and producing
 pulses**, a Record or Stop press that arrives within a configurable window after a sync
 boundary is corrected back to that boundary instead of waiting for the next one. Quantize
-mode is not required. The default window is 100 ms; see *Configurable Window Size* below.
+mode is not required. The default window is 100 ms; see `Record Late-Hit Window Size`_ below.
 
 "Sync active" means both conditions together: the Sync checkbox controls whether
 operations wait for boundaries at all (``fSyncMode > 0``); the sync source selection
@@ -273,6 +296,274 @@ All new code paths are gated by ``withinWindow`` / ``stopWithinWindow`` /
 The engine behaves identically to the unpatched version in all these cases. Quantize mode
 is no longer a condition.
 
+New Command: ``cancel_record_mute``
+------------------------------------
+
+Cancels a record that is in progress or still pending, keeping the previous
+take.  Mutes only if audio was actually captured.  **No-op in every other
+state**, which is what makes it safe to overload onto a footswitch that also
+fires ``record``.
+
+Motivation: a footswitch that must serve both "record" and "abandon that
+take" cannot wait to find out whether a press will become a long press --
+that would add latency to the most timing-critical action in the rig.  So
+the press fires a real ``record`` immediately and *eagerly*, every time,
+with no wait-and-see delay; a second, separate gesture retracts it if that
+first press turns out to have been a mistake.  A long hold on the same
+switch is one natural choice for that second gesture (the pedal is already
+down); a quick double tap works just as well -- the first tap firing the
+eager ``record`` as always, a second tap within a short window mapped to
+``cancel_record_mute`` instead of a second ``record``.  The command itself
+is indifferent to which gesture triggers it: all it needs is that an eager
+``record`` has already landed.  Doing the retraction externally -- in
+whatever software or hardware maps the pedal's MIDI -- is unreliable
+because that layer cannot see SooperLooper's state: it cannot tell a
+committed record from one still pending on a boundary, and cannot tell
+whether the loop was already muted.  An in-engine command has ``state``,
+``waitingForSync``, ``wasMuted`` and ``headLoopChunk``, and acts in a
+single realtime dispatch.
+
+Behaviour by state at the moment the command arrives:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - State
+     - Action
+   * - ``STATE_RECORD``
+     - Discard the take, restore the previous loop, end **muted**.
+   * - ``STATE_TRIG_START``
+     - Cancel the pending record; the loop **keeps playing** (nothing was
+       captured).  Cancelled in place -- see the note below.
+   * - ``STATE_TRIG_STOP``
+     - **No-op.**  A quantized record *end* is waiting on its boundary; the
+       take is being kept.
+   * - everything else
+     - **No-op.**
+
+.. important::
+
+   The two pending states must be distinguished, and the guard must key on
+   ``STATE_TRIG_START`` rather than ``waitingForSync`` -- that flag is also
+   set for deferred *mute* and *play* transitions.  A ``state ==
+   STATE_RECORD`` guard alone silently does nothing in the quantized case
+   the feature exists for; a loose "anything record-ish" guard destroys a
+   take in the case it is supposed to tolerate.
+
+Implementation details -- the ``lMultiCtrl`` remap, the files touched, and
+the enum-ordering hazard -- are in `cancel_record_mute Implementation`_
+in the appendix.
+
+New Feature: ``record_failsafe``
+-----------------------------------
+
+If a record is left running in ``STATE_RECORD`` for longer than
+``g_record_failsafe_seconds``, the engine treats it exactly as if
+``cancel_record_mute``'s long press had just arrived: discard the take,
+restore the previous loop, end muted.  **Not a new command** -- it is a
+second, automatic way to reach the same ``CANCEL_RECORD_MUTE`` branch
+described above, so it inherits that command's guard table and
+fade-residue fix unchanged.
+
+Motivation: ``cancel_record_mute`` still requires a second command trigger,
+after the eager ``record`` -- a long hold or a double tap, whichever gesture
+the pedal is set up to send it as.  It does nothing if a record is simply
+left running because attention went elsewhere entirely, with no second
+trigger at all, not even a fumbled one.  ``STATE_RECORD`` has no automatic
+exit on its own.
+
+**Scope: only fires for a record that interrupted an
+actively playing, unmuted loop.** It does *not* fire for a first/fresh
+recording of an empty loop, and does not fire for a record started from
+``STATE_MUTE`` or ``STATE_PAUSED``. Precisely: ``bRecordEnteredFromActivePlay``
+(a field on ``SooperLooperI``) is set once, at the moment ``RECORD`` is
+pressed, to ``(state == STATE_PLAY || state == STATE_ONESHOT)`` -- true only
+when an actively playing, audible loop existed and was unmuted at that
+instant. Rationale: the case actually worth an automatic safety net is the
+eager-single/long-press ambiguity ``cancel_record_mute`` itself is built
+around -- a tap fires a real ``record`` immediately, and only a long hold
+retracts it, so a performer who meant to hold for a long press (or who gets
+distracted before resolving the tap either way) can silently leave an
+*existing, audible* take replaced by whatever's being recorded over it. A
+first/fresh recording from an empty loop has no equivalent "meant to mute
+instead" story and no prior take at stake, so it is left to run
+indefinitely, same as before this feature existed.
+
+**Known trade-off:** if the performer genuinely did mean to start a brand
+new take right after ending a loop's playback -- not an accidental eager
+single -- that new take's available record time is now bounded by
+``g_record_failsafe_seconds``, the same constraint the feature applies to
+every other take entering from an active, unmuted loop.  The engine cannot
+tell "meant to record" from "meant to long-press to mute" apart at the
+moment the press lands, only from what happens afterward.
+
+Implementation: a sample counter, ``lRecordFailsafeSamples`` (a field on
+``SooperLooperI``), accumulates ``SampleCount`` once per buffer while
+``state == STATE_RECORD`` **and** ``bRecordEnteredFromActivePlay`` is true,
+and resets to 0 the instant state is anything else -- so it measures
+unbroken time in that one state, only for a take that qualifies, and never
+leaks across separate takes. ``bRecordFailsafeFired`` is true when that
+counter exceeds ``g_record_failsafe_seconds * fSampleRate`` and is ORed into
+the existing ``lMultiCtrl == MULTI_CANCEL_RECORD_MUTE`` branch condition in
+``plugin.cc`` -- zero new state-transition logic. Deliberately **not**
+gated on ``STATE_TRIG_STOP``: that state is a brief, self-resolving wait
+for the next quantize boundary (at most one loop cycle), unlike
+``STATE_RECORD``, which has no automatic exit at all.
+
+**Default is off** (``RECORD_FAILSAFE_SECONDS_DEFAULT`` = ``0.0f``), unlike
+the late-hit window's default-on convention above. Reason: this feature can
+discard an entire take with *no press at all*, so it ships opt-in.
+``<= 0.0f`` disables it, matching the late-hit window's own "0 disables"
+convention. To enable it, set ``record_failsafe_seconds`` to a positive
+value (seconds) either in the session file's ``<Globals>`` node or live via
+OSC -- see `OSC Control`_ below, which now applies to this value too.
+
+Same non-LADSPA-port mechanism as ``g_late_hit_window_ms``, for the same
+reasons (see `Why Not a LADSPA Port`_ below): a plain ``extern`` global,
+saved/loaded as the ``record_failsafe_seconds`` property in the
+``<Globals>`` node by ``engine.cpp``'s ``save_session``/``load_session``.
+
+Files: ``plugin.hpp`` (``lRecordFailsafeSamples`` and
+``bRecordEnteredFromActivePlay`` fields), ``plugin.cc``
+(``RECORD_FAILSAFE_SECONDS_DEFAULT`` / ``g_record_failsafe_seconds``
+globals, the ``bRecordEnteredFromActivePlay`` set statement at the top of
+``MULTI_RECORD``, the counter-update statements, the
+``|| bRecordFailsafeFired`` addition), ``engine.cpp`` (``extern``
+declaration, XML load/save, OSC get/set, startup banner). No new
+``Event::command_t``, no ``command_map.cpp`` entry, and no pedal/MIDI
+mapping -- purely internal to the engine, invisible to any external MIDI
+mapping and the ``.slb`` bindings.
+
+New Feature: mute/unmute late-hit correction
+-----------------------------------------------
+
+Extends the late-hit idea to ``MUTE``/``MUTE_ON``/``MUTE_OFF``: with
+mute-quantize on and sync/quantize active, a press arriving just after a
+sync boundary is treated as if it arrived exactly at that boundary,
+instead of waiting for the *next* one (up to a full quantize cycle
+later) -- in **both** directions, entering mute and leaving it (unmute).
+
+Unlike Record's correction, neither direction reconstructs buffer
+content: ``dCurrPos`` keeps advancing every buffer while muted (the
+loop's content is already sitting at the correct phase throughout), so
+this is a pure branch-selection decision -- immediate vs. wait -- not a
+backfill/trim operation.
+
+**Governed by its own window, ``g_mute_late_hit_ms``** (milliseconds,
+default ``100.0`` -- **on**, matching ``g_late_hit_window_ms``'s own
+default exactly). Deliberately a plain millisecond value with
+no cycle-fraction cap, unlike ``g_late_hit_window_ms`` above: the
+fraction cap exists there to keep a late *Record* press unambiguously
+attributed to one boundary before backfilling/trimming real audio --
+mute/unmute never touches buffer content, so that concern does not
+apply, and an over-generous value only ever degrades gracefully
+(mute-quantize effectively bypassed at very fast tempos, never
+mis-corrected). ``0`` disables the feature entirely, matching the
+"0 disables" convention used throughout this patch. Independent of
+``g_late_hit_window_ms`` and ``g_record_failsafe_seconds`` -- can be
+turned on or off, or tuned, without affecting either. Defaults on
+because, unlike ``record_failsafe`` (which can discard an entire take
+with no press at all), this feature can only ever turn a "wait for the
+next boundary" into "act now" -- never lose content -- the same
+default-on reasoning ``g_late_hit_window_ms`` itself already uses.
+
+To disable, or to change the window, set ``mute_late_hit_ms`` (``0`` for
+off, any other value for the window in milliseconds) either in the
+session file's ``<Globals>`` node or live via OSC -- see `OSC Control`_
+below, which now covers this value too.
+
+Same non-LADSPA-port mechanism as the other three globals (see `Why Not
+a LADSPA Port`_ below): a plain ``extern`` global, saved/loaded as the
+``mute_late_hit_ms`` property in the ``<Globals>`` node by
+``engine.cpp``'s ``save_session``/``load_session``.
+
+Files: ``plugin.cc`` (``MUTE_LATE_HIT_MS_DEFAULT``/``g_mute_late_hit_ms``
+globals, the shared window check at the top of the ``MULTI_MUTE``/
+``MULTI_PAUSE`` case, one added disjunct in the unmute branch and one in
+the entering-mute branch), ``engine.cpp`` (``extern`` declaration, XML
+load/save, OSC get/set). No new ``Event::command_t``, no
+``command_map.cpp`` entry, and no pedal/MIDI remapping.
+
+Record Late-Hit Window Size
+----------------------------
+
+Covers the Record late-hit window (``g_late_hit_window_ms``/
+``g_late_hit_max_quant_unit_fraction``) specifically. ``g_mute_late_hit_ms``
+(above) is a separate, single plain-ms value with no fraction cap -- see
+its own section for why.
+
+The window size has two independent limits; the smaller of the two applies.
+
+**Millisecond cap** — ``g_late_hit_window_ms`` (default 100 ms). This is an absolute
+ceiling on how late a press can be and still qualify for correction. Its value is saved in
+and loaded from the session file (``.slsess``) under the key ``late_hit_window_ms`` in
+the ``<Globals>`` node — the same node that holds ``tempo``, ``eighth_per_cycle``, and
+other engine-level settings. To change it, edit the session file in a text editor and
+restart the engine. If the key is absent (older session files), the compile-time default
+``LATE_HIT_WINDOW_MS`` (100 ms) is used.
+
+**Fraction cap** — ``g_late_hit_max_quant_unit_fraction`` (default 100.0,
+which effectively disables the cap so the ms limit always governs).
+When set to a value less than 1.0, this limits the window to that fraction of
+one full quantize cycle at the current tempo and Eighths/Cycle setting, so the
+correction window scales automatically rather than being a fixed duration.
+For example, 0.25 caps the window at 25 % of one cycle regardless of tempo.
+At slow tempos the ms cap is usually the binding limit; the fraction cap
+becomes the effective limit at faster tempos or larger cycle sizes where the
+cycle period falls below ``g_late_hit_window_ms``. Its value is stored in the
+session file under the key ``late_hit_max_quant_unit_fraction`` in the
+``<Globals>`` node; if absent, the compile-time default
+``LATE_HIT_MAX_QUANT_UNIT_FRACTION`` (100.0) is used.
+
+``effectiveLateHitWindow()`` in ``plugin.cc`` evaluates both limits each buffer and
+returns the smaller value in samples. The ms cap is additionally clamped to
+``lInputBufSize − 1`` (32767 samples, approximately 682 ms at 48 kHz), ensuring the
+window never exceeds the depth of the input ring buffer regardless of what
+``g_late_hit_window_ms`` is set to. Setting the ms cap above this ceiling is silently
+clamped to it; one practical use is to set ``g_late_hit_window_ms`` to a large value
+so that the fraction cap alone governs the effective window at all normal playing
+tempos (set ``g_late_hit_max_quant_unit_fraction`` to the desired cycle fraction and
+leave the ms cap at something like 2000).
+
+OSC Control
+~~~~~~~~~~~
+
+``late_hit_window_ms``, ``late_hit_max_quant_unit_fraction``,
+``record_failsafe_seconds`` (see `New Feature: record_failsafe`_ above),
+and ``mute_late_hit_ms`` (see `New Feature: mute/unmute late-hit
+correction`_ above) can all be read and changed live over OSC, in
+addition to editing the session file. They are reachable through the
+engine's existing generic global parameter mechanism -- the same
+``/set "sf"`` / ``/get "sss"`` methods already used for ``tempo``,
+``eighth_per_cycle``, ``smart_eighths``, and other ``<Globals>`` values:
+
+.. code-block::
+
+    /set  s:param  f:value                     -- no reply
+    /get  s:param  s:return_url  s:return_path  -- replies to return_path
+                                                    with  i:-2  s:param  f:value
+
+For example, to read and then set the record failsafe over OSC from a
+client at ``osc.udp://127.0.0.1:9999/`` listening on ``/reply``::
+
+    /get "record_failsafe_seconds" "osc.udp://127.0.0.1:9999/" "/reply"
+    /set "record_failsafe_seconds" 45.0
+
+A negative value sent to ``/set`` for any of the four is silently ignored
+(the value is left unchanged) -- the same ``value >= 0.0f`` guard
+``load_session`` already applies to the session-file keys, needed because
+a negative float would otherwise reach an ``(unsigned long)`` cast in
+``plugin.cc``'s threshold checks.
+
+This is a smaller step than full OSC/GUI exposure: no ``command_map.cpp``
+``add_global_control`` registration and no LADSPA port were added for any
+of the four (see `Why Not a LADSPA Port`_ below), so none of them appear
+in ``slgui``, and OSC's ``/register_auto_update`` push-on-change mechanism
+-- which keys a listener's registration off ``CommandMap::to_control_t()``
+-- will not target them by name. Plain ``/set``/``/get`` are unaffected by
+that limitation.
+
 JACK MIDI Output and Improved Timing
 --------------------------------------
 
@@ -328,7 +619,7 @@ correct unconditionally.
 ``TransportInfo`` when the timebase master has set the ``JackPositionBBT`` valid
 bit: ``bar``, ``beat``, ``bar_start_tick``, ``ticks_per_beat``, and the
 ``bbt_valid`` flag.  (``tick`` is also copied but is not used by the formula;
-see the bug-fix note in *What This Patch Adds at a Glance*.)
+see the bug-fix note in `What This Patch Adds at a Glance`_.)
 ``generate_sync()`` checks ``bbt_valid`` and, when true, computes:
 
 .. code-block::
@@ -359,368 +650,6 @@ API; no special handling is needed.
 Commenting out ``#define ALB_BBT_SYNC`` in ``audio_driver.hpp`` removes the BBT
 fields from ``TransportInfo`` entirely and restores verbatim stock
 ``generate_sync()`` behaviour.
-
-New Command: ``cancel_record_mute``
-------------------------------------
-
-Cancels a record that is in progress or still pending, keeping the previous
-take.  Mutes only if audio was actually captured.  **No-op in every other
-state**, which is what makes it safe to overload onto a footswitch that also
-fires ``record``.
-
-Motivation: a footswitch that must serve both "record" and "abandon that
-take" cannot wait to find out whether a press will become a long press --
-that would add latency to the most timing-critical action in the rig.  So the
-press fires a real ``record`` immediately and only a long hold retracts it.
-Doing the retraction from a MIDI remapper is unreliable because the remapper
-cannot see SooperLooper's state: it cannot tell a committed record from one
-still pending on a boundary, and cannot tell whether the loop was already
-muted.  An in-engine command has ``state``, ``waitingForSync``, ``wasMuted``
-and ``headLoopChunk``, and acts in a single realtime dispatch.
-
-Behaviour by state at the moment the command arrives:
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - State
-     - Action
-   * - ``STATE_RECORD``
-     - Discard the take, restore the previous loop, end **muted**.
-   * - ``STATE_TRIG_START``
-     - Cancel the pending record; the loop **keeps playing** (nothing was
-       captured).  Cancelled in place -- see the note below.
-   * - ``STATE_TRIG_STOP``
-     - **No-op.**  A quantized record *end* is waiting on its boundary; the
-       take is being kept.
-   * - everything else
-     - **No-op.**
-
-.. important::
-
-   The two pending states must be distinguished, and the guard must key on
-   ``STATE_TRIG_START`` rather than ``waitingForSync`` -- that flag is also
-   set for deferred *mute* and *play* transitions.  A ``state ==
-   STATE_RECORD`` guard alone silently does nothing in the quantized case
-   the feature exists for; a loose "anything record-ish" guard destroys a
-   take in the case it is supposed to tolerate.
-
-Implementation
-~~~~~~~~~~~~~~
-
-A state-based remap in ``plugin.cc`` (the same idiom as ``MULTI_MUTE_ON``),
-rewriting ``lMultiCtrl`` rather than adding a dispatch case:
-
-- ``STATE_RECORD`` -> set ``wasMuted``, set the four mute fade deltas, remap
-  to ``MULTI_UNDO``.  The existing undo body then lands in ``STATE_MUTE``.
-- ``STATE_TRIG_START`` -> cancel in place (clear ``waitingForSync`` /
-  ``nextState``, restore state from ``headLoopChunk``) and set
-  ``lMultiCtrl = -1``.  It must **not** remap to ``MULTI_UNDO``: no chunk is
-  pushed on the pending path (``pushNewLoopChunk`` lives in the late-hit
-  branch only), so the undo would pop the existing take.
-- anything else -> ``lMultiCtrl = -1``.
-
-The fade deltas mirror ``transitionToNext``'s ``STATE_MUTE`` case, including
-the ``*Src*`` pair.  Setting only the non-Src pair leaves stale source-loop
-gains that corrupt a later ``MULTIPLY`` (``beginMultiply`` sets no fade
-deltas of its own; ``beginOverdub`` does, which is why overdub is immune).
-
-Files: ``event.hpp`` (enum appended before ``LAST_COMMAND``),
-``command_map.cpp`` (one line -- OSC and ``.slb`` bindings follow
-automatically), ``plugin.cc`` (``#define``, drift ``static_assert``\ s, the
-remap branch).
-
-.. warning::
-
-   The enum **must** be appended at the end.  ``plugin.cc`` hardcodes
-   ``MULTI_UNDO``..``MULTI_PAUSE_OFF`` as integer literals 0-23 mirroring the
-   first 24 ``Event::command_t`` values; inserting inside that range shifts
-   the enum but not the literals, silently remapping commands **with no
-   compile error**.  Six ``static_assert``\ s now guard this.
-
-New Feature: ``record_failsafe``
------------------------------------
-
-If a record is left running in ``STATE_RECORD`` for longer than
-``g_record_failsafe_seconds``, the engine treats it exactly as if
-``cancel_record_mute``'s long press had just arrived: discard the take,
-restore the previous loop, end muted.  **Not a new command** -- it is a
-second, automatic way to reach the same ``CANCEL_RECORD_MUTE`` branch
-described above, so it inherits that command's guard table and
-fade-residue fix unchanged.
-
-Motivation: ``cancel_record_mute`` still requires a press -- a long hold on
-the record switch.  It does nothing if a record is simply left running
-because attention went elsewhere entirely, with no press at all, not even a
-fumbled one.  ``STATE_RECORD`` has no automatic exit on its own.
-
-**Scope: only fires for a record that interrupted an
-actively playing, unmuted loop.** It does *not* fire for a first/fresh
-recording of an empty loop, and does not fire for a record started from
-``STATE_MUTE`` or ``STATE_PAUSED``. Precisely: ``bRecordEnteredFromActivePlay``
-(a field on ``SooperLooperI``) is set once, at the moment ``RECORD`` is
-pressed, to ``(state == STATE_PLAY || state == STATE_ONESHOT)`` -- true only
-when an actively playing, audible loop existed and was unmuted at that
-instant. Rationale: the case actually worth an automatic safety net is the
-eager-single/long-press ambiguity ``cancel_record_mute`` itself is built
-around -- a tap fires a real ``record`` immediately, and only a long hold
-retracts it, so a performer who meant to hold for a long press (or who gets
-distracted before resolving the tap either way) can silently leave an
-*existing, audible* take replaced by whatever's being recorded over it. A
-first/fresh recording from an empty loop has no equivalent "meant to mute
-instead" story and no prior take at stake, so it is left to run
-indefinitely, same as before this feature existed.
-
-**Known trade-off:** if the performer genuinely did mean to start a brand
-new take right after ending a loop's playback -- not an accidental eager
-single -- that new take's available record time is now bounded by
-``g_record_failsafe_seconds``, the same constraint the feature applies to
-every other take entering from an active, unmuted loop.  The engine cannot
-tell "meant to record" from "meant to long-press to mute" apart at the
-moment the press lands, only from what happens afterward.
-
-Implementation: a sample counter, ``lRecordFailsafeSamples`` (a field on
-``SooperLooperI``), accumulates ``SampleCount`` once per buffer while
-``state == STATE_RECORD`` **and** ``bRecordEnteredFromActivePlay`` is true,
-and resets to 0 the instant state is anything else -- so it measures
-unbroken time in that one state, only for a take that qualifies, and never
-leaks across separate takes. ``bRecordFailsafeFired`` is true when that
-counter exceeds ``g_record_failsafe_seconds * fSampleRate`` and is ORed into
-the existing ``lMultiCtrl == MULTI_CANCEL_RECORD_MUTE`` branch condition in
-``plugin.cc`` -- zero new state-transition logic. Deliberately **not**
-gated on ``STATE_TRIG_STOP``: that state is a brief, self-resolving wait
-for the next quantize boundary (at most one loop cycle), unlike
-``STATE_RECORD``, which has no automatic exit at all.
-
-**Default is off** (``RECORD_FAILSAFE_SECONDS_DEFAULT`` = ``0.0f``), unlike
-the late-hit window's default-on convention above. Reason: this feature can
-discard an entire take with *no press at all*, so it ships opt-in.
-``<= 0.0f`` disables it, matching the late-hit window's own "0 disables"
-convention. To enable it, set ``record_failsafe_seconds`` to a positive
-value (seconds) either in the session file's ``<Globals>`` node or live via
-OSC -- see *Configurable Window Size* below, which now applies to this
-value too.
-
-Same non-LADSPA-port mechanism as ``g_late_hit_window_ms``, for the same
-reasons (see *Why Not a LADSPA Port* below): a plain ``extern`` global,
-saved/loaded as the ``record_failsafe_seconds`` property in the
-``<Globals>`` node by ``engine.cpp``'s ``save_session``/``load_session``.
-
-Files: ``plugin.hpp`` (``lRecordFailsafeSamples`` and
-``bRecordEnteredFromActivePlay`` fields), ``plugin.cc``
-(``RECORD_FAILSAFE_SECONDS_DEFAULT`` / ``g_record_failsafe_seconds``
-globals, the ``bRecordEnteredFromActivePlay`` set statement at the top of
-``MULTI_RECORD``, the counter-update statements, the
-``|| bRecordFailsafeFired`` addition), ``engine.cpp`` (``extern``
-declaration, XML load/save, OSC get/set, startup banner). No new
-``Event::command_t``, no ``command_map.cpp`` entry, and no pedal/MIDI
-remapping -- purely internal to the engine, invisible to the remapper and
-the ``.slb`` bindings.
-
-New Feature: mute/unmute late-hit correction
------------------------------------------------
-
-Extends the late-hit idea to ``MUTE``/``MUTE_ON``/``MUTE_OFF``: with
-mute-quantize on and sync/quantize active, a press arriving just after a
-sync boundary is treated as if it arrived exactly at that boundary,
-instead of waiting for the *next* one (up to a full quantize cycle
-later) -- in **both** directions, entering mute and leaving it (unmute).
-
-Unlike Record's correction, neither direction reconstructs buffer
-content: ``dCurrPos`` keeps advancing every buffer while muted (the
-loop's content is already sitting at the correct phase throughout), so
-this is a pure branch-selection decision -- immediate vs. wait -- not a
-backfill/trim operation.
-
-**Governed by its own window, ``g_mute_late_hit_ms``** (milliseconds,
-default ``100.0`` -- **on**, matching ``g_late_hit_window_ms``'s own
-default exactly). Deliberately a plain millisecond value with
-no cycle-fraction cap, unlike ``g_late_hit_window_ms`` above: the
-fraction cap exists there to keep a late *Record* press unambiguously
-attributed to one boundary before backfilling/trimming real audio --
-mute/unmute never touches buffer content, so that concern does not
-apply, and an over-generous value only ever degrades gracefully
-(mute-quantize effectively bypassed at very fast tempos, never
-mis-corrected). ``0`` disables the feature entirely, matching the
-"0 disables" convention used throughout this patch. Independent of
-``g_late_hit_window_ms`` and ``g_record_failsafe_seconds`` -- can be
-turned on or off, or tuned, without affecting either. Defaults on
-because, unlike ``record_failsafe`` (which can discard an entire take
-with no press at all), this feature can only ever turn a "wait for the
-next boundary" into "act now" -- never lose content -- the same
-default-on reasoning ``g_late_hit_window_ms`` itself already uses.
-
-To disable, or to change the window, set ``mute_late_hit_ms`` (``0`` for
-off, any other value for the window in milliseconds) either in the
-session file's ``<Globals>`` node or live via OSC -- see *OSC Control*
-below, which now covers this value too.
-
-Same non-LADSPA-port mechanism as the other three globals (see *Why Not
-a LADSPA Port* below): a plain ``extern`` global, saved/loaded as the
-``mute_late_hit_ms`` property in the ``<Globals>`` node by
-``engine.cpp``'s ``save_session``/``load_session``.
-
-Files: ``plugin.cc`` (``MUTE_LATE_HIT_MS_DEFAULT``/``g_mute_late_hit_ms``
-globals, the shared window check at the top of the ``MULTI_MUTE``/
-``MULTI_PAUSE`` case, one added disjunct in the unmute branch and one in
-the entering-mute branch), ``engine.cpp`` (``extern`` declaration, XML
-load/save, OSC get/set). No new ``Event::command_t``, no
-``command_map.cpp`` entry, and no pedal/MIDI remapping.
-
-New Fix: quantized Pause from Muted now resolves to Paused
----------------------------------------------------------------
-
-**A stock SooperLooper 1.7.9 bug, not introduced by this fork** --
-confirmed present verbatim in the untouched upstream reference copy
-kept in this tree. Found by accident while testing the mute/unmute
-late-hit feature above, then fixed on its own merits since it is
-unrelated to late-hit correction.
-
-**The bug:** with mute-quantize on and sync active, pressing Pause while
-a loop is Muted has to wait for the next sync boundary before acting --
-the same "wait for sync" mechanism mute-quantize always uses. Once that
-boundary arrived, the loop ended up **Playing**, not **Paused**. The
-performer pressed Pause and got audible playback instead.
-
-**Why this was confidently a bug, not intended behaviour:** SooperLooper
-already handles this exact transition correctly when it acts
-*immediately* (mute-quantize off, or sync/quantize off) -- pressing
-Pause while Muted goes straight to Paused, explicitly, and the reverse
-(pressing Mute while Paused) goes straight back to Muted, also
-explicitly. Both directions, named in the code, deliberate. The
-*deferred* "wait for sync" version of the same logic only implemented
-one of those two symmetric directions; the other silently fell through
-to the same generic branch used for an ordinary unmute. Quantization is
-only supposed to delay *when* an action happens, never change *what*
-the action resolves to -- a deferred press and an immediate press
-pressing the same button in the same state should always end up in the
-same place, just possibly later. Implementing only one of two mirrored
-cases the code already implements immediately above is the signature of
-an omission made when that deferred branch was originally written, not
-a deliberate design choice.
-
-**The fix has two parts.** The obvious one -- adding the missing case so
-a deferred Mute->Pause resolves to Paused -- turned out to have a
-non-obvious second half: the engine also tracks whether a loop *was*
-muted before it changed state, so that a later Undo can correctly put it
-back in Mute rather than Play. That tracking needed fixing too, or the
-primary fix alone would have landed in the right state but with an Undo
-fired later resuming to the wrong place. Both parts sit inside the same
-generic function the engine already uses for every other deferred state
-transition, so the fix is small and self-contained -- about four lines
-total, not counting the safety switch below.
-
-**Guarded by a compile-time flag, off if wanted.** ``PAUSE_FROM_MUTE_FIX``
-(``plugin.cc``, default ``1``) wraps both parts, matching
-``LATE_HIT_MULTIPLY_CORRECTION``'s own established role in this file: a
-correction with its own independent escape hatch, in case it ever needs
-pulling without touching anything else. Set it to ``0`` and rebuild to
-revert to exact stock (buggy) behaviour. This is compile-time, not a
-session-file/OSC value like the parameters above -- there is nothing to
-tune, only a bug to have fixed or not, so a rebuild-time switch fits
-better than a runtime one.
-
-Configurable Window Size
-------------------------
-
-Covers the Record late-hit window (``g_late_hit_window_ms``/
-``g_late_hit_max_quant_unit_fraction``) specifically. ``g_mute_late_hit_ms``
-(above) is a separate, single plain-ms value with no fraction cap -- see
-its own section for why.
-
-The window size has two independent limits; the smaller of the two applies.
-
-**Millisecond cap** — ``g_late_hit_window_ms`` (default 100 ms). This is an absolute
-ceiling on how late a press can be and still qualify for correction. Its value is saved in
-and loaded from the session file (``.slsess``) under the key ``late_hit_window_ms`` in
-the ``<Globals>`` node — the same node that holds ``tempo``, ``eighth_per_cycle``, and
-other engine-level settings. To change it, edit the session file in a text editor and
-restart the engine. If the key is absent (older session files), the compile-time default
-``LATE_HIT_WINDOW_MS`` (100 ms) is used.
-
-**Fraction cap** — ``g_late_hit_max_quant_unit_fraction`` (default 100.0,
-which effectively disables the cap so the ms limit always governs).
-When set to a value less than 1.0, this limits the window to that fraction of
-one full quantize cycle at the current tempo and Eighths/Cycle setting, so the
-correction window scales automatically rather than being a fixed duration.
-For example, 0.25 caps the window at 25 % of one cycle regardless of tempo.
-At slow tempos the ms cap is usually the binding limit; the fraction cap
-becomes the effective limit at faster tempos or larger cycle sizes where the
-cycle period falls below ``g_late_hit_window_ms``. Its value is stored in the
-session file under the key ``late_hit_max_quant_unit_fraction`` in the
-``<Globals>`` node; if absent, the compile-time default
-``LATE_HIT_MAX_QUANT_UNIT_FRACTION`` (100.0) is used.
-
-``effectiveLateHitWindow()`` in ``plugin.cc`` evaluates both limits each buffer and
-returns the smaller value in samples. The ms cap is additionally clamped to
-``lInputBufSize − 1`` (32767 samples, approximately 682 ms at 48 kHz), ensuring the
-window never exceeds the depth of the input ring buffer regardless of what
-``g_late_hit_window_ms`` is set to. Setting the ms cap above this ceiling is silently
-clamped to it; one practical use is to set ``g_late_hit_window_ms`` to a large value
-so that the fraction cap alone governs the effective window at all normal playing
-tempos (set ``g_late_hit_max_quant_unit_fraction`` to the desired cycle fraction and
-leave the ms cap at something like 2000).
-
-OSC Control
-~~~~~~~~~~~
-
-``late_hit_window_ms``, ``late_hit_max_quant_unit_fraction``,
-``record_failsafe_seconds`` (see *New Feature: record_failsafe* above),
-and ``mute_late_hit_ms`` (see *New Feature: mute/unmute late-hit
-correction* above) can all be read and changed live over OSC, in
-addition to editing the session file. They are reachable through the
-engine's existing generic global parameter mechanism -- the same
-``/set "sf"`` / ``/get "sss"`` methods already used for ``tempo``,
-``eighth_per_cycle``, ``smart_eighths``, and other ``<Globals>`` values:
-
-.. code-block::
-
-    /set  s:param  f:value                     -- no reply
-    /get  s:param  s:return_url  s:return_path  -- replies to return_path
-                                                    with  i:-2  s:param  f:value
-
-For example, to read and then set the record failsafe over OSC from a
-client at ``osc.udp://127.0.0.1:9999/`` listening on ``/reply``::
-
-    /get "record_failsafe_seconds" "osc.udp://127.0.0.1:9999/" "/reply"
-    /set "record_failsafe_seconds" 45.0
-
-A negative value sent to ``/set`` for any of the four is silently ignored
-(the value is left unchanged) -- the same ``value >= 0.0f`` guard
-``load_session`` already applies to the session-file keys, needed because
-a negative float would otherwise reach an ``(unsigned long)`` cast in
-``plugin.cc``'s threshold checks.
-
-This is a smaller step than full OSC/GUI exposure: no ``command_map.cpp``
-``add_global_control`` registration and no LADSPA port were added for any
-of the four (see *Why Not a LADSPA Port* below), so none of them appear
-in ``slgui``, and OSC's ``/register_auto_update`` push-on-change mechanism
--- which keys a listener's registration off ``CommandMap::to_control_t()``
--- will not target them by name. Plain ``/set``/``/get`` are unaffected by
-that limitation.
-
-Why Not a LADSPA Port
-~~~~~~~~~~~~~~~~~~~~~
-
-Every other engine parameter travels through the LADSPA port system: ``looper.cpp``
-allocates a float, calls ``connect_port()``, and ``plugin.cc`` reads it via a pointer on
-``SooperLooperI``. That is the correct mechanism for a value that needs full GUI exposure
-(a slider in ``slgui``) or push-on-change OSC updates.
-
-``g_late_hit_window_ms``, ``g_late_hit_max_quant_unit_fraction``,
-``g_record_failsafe_seconds``, and ``g_mute_late_hit_ms`` are
-intentionally **not** LADSPA ports. Each is a plain
-file-scope global in ``plugin.cc``, declared ``extern`` in ``engine.cpp``, written during
-session load from the ``<Globals>`` node, and also reachable through the engine's generic
-``/set``/``/get`` dispatch (see *OSC Control* above). This still avoids
-the LADSPA port descriptor table and ``slgui`` wiring. The trade-off is that it only works
-in the standalone build where both translation units share an address space. When
-``plugin.cc`` is loaded as a true LADSPA plugin inside a DAW, ``engine.cpp`` is absent and
-the value stays at the compile-time default for the session, which is acceptable
-behaviour. If any of the four is ever promoted to a GUI control, the correct migration
-path is to add a proper LADSPA port and remove the global.
-
 
 New Tool: ``slbigstate``
 --------------------------
@@ -896,7 +825,7 @@ struct layout visible to multiple translation units; the two ``ALB_`` flags in
      - Compile-time initial value for ``g_record_failsafe_seconds``.  ``0``
        means the failsafe ships **off**; a record left running in
        ``STATE_RECORD`` past this many seconds auto-fires
-       ``cancel_record_mute``'s branch (see *New Feature: record_failsafe*
+       ``cancel_record_mute``'s branch (see `New Feature: record_failsafe`_
        above).  Overridden at runtime by the session file or OSC ``/set``.
    * - ``LATE_HIT_MULTIPLY_CORRECTION``
      - ``plugin.cc``
@@ -908,8 +837,8 @@ struct layout visible to multiple translation units; the two ``ALB_`` flags in
      - ``plugin.cc``
      - ``100.0f``
      - Compile-time initial value for ``g_mute_late_hit_ms``.  On by
-       default, matching ``LATE_HIT_WINDOW_MS`` exactly (see *New
-       Feature: mute/unmute late-hit correction* above for why this
+       default, matching ``LATE_HIT_WINDOW_MS`` exactly (see `New
+       Feature: mute/unmute late-hit correction`_ above for why this
        defaults on rather than off, unlike ``record_failsafe``).  ``0``
        disables the correction entirely.  Overridden at runtime by the
        session file or OSC ``/set``.
@@ -918,8 +847,8 @@ struct layout visible to multiple translation units; the two ``ALB_`` flags in
      - ``1``
      - When 1 (default), a stock 1.7.9 bug fix is active: quantized
        Pause from Muted correctly resolves to Paused instead of
-       Playing (see *New Fix: quantized Pause from Muted now resolves
-       to Paused* above).  Set to 0 to revert to exact stock (buggy)
+       Playing (see `Quantized Pause from Muted Now Resolves to
+       Paused`_ in the appendix, below).  Set to 0 to revert to exact stock (buggy)
        behaviour.  Unlike the other flags/globals here, this is a bug
        fix with an escape hatch, not a tunable parameter -- no
        session-file or OSC equivalent.
@@ -964,6 +893,122 @@ struct layout visible to multiple translation units; the two ``ALB_`` flags in
        BBT fields are absent from ``TransportInfo`` and ``generate_sync()``
        uses the stock ``fmod(framepos, _tempo_frames)`` arithmetic in all
        cases — identical to stock SooperLooper 1.7.9 JackSync behaviour.
+
+Appendix: Minor Fixes and Implementation Details
+--------------------------------------------------
+
+Smaller corrections, design notes, and implementation-level detail that
+don't carry the same weight as the main narrative above -- collected here
+so they don't crowd the sections a first-time reader actually needs.
+
+``cancel_record_mute`` Implementation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A state-based remap in ``plugin.cc`` (the same idiom as ``MULTI_MUTE_ON``),
+rewriting ``lMultiCtrl`` rather than adding a dispatch case:
+
+- ``STATE_RECORD`` -> set ``wasMuted``, set the four mute fade deltas, remap
+  to ``MULTI_UNDO``.  The existing undo body then lands in ``STATE_MUTE``.
+- ``STATE_TRIG_START`` -> cancel in place (clear ``waitingForSync`` /
+  ``nextState``, restore state from ``headLoopChunk``) and set
+  ``lMultiCtrl = -1``.  It must **not** remap to ``MULTI_UNDO``: no chunk is
+  pushed on the pending path (``pushNewLoopChunk`` lives in the late-hit
+  branch only), so the undo would pop the existing take.
+- anything else -> ``lMultiCtrl = -1``.
+
+The fade deltas mirror ``transitionToNext``'s ``STATE_MUTE`` case, including
+the ``*Src*`` pair.  Setting only the non-Src pair leaves stale source-loop
+gains that corrupt a later ``MULTIPLY`` (``beginMultiply`` sets no fade
+deltas of its own; ``beginOverdub`` does, which is why overdub is immune).
+
+Files: ``event.hpp`` (enum appended before ``LAST_COMMAND``),
+``command_map.cpp`` (one line -- OSC and ``.slb`` bindings follow
+automatically), ``plugin.cc`` (``#define``, drift ``static_assert``\ s, the
+remap branch).
+
+.. warning::
+
+   The enum **must** be appended at the end.  ``plugin.cc`` hardcodes
+   ``MULTI_UNDO``..``MULTI_PAUSE_OFF`` as integer literals 0-23 mirroring the
+   first 24 ``Event::command_t`` values; inserting inside that range shifts
+   the enum but not the literals, silently remapping commands **with no
+   compile error**.  Six ``static_assert``\ s now guard this.
+
+
+Quantized Pause from Muted Now Resolves to Paused
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**A stock SooperLooper 1.7.9 bug, not introduced by this fork** --
+confirmed present verbatim in the untouched upstream reference copy
+kept in this tree. Found by accident while testing the mute/unmute
+late-hit feature earlier in this document, then fixed on its own merits since it is
+unrelated to late-hit correction.
+
+**The bug:** with mute-quantize on and sync active, pressing Pause while
+a loop is Muted has to wait for the next sync boundary before acting --
+the same "wait for sync" mechanism mute-quantize always uses. Once that
+boundary arrived, the loop ended up **Playing**, not **Paused**. The
+performer pressed Pause and got audible playback instead.
+
+**Why this was confidently a bug, not intended behaviour:** SooperLooper
+already handles this exact transition correctly when it acts
+*immediately* (mute-quantize off, or sync/quantize off) -- pressing
+Pause while Muted goes straight to Paused, explicitly, and the reverse
+(pressing Mute while Paused) goes straight back to Muted, also
+explicitly. Both directions, named in the code, deliberate. The
+*deferred* "wait for sync" version of the same logic only implemented
+one of those two symmetric directions; the other silently fell through
+to the same generic branch used for an ordinary unmute. Quantization is
+only supposed to delay *when* an action happens, never change *what*
+the action resolves to -- a deferred press and an immediate press
+pressing the same button in the same state should always end up in the
+same place, just possibly later. Implementing only one of two mirrored
+cases the code already implements immediately above is the signature of
+an omission made when that deferred branch was originally written, not
+a deliberate design choice.
+
+**The fix has two parts.** The obvious one -- adding the missing case so
+a deferred Mute->Pause resolves to Paused -- turned out to have a
+non-obvious second half: the engine also tracks whether a loop *was*
+muted before it changed state, so that a later Undo can correctly put it
+back in Mute rather than Play. That tracking needed fixing too, or the
+primary fix alone would have landed in the right state but with an Undo
+fired later resuming to the wrong place. Both parts sit inside the same
+generic function the engine already uses for every other deferred state
+transition, so the fix is small and self-contained -- about four lines
+total, not counting the safety switch below.
+
+**Guarded by a compile-time flag, off if wanted.** ``PAUSE_FROM_MUTE_FIX``
+(``plugin.cc``, default ``1``) wraps both parts, matching
+``LATE_HIT_MULTIPLY_CORRECTION``'s own established role in this file: a
+correction with its own independent escape hatch, in case it ever needs
+pulling without touching anything else. Set it to ``0`` and rebuild to
+revert to exact stock (buggy) behaviour. This is compile-time, not a
+session-file/OSC value like the four late-hit globals -- there is nothing to
+tune, only a bug to have fixed or not, so a rebuild-time switch fits
+better than a runtime one.
+
+Why Not a LADSPA Port
+~~~~~~~~~~~~~~~~~~~~~
+
+Every other engine parameter travels through the LADSPA port system: ``looper.cpp``
+allocates a float, calls ``connect_port()``, and ``plugin.cc`` reads it via a pointer on
+``SooperLooperI``. That is the correct mechanism for a value that needs full GUI exposure
+(a slider in ``slgui``) or push-on-change OSC updates.
+
+``g_late_hit_window_ms``, ``g_late_hit_max_quant_unit_fraction``,
+``g_record_failsafe_seconds``, and ``g_mute_late_hit_ms`` are
+intentionally **not** LADSPA ports. Each is a plain
+file-scope global in ``plugin.cc``, declared ``extern`` in ``engine.cpp``, written during
+session load from the ``<Globals>`` node, and also reachable through the engine's generic
+``/set``/``/get`` dispatch (see `OSC Control`_ earlier in this document). This still avoids
+the LADSPA port descriptor table and ``slgui`` wiring. The trade-off is that it only works
+in the standalone build where both translation units share an address space. When
+``plugin.cc`` is loaded as a true LADSPA plugin inside a DAW, ``engine.cpp`` is absent and
+the value stays at the compile-time default for the session, which is acceptable
+behaviour. If any of the four is ever promoted to a GUI control, the correct migration
+path is to add a proper LADSPA port and remove the global.
+
 
 Glossaries
 ----------
