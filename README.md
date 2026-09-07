@@ -13,7 +13,7 @@ a fraction of the current quantize cycle, and is configurable via the
 session file or live over OSC. Also fixes a stock 1.7.9 bug where a
 quantized Pause press while Muted resolved to Playing instead of Paused.
 
-**`cancel_record_mute` and `record_failsafe`.**  Plain `record` already
+**`cancel_record_mute` and record failsafe.**  Plain `record` already
 carries a loop from recording into play on its own — that part needs
 nothing new.  What `cancel_record_mute` adds is a clean way to stop that
 play again — the same job `mute_trigger` would do — without needing a
@@ -27,7 +27,7 @@ more control to remember under performance pressure.  Internally
 `cancel_record_mute` works by discarding the take and restoring the
 previous loop muted, but that's implementation, not intent — the performer
 isn't undoing a mistake, they're choosing to stop play in favor of
-silence, on the same pedal.  A companion setting, `record_failsafe` (off by
+silence, on the same pedal.  A companion setting, record failsafe (off by
 default), covers the
 case where that second trigger never comes at all — a record simply left
 running too long, with no press of any kind.

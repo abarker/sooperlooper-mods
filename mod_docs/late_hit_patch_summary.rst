@@ -138,13 +138,13 @@ A concise inventory of all significant capabilities added to SooperLooper
 
 - **Record failsafe.**  If a record that interrupted an actively playing,
   unmuted loop is left running in ``STATE_RECORD`` for longer than
-  ``g_record_failsafe_seconds`` (default **0**, i.e. off), the engine
-  automatically fires the same ``cancel_record_mute`` branch, as if the
-  long press had arrived on its own.  Covers "nobody pressed anything at
-  all" for that case, which ``cancel_record_mute`` cannot, since it still
+  ``record_failsafe_seconds`` (default **0**, i.e. off), the engine
+  automatically fires the same ``cancel_record_mute`` branch, as if its
+  second trigger had arrived on its own.  Covers "nobody pressed anything
+  at all" for that case, which ``cancel_record_mute`` cannot, since it still
   requires a press.  Does **not** apply to a first/fresh recording of an
   empty loop, or one started from mute or pause.  See
-  `New Feature: record_failsafe`_.
+  `New Feature: record failsafe`_.
 
 - **Four globals, one persistence path.** ``late_hit_window_ms``,
   ``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds``, and
@@ -368,12 +368,12 @@ Implementation details -- the ``lMultiCtrl`` remap, the files touched, and
 the enum-ordering hazard -- are in `cancel_record_mute Implementation`_
 in the appendix.
 
-New Feature: ``record_failsafe``
+New Feature: record failsafe
 -----------------------------------
 
 If a record is left running in ``STATE_RECORD`` for longer than
-``g_record_failsafe_seconds``, the engine treats it exactly as if
-``cancel_record_mute``'s long press had just arrived: discard the take,
+``record_failsafe_seconds``, the engine treats it exactly as if
+``cancel_record_mute``'s second trigger had just arrived: discard the take,
 restore the previous loop, end muted.  **Not a new command** -- it is a
 second, automatic way to reach the same ``CANCEL_RECORD_MUTE`` branch
 described above, so it inherits that command's guard table and
@@ -394,7 +394,7 @@ recording of an empty loop, and does not fire for a record started from
 pressed, to ``(state == STATE_PLAY || state == STATE_ONESHOT)`` -- true only
 when an actively playing, audible loop existed and was unmuted at that
 instant. Rationale: the case actually worth an automatic safety net is the
-eager-single/long-press ambiguity ``cancel_record_mute`` itself is built
+eager-single/second-trigger ambiguity ``cancel_record_mute`` itself is built
 around -- a tap fires a real ``record`` immediately, and only a second
 trigger (long hold or double tap) retracts it, so a performer who meant to
 send that second trigger (or who gets distracted before resolving it
@@ -407,9 +407,9 @@ indefinitely, same as before this feature existed.
 **Known trade-off:** if the performer genuinely did mean to start a brand
 new take right after ending a loop's playback -- not an accidental eager
 single -- that new take's available record time is now bounded by
-``g_record_failsafe_seconds``, the same constraint the feature applies to
+``record_failsafe_seconds``, the same constraint the feature applies to
 every other take entering from an active, unmuted loop.  The engine cannot
-tell "meant to record" from "meant to long-press to mute" apart at the
+tell "meant to record" from "meant to trigger mute instead" apart at the
 moment the press lands, only from what happens afterward.
 
 Implementation: a sample counter, ``lRecordFailsafeSamples`` (a field on
@@ -464,10 +464,10 @@ loop's content is already sitting at the correct phase throughout), so
 this is a pure branch-selection decision -- immediate vs. wait -- not a
 backfill/trim operation.
 
-**Governed by its own window, ``g_mute_late_hit_ms``** (milliseconds,
-default ``100.0`` -- **on**, matching ``g_late_hit_window_ms``'s own
+**Governed by its own window** — ``mute_late_hit_ms`` (milliseconds,
+default ``100.0`` -- **on**, matching ``late_hit_window_ms``'s own
 default exactly). Deliberately a plain millisecond value with
-no cycle-fraction cap, unlike ``g_late_hit_window_ms`` above: the
+no cycle-fraction cap, unlike ``late_hit_window_ms`` above: the
 fraction cap exists there to keep a late *Record* press unambiguously
 attributed to one boundary before backfilling/trimming real audio --
 mute/unmute never touches buffer content, so that concern does not
@@ -475,12 +475,12 @@ apply, and an over-generous value only ever degrades gracefully
 (mute-quantize effectively bypassed at very fast tempos, never
 mis-corrected). A value of zero disables the feature entirely, matching the
 "0 disables" convention used throughout this patch. Independent of
-``g_late_hit_window_ms`` and ``g_record_failsafe_seconds`` -- can be
+``late_hit_window_ms`` and ``record_failsafe_seconds`` -- can be
 turned on or off, or tuned, without affecting either. Defaults on
-because, unlike ``record_failsafe`` (which can discard an entire take
+because, unlike record failsafe (which can discard an entire take
 with no press at all), this feature can only ever turn a "wait for the
 next boundary" into "act now" -- never lose content -- the same
-default-on reasoning ``g_late_hit_window_ms`` itself already uses.
+default-on reasoning ``late_hit_window_ms`` itself already uses.
 
 To disable, or to change the window, set ``mute_late_hit_ms`` (``0`` for
 off, any other value for the window in milliseconds) either in the
@@ -502,14 +502,14 @@ load/save, OSC get/set). No new ``Event::command_t``, no
 Record Late-Hit Window Size
 ----------------------------
 
-Covers the Record late-hit window (``g_late_hit_window_ms``/
-``g_late_hit_max_quant_unit_fraction``) specifically. The mute/unmute
-window, ``g_mute_late_hit_ms`` (above), is a separate, single plain-ms
+Covers the Record late-hit window (``late_hit_window_ms``/
+``late_hit_max_quant_unit_fraction``) specifically. The mute/unmute
+window, ``mute_late_hit_ms`` (above), is a separate, single plain-ms
 value with no fraction cap -- see its own section for why.
 
 The window size has two independent limits; the smaller of the two applies.
 
-**Millisecond cap** — ``g_late_hit_window_ms`` (default 100 ms). This is an absolute
+**Millisecond cap** — ``late_hit_window_ms`` (default 100 ms). This is an absolute
 ceiling on how late a press can be and still qualify for correction. Its value is saved in
 and loaded from the session file (``.slsess``) under the key ``late_hit_window_ms`` in
 the ``<Globals>`` node — the same node that holds ``tempo``, ``eighth_per_cycle``, and
@@ -517,7 +517,7 @@ other engine-level settings. To change it, edit the session file in a text edito
 restart the engine. If the key is absent (older session files), the compile-time default
 ``LATE_HIT_WINDOW_MS`` (100 ms) is used.
 
-**Fraction cap** — ``g_late_hit_max_quant_unit_fraction`` (default 100.0,
+**Fraction cap** — ``late_hit_max_quant_unit_fraction`` (default 100.0,
 which effectively disables the cap so the ms limit always governs).
 When set to a value less than 1.0, this limits the window to that fraction of
 one full quantize cycle at the current tempo and Eighths/Cycle setting, so the
@@ -525,7 +525,7 @@ correction window scales automatically rather than being a fixed duration.
 For example, 0.25 caps the window at 25 % of one cycle regardless of tempo.
 At slow tempos the ms cap is usually the binding limit; the fraction cap
 becomes the effective limit at faster tempos or larger cycle sizes where the
-cycle period falls below ``g_late_hit_window_ms``. Its value is stored in the
+cycle period falls below ``late_hit_window_ms``. Its value is stored in the
 session file under the key ``late_hit_max_quant_unit_fraction`` in the
 ``<Globals>`` node; if absent, the compile-time default
 ``LATE_HIT_MAX_QUANT_UNIT_FRACTION`` (100.0) is used.
@@ -534,17 +534,17 @@ Both limits are evaluated each buffer by ``effectiveLateHitWindow()`` in
 ``plugin.cc``, which returns the smaller value in samples. The ms cap is additionally clamped to
 ``lInputBufSize − 1`` (32767 samples, approximately 682 ms at 48 kHz), ensuring the
 window never exceeds the depth of the input ring buffer regardless of what
-``g_late_hit_window_ms`` is set to. Setting the ms cap above this ceiling is silently
-clamped to it; one practical use is to set ``g_late_hit_window_ms`` to a large value
+``late_hit_window_ms`` is set to. Setting the ms cap above this ceiling is silently
+clamped to it; one practical use is to set ``late_hit_window_ms`` to a large value
 so that the fraction cap alone governs the effective window at all normal playing
-tempos (set ``g_late_hit_max_quant_unit_fraction`` to the desired cycle fraction and
+tempos (set ``late_hit_max_quant_unit_fraction`` to the desired cycle fraction and
 leave the ms cap at something like 2000).
 
 OSC Control
 ~~~~~~~~~~~
 
 All four globals -- ``late_hit_window_ms``, ``late_hit_max_quant_unit_fraction``,
-``record_failsafe_seconds`` (see `New Feature: record_failsafe`_ above),
+``record_failsafe_seconds`` (see `New Feature: record failsafe`_ above),
 and ``mute_late_hit_ms`` (see `New Feature: mute/unmute late-hit
 correction`_ above) -- can all be read and changed live over OSC, in
 addition to editing the session file. They are reachable through the
@@ -841,7 +841,7 @@ it controls struct layout visible to multiple translation units; the two ``ALB_`
      - Compile-time initial value for ``g_record_failsafe_seconds``.  ``0``
        means the failsafe ships **off**; a record left running in
        ``STATE_RECORD`` past this many seconds auto-fires
-       ``cancel_record_mute``'s branch (see `New Feature: record_failsafe`_
+       ``cancel_record_mute``'s branch (see `New Feature: record failsafe`_
        above).  Overridden at runtime by the session file or OSC ``/set``.
    * - ``LATE_HIT_MULTIPLY_CORRECTION``
      - ``plugin.cc``
@@ -855,7 +855,7 @@ it controls struct layout visible to multiple translation units; the two ``ALB_`
      - Compile-time initial value for ``g_mute_late_hit_ms``.  On by
        default, matching ``LATE_HIT_WINDOW_MS`` exactly (see `New
        Feature: mute/unmute late-hit correction`_ above for why this
-       defaults on rather than off, unlike ``record_failsafe``).  ``0``
+       defaults on rather than off, unlike record failsafe).  ``0``
        disables the correction entirely.  Overridden at runtime by the
        session file or OSC ``/set``.
    * - ``PAUSE_FROM_MUTE_FIX``
@@ -1457,7 +1457,7 @@ Session File Key (``engine.cpp``)
 Architecture Notes
 ------------------
 
--  **Why ``lGlobalSamplesSinceSync`` instead of ``lSamplesSinceSync``:**
+-  **Why** ``lGlobalSamplesSinceSync`` **instead of** ``lSamplesSinceSync``:
    ``lSamplesSinceSync`` only increments during ``STATE_RECORD`` and ``STATE_PLAY``.
    Pressing Record from ``STATE_OFF`` gives a value of 0, which makes it impossible to
    distinguish an on-time press from a late one. The new counter runs in all states.
@@ -1471,13 +1471,13 @@ Architecture Notes
    directly is simpler and more robust than skipping the first *T* samples on every play
    pass with a per-play offset.
 
--  **Why ``dCurrPos += T`` rather than ``lFirstPlayOffset`` for late stop:** Detecting
+-  **Why** ``dCurrPos += T`` **rather than** ``lFirstPlayOffset`` **for late stop:** Detecting
    the "first wrap" reliably to apply a rewind proved fragile (the wrap check fires
    inside a ``recenter`` guard at the wrong moment). Advancing ``dCurrPos`` by *T* at
    entry to ``STATE_PLAY`` achieves the same correction with no wrap detection needed.
 
--  **Why a global for ``g_late_hit_window_ms`` rather than a LADSPA port:** See the "Why
-   Not a LADSPA Port" section above and the comment block in ``plugin.cc``. The short
+-  **Why a global for** ``g_late_hit_window_ms`` **rather than a LADSPA port:** See
+   `Why Not a LADSPA Port`_ above and the comment block in ``plugin.cc``. The short
    version: it is a setup-time preference, not a real-time control, and avoiding the port
    system keeps the change entirely within ``plugin.cc`` and ``engine.cpp``.
 
@@ -1489,7 +1489,7 @@ Architecture Notes
    this maps to offset ``lInputBufWritePos − T + i``, so ``readPos = lInputBufWritePos −
    T``. The ``lInputLatency`` term cancels exactly.
 
--  **Why ``lLastSyncPeriodSamples`` is seeded from tempo rather than measured pulses:**
+-  **Why** ``lLastSyncPeriodSamples`` **is seeded from tempo rather than measured pulses:**
    The sync bus carries two kinds of pulses above the 1.5 threshold: the true beat
    boundaries and lower-amplitude loop-coordination signals. Seeding from ``fTempo``
    (BLOCK 7) gives a period that is immune to these sub-threshold pulses, while BLOCK 8
@@ -1514,7 +1514,7 @@ Known Issues and Future Work
 
 -  **Window size and sample rate:** the effective maximum window is
    ``(lInputBufSize − 1) / fSampleRate`` seconds — approximately 682 ms at 48 kHz,
-   743 ms at 44.1 kHz, 341 ms at 96 kHz. Setting ``g_late_hit_window_ms`` above this
+   743 ms at 44.1 kHz, 341 ms at 96 kHz. Setting ``late_hit_window_ms`` above this
    value is silently clamped; it effectively makes the fraction cap dominant for all
    musically relevant tempos. To raise the ceiling, increase ``lInputBufSize`` in
    ``instantiate()`` (inexpensive: 128 KB per channel at 48 kHz).
@@ -1545,7 +1545,7 @@ Known Issues and Future Work
    user changes the sync source. This prevents stale period measurements from the old
    source affecting the first presses on the new one.
 
--  **``SYNCWDEBUG`` is off by default.** Uncomment ``//#define SYNCWDEBUG``
+-  ``SYNCWDEBUG`` **is off by default.** Uncomment ``//#define SYNCWDEBUG``
    in ``plugin.cc`` to enable all debug output.  When enabled:
 
    - ``/tmp/sl_loaded.txt`` is written at binary-load time confirming the
