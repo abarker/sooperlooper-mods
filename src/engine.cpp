@@ -116,6 +116,38 @@ extern float g_mute_late_hit_ms;
 
 #define TEMPO_DIFF(t1, t2) (fabs(t1-t2) > 0.000001)
 
+//------ albBegin ----------------------------------
+#ifdef ALB_SYNC_PULSE_LOG
+// Portable log-file resolution for ALB_SYNC_PULSE_LOG (see engine.hpp),
+// matching the existing sl_dbg_open() convention in plugin.cc: try /tmp
+// first (present on every POSIX system), then $HOME, so this works for
+// anyone who enables the flag -- not just this rig's own
+// ~/ardour/freeze_logs/ convention, which most builds of this fork will
+// not have.
+//
+// Deliberately does NOT fall back to stderr the way plugin.cc's debug
+// log does: pulses fire continuously (a few times a second) for the
+// entire time transport is rolling, so a full session's worth
+// interleaved into stderr would be disruptive in a way plugin.cc's
+// per-button-press messages are not. If neither location is writable,
+// logging is simply disabled for that run -- the caller warns once.
+static FILE*
+alb_sync_pulse_log_open ()
+{
+	FILE* f = std::fopen ("/tmp/sl_sync_pulse.log", "a");
+	if (!f) {
+		const char* home = getenv ("HOME");
+		if (home) {
+			char path[512];
+			snprintf (path, sizeof(path), "%s/sl_sync_pulse.log", home);
+			f = std::fopen (path, "a");
+		}
+	}
+	return f;
+}
+#endif // ALB_SYNC_PULSE_LOG
+//------ albEnd ----------------------------------
+
 //#define DEBUG 1
 
 Engine::Engine ()
@@ -271,10 +303,10 @@ bool Engine::initialize(AudioDriver * driver, int buschans, int port, string pin
 	//------ albBegin ----------------------------------
 #ifdef ALB_SYNC_PULSE_LOG
 	_sync_pulse_log_queue = new RingBuffer<SyncPulseLogEvent> (MAX_SYNC_PULSE_LOG_EVENTS);
-	_sync_pulse_log_file = std::fopen (ALB_SYNC_PULSE_LOG_PATH, "a");
+	_sync_pulse_log_file = alb_sync_pulse_log_open ();
 	if (!_sync_pulse_log_file) {
-		cerr << "SooperLooper: WARNING: could not open sync pulse log '"
-		     << ALB_SYNC_PULSE_LOG_PATH << "' -- pulse logging disabled this run."
+		cerr << "SooperLooper: WARNING: could not open a sync pulse log "
+		        "(tried /tmp and $HOME) -- pulse logging disabled this run."
 		     << endl;
 	}
 #endif

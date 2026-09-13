@@ -65,17 +65,20 @@ typedef struct _jack_port jack_port_t;
 // Fully additive: no pulse-placement arithmetic is changed anywhere. Purely
 // observes existing values and writes them out.
 //
-// WHEN DEFINED (default): pulses are logged to ALB_SYNC_PULSE_LOG_PATH.
-// WHEN NOT DEFINED: none of this struct/queue/file exists -- comment out
-// to remove entirely at compile time, no other change needed.
-#define ALB_SYNC_PULSE_LOG
-
-#ifdef ALB_SYNC_PULSE_LOG
-// Fixed path is consistent with this rig's existing freeze_logs/ convention
-// (see start.py's MIDI_REMAPPER_LOG_FILENAME); change here if a different
-// destination is wanted.
-#define ALB_SYNC_PULSE_LOG_PATH "/tmp/sl_sync_pulse.log"
-#endif
+// Log destination: resolved at runtime by alb_sync_pulse_log_open() in
+// engine.cpp, matching the portable /tmp-then-$HOME convention plugin.cc's
+// sl_dbg_open() already established for SYNCWDEBUG -- NOT a fixed personal
+// path, so this works on any build, not just this rig's own
+// ~/ardour/freeze_logs/ convention (most builds of this fork will not have
+// that directory).
+//
+// Default is DISABLED (commented out), matching plugin.cc's own
+// SYNCWDEBUG convention for exactly this kind of opt-in diagnostic --
+// uncomment to enable for a debugging session.
+// WHEN DEFINED: pulses are logged as described above.
+// WHEN NOT DEFINED (default): none of this struct/queue/file exists --
+// nothing is compiled in, no file is ever opened.
+//#define ALB_SYNC_PULSE_LOG
 //------ albEnd ----------------------------------
 
 namespace SooperLooper {
