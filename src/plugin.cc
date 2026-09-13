@@ -268,16 +268,30 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 //====== albBegin ==================================================================================
 // SYNCWDEBUG: master switch for ALL debug output in this file.
 // When defined:
-//   - /tmp/sl_loaded.txt is written at binary-load time.
-//   - /tmp/sl_debug.log (or ~/sl_debug.log) is opened on first SL_LOG call.
+//   - a sentinel file is written at binary-load time.
+//   - a log file is opened on first SL_LOG call.
 //   - SL_LOG startup banners (instantiate/activate) go to the log file.
 //   - SYNCWDBG(SL_LOG_RT(...)) per-press messages go to the log file with
 //     an fflush() after each write (immediate, crash-safe, but RT-blocking).
 // When NOT defined (default):
-//   - No files are created in /tmp or ~.
+//   - No files are created.
 //   - SL_LOG and SL_LOG_RT expand to nothing.
 //   - SYNCWDBG(...) expands to nothing.
 //   - The only output is the session-load fprintf(stderr,...) in engine.cpp.
+//
+// Both files land in $HOME/.sooperlooper/logs/ (created if it does not
+// already exist yet) -- SooperLooper's own per-user directory, per the
+// "look for ... in ~/.sooperlooper/bindings/" TODO already present
+// upstream (predating this fork) in midi_bind.cpp and engine.cpp. Uses
+// the same directory as engine.cpp's ALB_SYNC_PULSE_LOG, deliberately:
+// one place to remember for any SooperLooper-generated diagnostic
+// output, rather than two. This is unlike the rig's separate Python
+// tooling logs (the MIDI remapper, pw-top monitor, etc.) -- a different
+// program's data, which stays in its own ~/ardour/freeze_logs/ location;
+// see mod_docs/ROADMAP.rst entry 8 for why those were deliberately NOT
+// folded in here. Falls back to /tmp if $HOME is unset or the directory
+// could not be created, same fallback engine.cpp's
+// alb_sync_pulse_log_open() uses.
 //
 // Default is DISABLED (commented out) to avoid xruns in performance builds.
 // Uncomment to enable all diagnostics for debugging.
@@ -290,10 +304,50 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 //====== albEnd ====================================================================================
 
 /*****************************************************************************/
+// Resolves (creating if necessary) $HOME/.sooperlooper/logs/<name>,
+// writing the full path into out (of size outsz). Returns false (out
+// left untouched) if $HOME is unset or the directory could not be
+// created/verified, in which case callers fall back to /tmp themselves.
+//
+// Deliberately NOT shared with engine.cpp's own version of this logic
+// (alb_sync_pulse_log_open()): plugin.cc is written to remain usable
+// standalone, as a bare LADSPA plugin loaded by a host with no
+// engine.cpp/looper.cpp in the same address space (see the
+// g_late_hit_window_ms comment above), so it takes on no new
+// cross-translation-unit dependency just for this.
+//
+// Only ever called from non-RT contexts (the load-time static
+// initializer below, and the first SL_LOG call, which always happens
+// before instantiate()/activate() and thus before the JACK RT callback
+// starts), so the mkdir()/stat() calls here carry no RT-safety concern.
+#ifdef SYNCWDEBUG
+#include <sys/stat.h>
+static bool
+sl_sooperlooper_log_path (char* out, size_t outsz, const char* name)
+{
+    const char* home = getenv ("HOME");
+    if (!home) {
+        return false;
+    }
+    char dir[512];
+    struct stat st;
+    snprintf (dir, sizeof(dir), "%s/.sooperlooper", home);
+    mkdir (dir, 0755);  // ignore failure (e.g. EEXIST) -- checked below
+    snprintf (dir, sizeof(dir), "%s/.sooperlooper/logs", home);
+    mkdir (dir, 0755);
+    if (stat (dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
+        return false;
+    }
+    snprintf (out, outsz, "%s/%s", dir, name);
+    return true;
+}
+#endif // SYNCWDEBUG
+
+/*****************************************************************************/
 // Static initializer: runs when the binary/library is loaded, before any
 // plugin functions are called.  Writes to multiple locations so at least
 // one will be visible regardless of how the process is launched.
-// Gated on SYNCWDEBUG: in production builds no files are written to /tmp.
+// Gated on SYNCWDEBUG: in production builds no files are written.
 static struct SL_LoadProbe {
     SL_LoadProbe() {
 #ifdef SYNCWDEBUG
@@ -301,14 +355,13 @@ static struct SL_LoadProbe {
         // The late-hit window value is NOT printed here: g_late_hit_window_ms
         // has not yet been overwritten by the session file at binary-load time.
         // The actual runtime value is logged by looper.cpp after session load.
-        FILE* f = fopen("/tmp/sl_loaded.txt", "w");
+        char path[768];
+        FILE* f = 0;
+        if (sl_sooperlooper_log_path (path, sizeof(path), "sl_loaded.txt")) {
+            f = fopen (path, "w");
+        }
         if (!f) {
-            const char* home = getenv("HOME");
-            if (home) {
-                char path[512];
-                snprintf(path, sizeof(path), "%s/sl_loaded.txt", home);
-                f = fopen(path, "w");
-            }
+            f = fopen ("/tmp/sl_loaded.txt", "w");
         }
         if (f) {
             fprintf(f, "SooperLooper experimental binary (late-hit patch) loaded\n");
@@ -322,7 +375,7 @@ static struct SL_LoadProbe {
 // Debug log file for the experimental late-hit window patch.
 // The entire infrastructure below is compiled only when SYNCWDEBUG is defined.
 // When SYNCWDEBUG is not defined, SL_LOG and SL_LOG_RT expand to nothing and
-// no log file or /tmp file is ever created.
+// no log file is ever created.
 //
 // WARNING (when enabled): SL_LOG_RT calls fflush() on every button press.
 // fflush() acquires the C stdio mutex and issues a kernel write() syscall,
@@ -330,20 +383,18 @@ static struct SL_LoadProbe {
 // post-crash log recovery but WILL increase xrun risk.  Only enable
 // SYNCWDEBUG in debug builds; never in a live-performance build.
 #ifdef SYNCWDEBUG
-// Tries /tmp/sl_debug.log first, then ~/sl_debug.log, then falls back to stderr.
+// Tries $HOME/.sooperlooper/logs/sl_debug.log first, then /tmp/sl_debug.log,
+// then falls back to stderr.
 static FILE* sl_dbg_file = NULL;
 
 static void sl_dbg_open() {
     if (!sl_dbg_file) {
-        sl_dbg_file = fopen("/tmp/sl_debug.log", "w");  // "w" not "a": fresh file on each startup
+        char path[768];
+        if (sl_sooperlooper_log_path (path, sizeof(path), "sl_debug.log")) {
+            sl_dbg_file = fopen(path, "w");  // "w" not "a": fresh file on each startup
+        }
         if (!sl_dbg_file) {
-            // try home directory
-            const char* home = getenv("HOME");
-            if (home) {
-                char path[512];
-                snprintf(path, sizeof(path), "%s/sl_debug.log", home);
-                sl_dbg_file = fopen(path, "w");
-            }
+            sl_dbg_file = fopen("/tmp/sl_debug.log", "w");
         }
         if (!sl_dbg_file) {
             sl_dbg_file = stderr;
@@ -367,7 +418,7 @@ static void sl_dbg_open() {
 // Use SYNCWDBG(SL_LOG_RT(...)) to wrap all RT-path log calls so they
 // compile away completely when SYNCWDEBUG is not defined.
 #define SL_LOG_RT(...) do { if (sl_dbg_file) { fprintf(sl_dbg_file, __VA_ARGS__); fflush(sl_dbg_file); } } while(0)
-#else  // SYNCWDEBUG not defined — no logging, no /tmp files
+#else  // SYNCWDEBUG not defined — no logging, no files created
 #define SL_LOG(...)    do { } while(0)
 #define SL_LOG_RT(...) do { } while(0)
 #endif // SYNCWDEBUG

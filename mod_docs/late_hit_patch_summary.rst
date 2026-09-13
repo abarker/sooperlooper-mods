@@ -810,9 +810,12 @@ Compile-Time Flags
 
 All flags are collected here for reference.  Each is also documented at its
 definition site.  Flags in ``plugin.cc`` are purely local to that translation
-unit.  One flag, ``ALB_BBT_SYNC``, is defined in ``audio_driver.hpp`` because
-it controls struct layout visible to multiple translation units; the two ``ALB_`` flags in
-``engine.cpp`` are local to that file.
+unit.  Two flags are defined in headers rather than the ``.cpp``/``.cc``
+files they primarily affect: ``ALB_BBT_SYNC`` in ``audio_driver.hpp``,
+because it controls struct layout visible to multiple translation units,
+and ``ALB_SYNC_PULSE_LOG`` in ``engine.hpp``, for the same reason (it adds
+a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING`` and
+``ALB_RT_SAFE_COND_SIGNAL`` are local to ``engine.cpp``.
 
 .. list-table::
    :header-rows: 1
@@ -871,12 +874,17 @@ it controls struct layout visible to multiple translation units; the two ``ALB_`
    * - ``SYNCWDEBUG``
      - ``plugin.cc``
      - *(commented out)*
-     - Master switch for ALL debug output.  When defined: ``/tmp/sl_loaded.txt``
-       is written at binary-load time; ``/tmp/sl_debug.log`` is created and
-       ``SL_LOG`` startup banners are written to it; ``SYNCWDBG()`` /
-       ``SL_LOG_RT()`` per-press messages are written with an ``fflush()`` after
-       every call.  When **not** defined (default): no files in ``/tmp`` or
-       ``~`` are created; ``SL_LOG`` and ``SL_LOG_RT`` expand to nothing;
+     - Master switch for ALL debug output.  When defined: a sentinel
+       (``sl_loaded.txt``) is written at binary-load time; a debug log
+       (``sl_debug.log``) is created and ``SL_LOG`` startup banners are
+       written to it; ``SYNCWDBG()`` / ``SL_LOG_RT()`` per-press messages are
+       written with an ``fflush()`` after every call.  Both files land in
+       ``$HOME/.sooperlooper/logs/`` (created if it does not already exist --
+       SooperLooper's own per-user directory, same one ``ALB_SYNC_PULSE_LOG``
+       below uses), falling back to ``/tmp`` if ``$HOME`` is unset or that
+       directory can't be created; the debug log falls back further to
+       ``stderr`` as a last resort.  When **not** defined (default): no files
+       are created at all; ``SL_LOG`` and ``SL_LOG_RT`` expand to nothing;
        ``SYNCWDBG(...)`` expands to nothing; the only unconditional output is
        the ``fprintf(stderr, ...)`` banner in ``engine.cpp`` after session load.
        Must be commented out in any production / performance build.  When
@@ -909,6 +917,19 @@ it controls struct layout visible to multiple translation units; the two ``ALB_`
        BBT fields are absent from ``TransportInfo`` and ``generate_sync()``
        uses the stock ``fmod(framepos, _tempo_frames)`` arithmetic in all
        cases — identical to stock SooperLooper 1.7.9 JackSync behaviour.
+   * - ``ALB_SYNC_PULSE_LOG``
+     - ``engine.hpp``
+     - defined
+     - **When defined (default):** logs one line per actual JackSync
+       cycle-boundary pulse (frame, beat/tick/bpm, which formula path fired)
+       to ``$HOME/.sooperlooper/logs/sl_sync_pulse.log`` (created if needed,
+       falling back to ``/tmp`` only if ``$HOME`` is unset) -- a diagnostic
+       for the open eighth-note off-beat sync investigation (ROADMAP entry
+       8).  RT side only pushes a POD through a lock-free ``RingBuffer``,
+       same pattern as ``_sync_queue``; the actual file write happens on the
+       non-RT ``mainloop()`` thread, never the RT callback.  **When not
+       defined:** none of this struct/queue/file exists; nothing is
+       compiled in.
 
 Appendix: Minor Fixes and Implementation Details
 --------------------------------------------------
@@ -1140,8 +1161,9 @@ SooperLooper variables whose roles are clarified here because the patch depends 
    * - ``sl_dbg_file``
      - **[NEW]**
      - ``static FILE*``
-     - Handle for the debug log file (``/tmp/sl_debug.log`` or ``~/sl_debug.log``). Opened
-       lazily by ``sl_dbg_open()``.  Only declared and used when ``SYNCWDEBUG`` is
+     - Handle for the debug log file (``$HOME/.sooperlooper/logs/sl_debug.log``,
+       falling back to ``/tmp/sl_debug.log``, then ``stderr``). Opened lazily
+       by ``sl_dbg_open()``.  Only declared and used when ``SYNCWDEBUG`` is
        defined; absent entirely in production builds.
    * - ``SL_LOG(...)``
      - **[NEW]**
@@ -1163,10 +1185,12 @@ SooperLooper variables whose roles are clarified here because the patch depends 
      - **[NEW]**
      - ``#define`` (flag)
      - Master switch for ALL debug output in ``plugin.cc``.  When defined, enables
-       ``/tmp/sl_loaded.txt``, ``/tmp/sl_debug.log``, startup banners, and per-press
-       diagnostics.  When not defined (default): all ``SL_LOG`` / ``SL_LOG_RT`` /
-       ``SYNCWDBG`` calls expand to nothing; no ``/tmp`` files are written.  Commented
-       out by default; must remain disabled in any performance build.
+       the ``sl_loaded.txt`` sentinel, ``sl_debug.log``, startup banners, and
+       per-press diagnostics, all under ``$HOME/.sooperlooper/logs/`` (falling
+       back to ``/tmp``).  When not defined (default): all ``SL_LOG`` /
+       ``SL_LOG_RT`` / ``SYNCWDBG`` calls expand to nothing; no files are
+       written.  Commented out by default; must remain disabled in any
+       performance build.
    * - ``SYNCWDBG(x)``
      - **[NEW]**
      - macro
@@ -1176,9 +1200,10 @@ SooperLooper variables whose roles are clarified here because the patch depends 
      - **[NEW]**
      - ``static struct SL_LoadProbe``
      - C++ static initialiser that fires when the binary is loaded (before ``main``).
-       When ``SYNCWDEBUG`` is defined, writes ``/tmp/sl_loaded.txt`` confirming the
-       experimental build is running.  When ``SYNCWDEBUG`` is not defined the
-       constructor body is empty and no files are written.
+       When ``SYNCWDEBUG`` is defined, writes a ``sl_loaded.txt`` sentinel
+       (under ``$HOME/.sooperlooper/logs/``, falling back to ``/tmp``)
+       confirming the experimental build is running.  When ``SYNCWDEBUG`` is
+       not defined the constructor body is empty and no files are written.
 
 
 Fields on ``SooperLooperI`` (``plugin.hpp``)
@@ -1548,17 +1573,21 @@ Known Issues and Future Work
 -  ``SYNCWDEBUG`` **is off by default.** Uncomment ``//#define SYNCWDEBUG``
    in ``plugin.cc`` to enable all debug output.  When enabled:
 
-   - ``/tmp/sl_loaded.txt`` is written at binary-load time confirming the
-     experimental build is running.
-   - ``/tmp/sl_debug.log`` is created (falling back to ``~/sl_debug.log`` if
-     ``/tmp`` is not writable) and overwritten fresh on each engine start.
+   - a ``sl_loaded.txt`` sentinel is written at binary-load time confirming
+     the experimental build is running.
+   - ``sl_debug.log`` is created and overwritten fresh on each engine
+     start. Both files land in ``$HOME/.sooperlooper/logs/`` (created if it
+     does not already exist -- SooperLooper's own per-user directory, the
+     same one ``ALB_SYNC_PULSE_LOG`` uses), falling back to ``/tmp`` if
+     ``$HOME`` is unset or that directory can't be created; the debug log
+     falls back further to ``stderr`` as a last resort.
    - ``SL_LOG`` startup banners (instantiate, activate) go to the log file.
    - ``SYNCWDBG()``-wrapped ``SL_LOG_RT()`` calls write per-press timing
      diagnostics to the same file.
 
    To watch the log in real time::
 
-       tail -f /tmp/sl_debug.log
+       tail -f ~/.sooperlooper/logs/sl_debug.log
 
    When ``SYNCWDEBUG`` is enabled, ``SL_LOG_RT`` calls ``fflush()`` after
    every write.  This forces an immediate kernel ``write()`` syscall on every

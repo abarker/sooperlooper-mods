@@ -66,18 +66,18 @@ typedef struct _jack_port jack_port_t;
 // observes existing values and writes them out.
 //
 // Log destination: resolved at runtime by alb_sync_pulse_log_open() in
-// engine.cpp -- NOT a fixed personal path. Unlike plugin.cc's SYNCWDEBUG
-// debug log (deliberately session-local, truncated fresh every run),
-// this is data that benefits from accumulating across many sessions: a
-// long baseline of "normal" pulse behaviour is what lets a genuine
-// anomaly stand out, and only a persistent log can show the same
-// anomaly recurring across multiple nights. So it prefers durable
-// storage over merely-portable storage: $HOME/ardour/freeze_logs/ if
-// that directory already exists (this rig's own convention for durable
-// diagnostic logs, computed from $HOME rather than hardcoded to any one
-// user), else $HOME directly, else /tmp only as a last resort (always
-// writable, but not guaranteed to survive a reboot -- the wrong
-// trade-off for data whose value is in accumulating). See
+// engine.cpp -- $HOME/.sooperlooper/logs/, created if it does not
+// already exist. NOT any one rig's personal path: ~/.sooperlooper/ is
+// SooperLooper's OWN per-user directory, per the "look for ... in
+// ~/.sooperlooper/bindings/" TODO already present upstream (predating
+// this fork) in midi_bind.cpp and engine.cpp. Unlike plugin.cc's
+// SYNCWDEBUG debug log (deliberately session-local, truncated fresh
+// every run), this is data that benefits from accumulating across many
+// sessions: a long baseline of "normal" pulse behaviour is what lets a
+// genuine anomaly stand out, and only a persistent log can show the
+// same anomaly recurring across multiple nights -- hence creating a
+// durable directory rather than falling back to /tmp (not guaranteed to
+// survive a reboot), which is tried only as a last resort. See
 // alb_sync_pulse_log_open() for the full reasoning.
 //
 // Default is ENABLED: given the above, the data is durable and low-cost

@@ -132,16 +132,19 @@ extern float g_mute_late_hit_ms;
 // the reverse of sl_dbg_open()'s order, deliberately, for this reason.
 //
 // Preference order:
-//   1. $HOME/ardour/freeze_logs/ if that directory already exists --
-//      this rig's own established convention for durable diagnostic
-//      logs (start.py's MIDI_REMAPPER_LOG_FILENAME / PW_TOP_LOG_FILENAME
-//      already write there). Computed from $HOME, not hardcoded to any
-//      one user, so this only activates where that convention is
-//      already in use, not assumed for every build of this fork.
-//   2. $HOME directly -- still survives a reboot, just not curated.
-//   3. /tmp -- last resort only: always writable on a POSIX system, but
-//      not guaranteed to survive a reboot, so the least-preferred choice
-//      for data whose value is in accumulating.
+//   1. $HOME/.sooperlooper/logs/ -- SooperLooper's OWN per-user directory,
+//      not any one rig's personal layout. This convention is not new:
+//      see the "look for ... in ~/.sooperlooper/bindings/" TODO already
+//      present upstream in midi_bind.cpp and engine.cpp, predating this
+//      fork. Created (mkdir, best-effort) if it does not already exist,
+//      so this works out of the box for any user -- not only one who
+//      happens to already have a suitable directory lying around, which
+//      an earlier version of this function assumed (see mod_docs/ROADMAP.rst
+//      entry 8's revision history).
+//   2. /tmp -- last resort only, used solely if $HOME is unset or the
+//      directory above could not be created/opened: always writable on
+//      a POSIX system, but not guaranteed to survive a reboot, so the
+//      least-preferred choice for data whose value is in accumulating.
 //
 // Deliberately does NOT fall back to stderr the way plugin.cc's debug
 // log does: pulses fire continuously (a few times a second) for the
@@ -158,18 +161,17 @@ alb_sync_pulse_log_open ()
 	if (home) {
 		char dir[512];
 		struct stat st;
-		snprintf (dir, sizeof(dir), "%s/ardour/freeze_logs", home);
+
+		snprintf (dir, sizeof(dir), "%s/.sooperlooper", home);
+		mkdir (dir, 0755);  // ignore failure (e.g. EEXIST) -- checked below
+		snprintf (dir, sizeof(dir), "%s/.sooperlooper/logs", home);
+		mkdir (dir, 0755);
+
 		if (stat (dir, &st) == 0 && S_ISDIR(st.st_mode)) {
-			char path[512];
+			char path[768];
 			snprintf (path, sizeof(path), "%s/sl_sync_pulse.log", dir);
 			f = std::fopen (path, "a");
 		}
-	}
-
-	if (!f && home) {
-		char path[512];
-		snprintf (path, sizeof(path), "%s/sl_sync_pulse.log", home);
-		f = std::fopen (path, "a");
 	}
 
 	if (!f) {
