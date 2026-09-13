@@ -23,6 +23,7 @@
 #include <fstream>
 #include <cstring>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <pthread.h>
 #include <cerrno>
@@ -118,31 +119,63 @@ extern float g_mute_late_hit_ms;
 
 //------ albBegin ----------------------------------
 #ifdef ALB_SYNC_PULSE_LOG
-// Portable log-file resolution for ALB_SYNC_PULSE_LOG (see engine.hpp),
-// matching the existing sl_dbg_open() convention in plugin.cc: try /tmp
-// first (present on every POSIX system), then $HOME, so this works for
-// anyone who enables the flag -- not just this rig's own
-// ~/ardour/freeze_logs/ convention, which most builds of this fork will
-// not have.
+// Portable log-file resolution for ALB_SYNC_PULSE_LOG (see engine.hpp).
+//
+// Unlike plugin.cc's SYNCWDEBUG debug log (session-local by design --
+// opened "w", truncated fresh every run, because last session's button
+// presses tell you nothing about tonight's), this log is meant to catch
+// a rare, unpredictable incident, so it benefits from accumulating
+// across many sessions: a long baseline of "normal" pulse behaviour is
+// what lets a genuine anomaly stand out, and only a persistent log can
+// show the same anomaly recurring across multiple nights. /tmp typically
+// does not survive a reboot, so it is tried last here, not first --
+// the reverse of sl_dbg_open()'s order, deliberately, for this reason.
+//
+// Preference order:
+//   1. $HOME/ardour/freeze_logs/ if that directory already exists --
+//      this rig's own established convention for durable diagnostic
+//      logs (start.py's MIDI_REMAPPER_LOG_FILENAME / PW_TOP_LOG_FILENAME
+//      already write there). Computed from $HOME, not hardcoded to any
+//      one user, so this only activates where that convention is
+//      already in use, not assumed for every build of this fork.
+//   2. $HOME directly -- still survives a reboot, just not curated.
+//   3. /tmp -- last resort only: always writable on a POSIX system, but
+//      not guaranteed to survive a reboot, so the least-preferred choice
+//      for data whose value is in accumulating.
 //
 // Deliberately does NOT fall back to stderr the way plugin.cc's debug
 // log does: pulses fire continuously (a few times a second) for the
 // entire time transport is rolling, so a full session's worth
 // interleaved into stderr would be disruptive in a way plugin.cc's
-// per-button-press messages are not. If neither location is writable,
-// logging is simply disabled for that run -- the caller warns once.
+// per-button-press messages are not. If nowhere is writable, logging is
+// simply disabled for that run -- the caller warns once.
 static FILE*
 alb_sync_pulse_log_open ()
 {
-	FILE* f = std::fopen ("/tmp/sl_sync_pulse.log", "a");
-	if (!f) {
-		const char* home = getenv ("HOME");
-		if (home) {
+	const char* home = getenv ("HOME");
+	FILE* f = 0;
+
+	if (home) {
+		char dir[512];
+		struct stat st;
+		snprintf (dir, sizeof(dir), "%s/ardour/freeze_logs", home);
+		if (stat (dir, &st) == 0 && S_ISDIR(st.st_mode)) {
 			char path[512];
-			snprintf (path, sizeof(path), "%s/sl_sync_pulse.log", home);
+			snprintf (path, sizeof(path), "%s/sl_sync_pulse.log", dir);
 			f = std::fopen (path, "a");
 		}
 	}
+
+	if (!f && home) {
+		char path[512];
+		snprintf (path, sizeof(path), "%s/sl_sync_pulse.log", home);
+		f = std::fopen (path, "a");
+	}
+
+	if (!f) {
+		f = std::fopen ("/tmp/sl_sync_pulse.log", "a");
+	}
+
 	return f;
 }
 #endif // ALB_SYNC_PULSE_LOG

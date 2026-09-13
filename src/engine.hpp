@@ -66,19 +66,33 @@ typedef struct _jack_port jack_port_t;
 // observes existing values and writes them out.
 //
 // Log destination: resolved at runtime by alb_sync_pulse_log_open() in
-// engine.cpp, matching the portable /tmp-then-$HOME convention plugin.cc's
-// sl_dbg_open() already established for SYNCWDEBUG -- NOT a fixed personal
-// path, so this works on any build, not just this rig's own
-// ~/ardour/freeze_logs/ convention (most builds of this fork will not have
-// that directory).
+// engine.cpp -- NOT a fixed personal path. Unlike plugin.cc's SYNCWDEBUG
+// debug log (deliberately session-local, truncated fresh every run),
+// this is data that benefits from accumulating across many sessions: a
+// long baseline of "normal" pulse behaviour is what lets a genuine
+// anomaly stand out, and only a persistent log can show the same
+// anomaly recurring across multiple nights. So it prefers durable
+// storage over merely-portable storage: $HOME/ardour/freeze_logs/ if
+// that directory already exists (this rig's own convention for durable
+// diagnostic logs, computed from $HOME rather than hardcoded to any one
+// user), else $HOME directly, else /tmp only as a last resort (always
+// writable, but not guaranteed to survive a reboot -- the wrong
+// trade-off for data whose value is in accumulating). See
+// alb_sync_pulse_log_open() for the full reasoning.
 //
-// Default is DISABLED (commented out), matching plugin.cc's own
-// SYNCWDEBUG convention for exactly this kind of opt-in diagnostic --
-// uncomment to enable for a debugging session.
-// WHEN DEFINED: pulses are logged as described above.
-// WHEN NOT DEFINED (default): none of this struct/queue/file exists --
-// nothing is compiled in, no file is ever opened.
-//#define ALB_SYNC_PULSE_LOG
+// Default is ENABLED: given the above, the data is durable and low-cost
+// (a few pulses/sec, so a session's worth is a trivial amount of text),
+// and the point of this diagnostic is to catch the *next* unpredictable
+// incident automatically, which an opt-in-only default would defeat if
+// nobody remembers to flip it on beforehand. This is a deliberate
+// departure from SYNCWDEBUG's off-by-default convention, not an
+// oversight -- SYNCWDEBUG's own RT-thread fflush()-per-press cost is
+// also a real factor there that does not apply here (this diagnostic's
+// only per-buffer RT cost is a lock-free ring-buffer push; the
+// fprintf()/fflush() always happens on the non-RT mainloop() thread).
+// WHEN NOT DEFINED: none of this struct/queue/file exists -- comment out
+// to remove entirely at compile time, no other change needed.
+#define ALB_SYNC_PULSE_LOG
 //------ albEnd ----------------------------------
 
 namespace SooperLooper {
