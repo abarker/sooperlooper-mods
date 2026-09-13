@@ -108,6 +108,11 @@ extern float g_mute_late_hit_ms;
 
 #define MAX_EVENTS 1024
 #define MAX_SYNC_EVENTS 1024
+#ifdef ALB_SYNC_PULSE_LOG
+// Headroom for >30s of pulses at the fastest plausible rate before the
+// mainloop's next drain pass; see ALB_SYNC_PULSE_LOG in engine.hpp.
+#define MAX_SYNC_PULSE_LOG_EVENTS 256
+#endif
 
 #define TEMPO_DIFF(t1, t2) (fabs(t1-t2) > 0.000001)
 
@@ -161,6 +166,13 @@ Engine::Engine ()
 	_jack_clock_tick_phase  = 0.0;
 	_jack_transport_rolling = false;
 	_jack_last_rolling      = false;
+	//------ albEnd ----------------------------------
+
+	//------ albBegin ----------------------------------
+#ifdef ALB_SYNC_PULSE_LOG
+	_sync_pulse_log_queue = 0;
+	_sync_pulse_log_file  = 0;
+#endif
 	//------ albEnd ----------------------------------
 	_use_temp_input = true; // all the time for now
 	_ignore_quit = false;
@@ -255,6 +267,18 @@ bool Engine::initialize(AudioDriver * driver, int buschans, int port, string pin
 	_midi_event_queue = new RingBuffer<Event> (MAX_EVENTS);
 	_sync_queue = new RingBuffer<Event> (MAX_SYNC_EVENTS);
 	_nonrt_update_event_queue = new RingBuffer<Event> (MAX_SYNC_EVENTS);
+
+	//------ albBegin ----------------------------------
+#ifdef ALB_SYNC_PULSE_LOG
+	_sync_pulse_log_queue = new RingBuffer<SyncPulseLogEvent> (MAX_SYNC_PULSE_LOG_EVENTS);
+	_sync_pulse_log_file = std::fopen (ALB_SYNC_PULSE_LOG_PATH, "a");
+	if (!_sync_pulse_log_file) {
+		cerr << "SooperLooper: WARNING: could not open sync pulse log '"
+		     << ALB_SYNC_PULSE_LOG_PATH << "' -- pulse logging disabled this run."
+		     << endl;
+	}
+#endif
+	//------ albEnd ----------------------------------
 
 	_nonrt_event_queue = new RingBuffer<EventNonRT *> (MAX_EVENTS);
 
@@ -374,7 +398,20 @@ Engine::cleanup()
 		delete _nonrt_update_event_queue;
 		_nonrt_update_event_queue = 0;
 	}
-	
+
+	//------ albBegin ----------------------------------
+#ifdef ALB_SYNC_PULSE_LOG
+	if (_sync_pulse_log_queue) {
+		delete _sync_pulse_log_queue;
+		_sync_pulse_log_queue = 0;
+	}
+	if (_sync_pulse_log_file) {
+		std::fclose (_sync_pulse_log_file);
+		_sync_pulse_log_file = 0;
+	}
+#endif
+	//------ albEnd ----------------------------------
+
 	if (_event_generator) {
 		delete _event_generator;
 		_event_generator = 0;
@@ -1934,7 +1971,34 @@ Engine::mainloop()
 			
 			_nonrt_update_event_queue->increment_read_ptr(1);
 		}
-		
+
+		//------ albBegin ----------------------------------
+#ifdef ALB_SYNC_PULSE_LOG
+		// Drain the RT thread's sync-pulse log queue and append to disk.
+		// Only this thread ever touches _sync_pulse_log_file; the RT
+		// callback only ever pushes to _sync_pulse_log_queue (see
+		// generate_sync() and ALB_SYNC_PULSE_LOG in engine.hpp).
+		while (is_ok() && _sync_pulse_log_queue && _sync_pulse_log_queue->read_space() > 0)
+		{
+			RingBuffer<SyncPulseLogEvent>::rw_vector pvec;
+			_sync_pulse_log_queue->get_read_vector (&pvec);
+			SyncPulseLogEvent & pev = pvec.buf[0][0];
+
+			if (_sync_pulse_log_file) {
+				fprintf (_sync_pulse_log_file,
+				         "frame=%u this=%u diff=%u bpm=%.3f tempoframes=%.3f "
+				         "eighth=%.2f beat=%d tick=%d bbt=%d\n",
+				         pev.framepos, pev.thisval, pev.diff, pev.bpm,
+				         pev.tempo_frames, pev.eighth_cycle, pev.beat, pev.tick,
+				         (int) pev.use_bbt);
+				fflush (_sync_pulse_log_file);
+			}
+
+			_sync_pulse_log_queue->increment_read_ptr (1);
+		}
+#endif
+		//------ albEnd ----------------------------------
+
 		if (!is_ok()) break;
 
 		// handle special requests from the audio thread
@@ -2946,12 +3010,23 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				//   nframes_t diff = lrint(_tempo_frames - thisval);
 				//   diff = (thisval == 0) ? 0 : diff;
 				nframes_t thisval, nextval, diff;
+#ifdef ALB_SYNC_PULSE_LOG
+				// Set true below only on the BBT branch; stays false on the
+				// fallback branch (and if ALB_BBT_SYNC is undefined, in
+				// which case that branch does not exist at all).  Kept
+				// independent of ALB_BBT_SYNC's own `use_bbt` local so the
+				// two toggles have no compile-time dependency on each other.
+				bool pulse_used_bbt = false;
+#endif
 #ifdef ALB_BBT_SYNC
 				bool use_bbt = info.bbt_valid
 				               && info.ticks_per_beat > 0.0
 				               && info.bpm > 0.0
 				               && info.beat_type == 4.0f;
 				if (use_bbt) {
+#ifdef ALB_SYNC_PULSE_LOG
+					pulse_used_bbt = true;
+#endif
 					double sr              = (double)_driver->get_samplerate();
 					double frames_per_beat = 60.0 * sr / info.bpm;
 					// bar_start_frame: exact floating-point frame of the current bar's
@@ -3005,6 +3080,36 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				if ((thisval == 0 || nextval <= thisval) && diff < nframes) {
 					//cerr << "got tempo frame in this cycle: diff: " << diff << endl;
 					_internal_sync_buf[offset + diff]  = 2.0;
+
+					//------ albBegin ----------------------------------
+#ifdef ALB_SYNC_PULSE_LOG
+					// See ALB_SYNC_PULSE_LOG (engine.hpp).  Non-blocking,
+					// lock-free push of already-computed local values --
+					// no new arithmetic, no allocation, no syscall here.
+					if (_sync_pulse_log_queue) {
+						RingBuffer<SyncPulseLogEvent>::rw_vector vec;
+						_sync_pulse_log_queue->get_write_vector (&vec);
+						if (vec.len[0] > 0) {
+							SyncPulseLogEvent & pev = vec.buf[0][0];
+							pev.framepos     = info.framepos + offset;
+							pev.thisval      = thisval;
+							pev.diff         = diff;
+							pev.bpm          = info.bpm;
+							pev.tempo_frames = _tempo_frames;
+							pev.eighth_cycle = _eighth_cycle;
+#ifdef ALB_BBT_SYNC
+							pev.beat = pulse_used_bbt ? info.beat : 0;
+							pev.tick = pulse_used_bbt ? info.tick : 0;
+#else
+							pev.beat = 0;
+							pev.tick = 0;
+#endif
+							pev.use_bbt = pulse_used_bbt;
+							_sync_pulse_log_queue->increment_write_ptr (1);
+						}
+					}
+#endif
+					//------ albEnd ----------------------------------
 				}
 			}
 

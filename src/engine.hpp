@@ -22,6 +22,7 @@
 
 #include <vector>
 #include <string>
+#include <cstdio>
 
 #include <sigc++/sigc++.h>
 
@@ -42,7 +43,63 @@ struct _jack_port;
 typedef struct _jack_port jack_port_t;
 //------ albEnd ----------------------------------
 
+//------ albBegin ----------------------------------
+// ALB_SYNC_PULSE_LOG: compile-time toggle for a diagnostic log of JackSync
+// cycle-boundary pulses (see Engine::generate_sync()'s JackSync branch in
+// engine.cpp, inside the existing ALB_BBT_SYNC block).  Added to investigate
+// occasional off-beat loop sync landings (mod_docs/ROADMAP.rst, the
+// eighth-note off-beat sync investigation) -- specifically, to record which
+// formula path fired and what the timebase master was reporting at the
+// instant of every real pulse, since generate_sync() currently logs nothing
+// at all and there is no way to reconstruct this after the fact.
+//
+// RT safety: the RT callback only fills a POD SyncPulseLogEvent (already-
+// computed local values, no new work) and pushes it into a lock-free
+// RingBuffer -- the same pattern already used for _sync_queue and
+// _nonrt_update_event_queue below, just one more instantiation of it.  The
+// actual fprintf()/fflush() to disk happens only in the non-RT mainloop()
+// thread, never in the RT callback.  Pulses fire once per cycle (a few
+// times a second at typical tempos), not once per buffer, so this is a
+// small fraction of the audio callback's own call rate.
+//
+// Fully additive: no pulse-placement arithmetic is changed anywhere. Purely
+// observes existing values and writes them out.
+//
+// WHEN DEFINED (default): pulses are logged to ALB_SYNC_PULSE_LOG_PATH.
+// WHEN NOT DEFINED: none of this struct/queue/file exists -- comment out
+// to remove entirely at compile time, no other change needed.
+#define ALB_SYNC_PULSE_LOG
+
+#ifdef ALB_SYNC_PULSE_LOG
+// Fixed path is consistent with this rig's existing freeze_logs/ convention
+// (see start.py's MIDI_REMAPPER_LOG_FILENAME); change here if a different
+// destination is wanted.
+#define ALB_SYNC_PULSE_LOG_PATH "/tmp/sl_sync_pulse.log"
+#endif
+//------ albEnd ----------------------------------
+
 namespace SooperLooper {
+
+#ifdef ALB_SYNC_PULSE_LOG
+//------ albBegin ----------------------------------
+// One record per actual JackSync cycle-boundary pulse.  POD by design: no
+// strings, no pointers, safe to build on the stack in the RT callback and
+// copy through a RingBuffer.  See ALB_SYNC_PULSE_LOG above.
+struct SyncPulseLogEvent
+{
+	nframes_t framepos;      // info.framepos + offset: absolute transport
+	                          // frame at which this pulse fired
+	nframes_t thisval;       // computed position within the tempo-frame cycle
+	nframes_t diff;          // computed offset into this buffer
+	double    bpm;           // info.bpm this buffer
+	double    tempo_frames;  // _tempo_frames at this instant
+	float     eighth_cycle;  // _eighth_cycle at this instant
+	int32_t   beat;          // info.beat (0 if the BBT path was not used)
+	int32_t   tick;          // info.tick (0 if the BBT path was not used)
+	bool      use_bbt;       // which formula path fired: BBT vs. frame-0 fallback
+};
+//------ albEnd ----------------------------------
+#endif // ALB_SYNC_PULSE_LOG
 
 class Looper;
 class ControlOSC;
@@ -350,6 +407,17 @@ class Engine
 	bool            _jack_transport_rolling;
 	bool            _jack_last_rolling;
 	//------ albEnd ----------------------------------
+
+#ifdef ALB_SYNC_PULSE_LOG
+	//------ albBegin ----------------------------------
+	// See ALB_SYNC_PULSE_LOG above.  RT thread writes, mainloop() thread
+	// reads and appends to _sync_pulse_log_file.  Both null-initialised in
+	// the constructor, allocated/opened in initialize(), torn down in
+	// cleanup() -- same lifecycle as _sync_queue.
+	RingBuffer<SyncPulseLogEvent> * _sync_pulse_log_queue;
+	std::FILE *                     _sync_pulse_log_file;
+	//------ albEnd ----------------------------------
+#endif // ALB_SYNC_PULSE_LOG
 };
 
 
