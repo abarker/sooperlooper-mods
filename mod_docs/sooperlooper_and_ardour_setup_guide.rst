@@ -143,6 +143,12 @@ those applications.
 1.2 SooperLooper
 -----------------
 
+SooperLooper is started with **slgui**, its GUI front-end. **slbigstate**
+can optionally also be launched alongside it -- a separate companion window
+whose only job is to make SooperLooper's current state (which loop is
+recording, playing, muted, and so on) instantly visible at a distance, for
+when the pedal, not the screen, is where your attention is.
+
 **Connecting MIDI**
 
 With this fork, connect SooperLooper directly over **JACK MIDI** -- no ALSA,
@@ -152,11 +158,9 @@ no a2jmidid. (Stock SooperLooper 1.7.9 must be reached over ALSA with
 **Learning and saving MIDI bindings**
 
 Choose whatever MIDI channel and signals you want to drive SooperLooper, then
-use the **slgui "learn"** function to bind those actions. (**slbigstate**, a
-companion window showing loop state at a glance, is run separately alongside
-slgui in this setup -- handy when the pedal, not the screen, is where your
-attention is.) Test that SooperLooper recognizes each incoming MIDI signal
-while learning before moving on.
+use the **slgui "learn"** function to bind those actions. Test that
+SooperLooper recognizes each incoming MIDI signal while learning before
+moving on.
 
 When the bindings are right, **save them** -- slgui does not retain them
 automatically. SooperLooper stores bindings in an ``.slb`` file; this setup
