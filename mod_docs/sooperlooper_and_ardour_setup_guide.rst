@@ -143,11 +143,12 @@ those applications.
 1.2 SooperLooper
 -----------------
 
-SooperLooper is started with **slgui**, its GUI front-end. A separate
-companion window, **slbigstate**, can optionally also be launched alongside
-it -- its only job is to make SooperLooper's current state (which loop is
-recording, playing, muted, and so on) instantly visible at a distance, for
-when the pedal, not the screen, is where your attention is.
+SooperLooper is started with **slgui**, the GUI front-end built from this
+fork. A separate companion window, **slbigstate** -- also part of this fork,
+with no equivalent in stock SooperLooper -- can optionally also be launched
+alongside it; its only job is to make SooperLooper's current state (which
+loop is recording, playing, muted, and so on) instantly visible at a
+distance, for when the pedal, not the screen, is where your attention is.
 
 **Connecting MIDI**
 
@@ -166,60 +167,6 @@ When the bindings are right, **save them** -- slgui does not retain them
 automatically. SooperLooper stores bindings in an ``.slb`` file; this setup
 uses ``sl_midi_config_actition_bindings.slb``. (Hydrogen remembers its MIDI
 setup automatically.)
-
-.. warning::
-
-   **A saved binding's event type decides whether it fires on press, on
-   release, or on both -- and the names read backwards.** This matters if
-   you ever read or hand-edit an ``.slb``. A line looks like::
-
-       4 ccoff 65  note cancel_record_mute -1  0 1  norm 0 127
-       │ │     │   │
-       │ │     │   └─ command type (note / hit / set)
-       │ │     └───── CC number
-       │ └─────────── event type
-       └───────────── MIDI channel
-
-   For control-change events there are three event types:
-
-   ==========  ==================================================
-   Event type  Fires on
-   ==========  ==================================================
-   ``ccoff``   **press** (any non-zero value)
-   ``ccon``    **release** (value 0)
-   ``cc``      **both** press and release
-   ==========  ==================================================
-
-   The suffix names what the binding **suppresses**, not what triggers it:
-   ``ccoff`` drops the *off* message and so fires on press -- it reads as
-   the opposite of what it does.
-
-   **Why ``ccoff`` and not ``cc``.** A ``note`` command maps the value:
-   non-zero becomes ``down``, zero becomes ``up``. So with plain ``cc``, a
-   press starts the command and the release immediately ends it --
-   ``record`` switches on and straight back off. That is the classic
-   symptom, and ``ccoff`` is its cure: it drops the zero message, so only
-   ``down`` is ever delivered.
-
-   A ``hit`` command behaves differently again -- it is emitted unchanged
-   on both edges, so ``cc`` + ``hit`` really does fire the command twice
-   per stomp.
-
-   In this setup the point is largely moot: the remapper's **gesture**
-   entries -- including a bare ``single`` -- do not directly send the
-   release event, so there is nothing for ``ccoff`` to suppress either way.
-   Keep ``ccoff`` as the default regardless: it costs nothing and still
-   protects if the signal path ever changes.
-
-   Worth knowing if you add one: the remapper's **direct** entries (a bare
-   list rather than a dict) do fire on both edges, and with a fixed
-   ``"value": 127`` the release sends 127 as well -- so ``ccoff`` cannot
-   save you there, because nothing is zero. That is what the remapper's
-   ``press_only`` flag is for.
-
-   The ActitioN is programmed here to send momentary CCs, press then
-   release, but that is a configuration choice rather than a property of
-   the pedal.
 
 On the ActitioN footswitch, each button sends a **momentary CC** event -- a
 press followed by a release. The remapper layers gestures on top of these raw
@@ -310,9 +257,7 @@ real ``record``, the long press cannot simply mute -- it has to retract that
 record too.
 
 This is now a single command, ``cancel_record_mute``, added to SooperLooper
-for this purpose. The remapper's long press sends it and nothing else::
-
-    4 ccoff 65  note cancel_record_mute -1  0 1  norm 0 127
+for this purpose. The remapper's long press sends it and nothing else.
 
 What it does depends on how far the record has progressed:
 
