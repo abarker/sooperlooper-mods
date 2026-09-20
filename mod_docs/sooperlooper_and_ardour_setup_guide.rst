@@ -152,11 +152,11 @@ no a2jmidid. (Stock SooperLooper 1.7.9 must be reached over ALSA with
 **Learning and saving MIDI bindings**
 
 Choose whatever MIDI channel and signals you want to drive SooperLooper, then
-use the **slgui "learn"** function to bind those actions. (Launching slgui
-also brings up **slbigstate**, a companion window showing loop state at a
-glance -- handy when the pedal, not the screen, is where your attention is.)
-Test that SooperLooper recognizes each incoming MIDI signal while learning
-before moving on.
+use the **slgui "learn"** function to bind those actions. (**slbigstate**, a
+companion window showing loop state at a glance, is run separately alongside
+slgui in this setup -- handy when the pedal, not the screen, is where your
+attention is.) Test that SooperLooper recognizes each incoming MIDI signal
+while learning before moving on.
 
 When the bindings are right, **save them** -- slgui does not retain them
 automatically. SooperLooper stores bindings in an ``.slb`` file; this setup
