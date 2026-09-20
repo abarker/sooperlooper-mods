@@ -168,6 +168,20 @@ automatically. SooperLooper stores bindings in an ``.slb`` file; this setup
 uses ``sl_midi_config_actition_bindings.slb``. (Hydrogen remembers its MIDI
 setup automatically.)
 
+.. warning::
+
+   **A binding's Type decides whether it fires on press, on release, or on
+   both -- and the names read backwards.** In slgui's binding editor, a
+   control-change binding can be Type **CC**, **CC On**, or **CC Off**. Of
+   the three, **CC Off** fires only on the press (it suppresses the
+   release/zero message), **CC On** fires only on the release, and plain
+   **CC** fires on both.
+
+   This matters for command buttons like record: bind one as plain **CC**
+   and the same press-then-release pair fires the command twice -- record
+   switches on and straight back off. Every command-style binding in this
+   setup therefore uses **CC Off**, which avoids that.
+
 On the ActitioN footswitch, each button sends a **momentary CC** event -- a
 press followed by a release. The remapper layers gestures on top of these raw
 events and handles bank switching.
