@@ -919,17 +919,22 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING`` and
        cases — identical to stock SooperLooper 1.7.9 JackSync behaviour.
    * - ``ALB_SYNC_PULSE_LOG``
      - ``engine.hpp``
-     - defined
-     - **When defined (default):** logs one line per actual JackSync
-       cycle-boundary pulse (frame, beat/tick/bpm, which formula path fired)
-       to ``$HOME/.sooperlooper/logs/sl_sync_pulse.log`` (created if needed,
-       falling back to ``/tmp`` only if ``$HOME`` is unset) -- a diagnostic
-       for the open eighth-note off-beat sync investigation (ROADMAP entry
-       8).  RT side only pushes a POD through a lock-free ``RingBuffer``,
-       same pattern as ``_sync_queue``; the actual file write happens on the
-       non-RT ``mainloop()`` thread, never the RT callback.  **When not
-       defined:** none of this struct/queue/file exists; nothing is
-       compiled in.
+     - *(commented out)*
+     - Diagnostic for the open eighth-note off-beat sync investigation
+       (ROADMAP entry 8), in the same spirit as ``SYNCWDEBUG`` above --
+       a maintainer's debugging aid, not something a general build should
+       enable by default.  **When defined:** logs one line per actual
+       JackSync cycle-boundary pulse (frame, beat/tick/bpm, which formula
+       path fired) to ``$HOME/.sooperlooper/logs/sl_sync_pulse.log``
+       (created if needed, falling back to ``/tmp`` only if ``$HOME`` is
+       unset).  RT side only pushes a POD through a lock-free
+       ``RingBuffer``, same pattern as ``_sync_queue``; the actual file
+       write happens on the non-RT ``mainloop()`` thread, never the RT
+       callback -- so unlike ``SYNCWDEBUG`` this carries no real RT-safety
+       cost even when enabled, but it still defaults off, since the
+       reason to keep it off is who it's for, not what it costs.
+       **When not defined (default):** none of this struct/queue/file
+       exists; nothing is compiled in.
 
 Appendix: Minor Fixes and Implementation Details
 --------------------------------------------------

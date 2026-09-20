@@ -80,19 +80,22 @@ typedef struct _jack_port jack_port_t;
 // survive a reboot), which is tried only as a last resort. See
 // alb_sync_pulse_log_open() for the full reasoning.
 //
-// Default is ENABLED: given the above, the data is durable and low-cost
-// (a few pulses/sec, so a session's worth is a trivial amount of text),
-// and the point of this diagnostic is to catch the *next* unpredictable
-// incident automatically, which an opt-in-only default would defeat if
-// nobody remembers to flip it on beforehand. This is a deliberate
-// departure from SYNCWDEBUG's off-by-default convention, not an
-// oversight -- SYNCWDEBUG's own RT-thread fflush()-per-press cost is
-// also a real factor there that does not apply here (this diagnostic's
-// only per-buffer RT cost is a lock-free ring-buffer push; the
-// fprintf()/fflush() always happens on the non-RT mainloop() thread).
-// WHEN NOT DEFINED: none of this struct/queue/file exists -- comment out
-// to remove entirely at compile time, no other change needed.
-#define ALB_SYNC_PULSE_LOG
+// Default is DISABLED (commented out), matching SYNCWDEBUG's own
+// convention, and for the same underlying reason: this is a maintainer's
+// debugging aid for one specific open investigation (the eighth-note
+// off-beat sync bug above), not something a build should hand to every
+// user of this public fork by default -- most of whom have no reason to
+// know what it is or why files are appearing under ~/.sooperlooper/logs/.
+// (An earlier version of this comment argued the opposite -- durability
+// and low RT cost justify defaulting it on -- and that reasoning is
+// still sound on its own terms; it just isn't the deciding factor. Kept
+// here rather than deleted so the tradeoff isn't re-derived from
+// scratch next time.) Uncomment locally to enable it for a debugging
+// session, same as SYNCWDEBUG -- this repo's own maintainer keeps it
+// enabled in an uncommitted local edit for exactly that purpose.
+// WHEN NOT DEFINED (default): none of this struct/queue/file exists --
+// nothing is compiled in, no file is ever opened.
+//#define ALB_SYNC_PULSE_LOG
 //------ albEnd ----------------------------------
 
 namespace SooperLooper {
