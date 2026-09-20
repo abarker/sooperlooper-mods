@@ -50,17 +50,17 @@ The signal/control chain at a glance:
   One dedicated bank controls Hydrogen -- patterns, tempo, and so on. This
   allows switching drum patterns mid-performance from the footswitch, for
   example moving between a 4/4 and a 3/4 pattern.
-* **SooperLooper** receives the mapped MIDI and records/plays loops, always
+* SooperLooper receives the mapped MIDI and records/plays loops, always
   locked to the Hydrogen beat while JACK transport is running.
-* **Hydrogen** runs in pattern mode as the JACK timebase master. Its drum
+* Hydrogen runs in pattern mode as the JACK timebase master. Its drum
   pattern acts as a click track -- it can be any Hydrogen pattern, simple or
   complex.
-* **Big Tempo** monitors JACK transport state (Hydrogen, as timebase master,
+* Big Tempo monitors JACK transport state (Hydrogen, as timebase master,
   controls transport start/stop). When transport starts or stops, Big Tempo
   sends MIDI to toggle SooperLooper's sync and mute-quantize state accordingly,
   so loops can be recorded either locked to the Hydrogen beat or free-running.
   Big Tempo also displays a large tempo readout for the performer.
-* **Ardour** records everything and is used to measure and verify latency.
+* Ardour records everything and is used to measure and verify latency.
 
 
 System Description
@@ -143,9 +143,9 @@ those applications.
 1.2 SooperLooper
 -----------------
 
-SooperLooper is started with **slgui**, its GUI front-end. **slbigstate**
-can optionally also be launched alongside it -- a separate companion window
-whose only job is to make SooperLooper's current state (which loop is
+SooperLooper is started with **slgui**, its GUI front-end. A separate
+companion window, **slbigstate**, can optionally also be launched alongside
+it -- its only job is to make SooperLooper's current state (which loop is
 recording, playing, muted, and so on) instantly visible at a distance, for
 when the pedal, not the screen, is where your attention is.
 
@@ -191,34 +191,25 @@ setup automatically.)
    ==========  ==================================================
 
    The suffix names what the binding **suppresses**, not what triggers it:
-   ``ccoff`` drops the *off* message and so fires on press. It reads as the
-   opposite of what it does. (``midi_bridge.cpp:477`` is the authority --
-   it is a *skip* test, which is why the sense inverts.)
+   ``ccoff`` drops the *off* message and so fires on press -- it reads as
+   the opposite of what it does.
 
-   **Why ``ccoff`` and not ``cc``.** What the release does depends on the
-   **command type** (``midi_bridge.cpp``, ``send_event``). A ``note``
-   command maps the value: non-zero becomes ``down``, zero becomes ``up``.
-   So with plain ``cc``, a press starts the command and the release
-   immediately ends it -- ``record`` switches on and straight back off.
-   That is the classic symptom, and ``ccoff`` is its cure: it drops the
-   zero message, so only ``down`` is ever delivered.
+   **Why ``ccoff`` and not ``cc``.** A ``note`` command maps the value:
+   non-zero becomes ``down``, zero becomes ``up``. So with plain ``cc``, a
+   press starts the command and the release immediately ends it --
+   ``record`` switches on and straight back off. That is the classic
+   symptom, and ``ccoff`` is its cure: it drops the zero message, so only
+   ``down`` is ever delivered.
 
    A ``hit`` command behaves differently again -- it is emitted unchanged
    on both edges, so ``cc`` + ``hit`` really does fire the command twice
    per stomp.
 
-   In this setup the point is now moot, on two independent grounds. The
-   remapper's **gesture** entries -- including a bare ``single`` -- do not
-   directly send the release event; and ``ccoff`` would discard one if
-   they did. The historical reason for ``ccoff`` was bindings learned when
-   the release *did* get through.
-
-   Confirmed on the rig 2026-08-18: ``record`` rebound to plain ``cc``
-   works, because no release arrives for it to act on. (That test ran
-   against a *direct* remapper entry carrying ``press_only``, which
-   likewise sends nothing on release -- so it holds for either mapping
-   style.) Keep ``ccoff`` as the default regardless: it costs nothing and
-   still protects if the signal path changes.
+   In this setup the point is largely moot: the remapper's **gesture**
+   entries -- including a bare ``single`` -- do not directly send the
+   release event, so there is nothing for ``ccoff`` to suppress either way.
+   Keep ``ccoff`` as the default regardless: it costs nothing and still
+   protects if the signal path ever changes.
 
    Worth knowing if you add one: the remapper's **direct** entries (a bare
    list rather than a dict) do fire on both edges, and with a fixed
@@ -382,7 +373,7 @@ fresh take is therefore done on the **mute_trigger** button instead, which
 drops to silence immediately with no audible wait interval.
 
 **Record failsafe: a safety net for when nobody presses anything.**
-``cancel_record_mute`` above still needs a press. Tapping record to end a
+The ``cancel_record_mute`` command above still needs a press. Tapping record to end a
 playing loop's playback fires a real recording immediately -- if that was
 actually meant to be a long press to cancel instead, or attention just
 went elsewhere before pressing anything else, that recording runs forever
@@ -492,8 +483,8 @@ different latencies:
 
 There are two complementary approaches:
 
-**jack_iodelay:** loop a JACK output back to a JACK input with a cable.
-``jack_iodelay`` measures the total round-trip in frames and ms directly.
+**jack_iodelay:** loop a JACK output back to a JACK input with a cable to
+measure the total round-trip in frames and ms directly.
 
 **Drum-beat recording method:** record a Hydrogen beat directly into Ardour
 (Track A), then play Track A back while recording the interface output into a
