@@ -3021,13 +3021,23 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 		//memset (_internal_sync_buf, 0, nframes * sizeof(float));
 
 	}
-	else if (_sync_source == JackSync) 
+	else if (_sync_source == JackSync)
 	{
 		for (nframes_t n=offset; n < nframes; ++n) {
 			_internal_sync_buf[n]  = 0.0;
 		}
-				
+
+		//------ albBegin ----------------------------------
+		// ALB_JACK_BEAT_TRACKING (engine.hpp): value-initialise, so bpm is
+		// 0 (not leftover memory) when the master sends no BBT, and state
+		// is neither ROLLING nor STOPPED for a transport state the driver
+		// does not map.  ROADMAP entry 14.
+#ifdef ALB_JACK_BEAT_TRACKING
+		TransportInfo info = TransportInfo();
+#else
 		TransportInfo info;
+#endif
+		//------ albEnd ----------------------------------
 		if (_driver->get_transport_info(info)) {
 
 			//------ albBegin ----------------------------------
@@ -3072,10 +3082,20 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 			// ROLLING; this makes the tempo update consistent with those.
 			// Controlled by ALB_TEMPO_ONLY_WHEN_ROLLING (see top of file).
 			// Original (ungated): if (TEMPO_DIFF(_tempo,info.bpm)) {
-#ifdef ALB_TEMPO_ONLY_WHEN_ROLLING
-			if (info.state == TransportInfo::ROLLING && TEMPO_DIFF(_tempo,info.bpm)) {
+			//
+			// ALB_JACK_BEAT_TRACKING (engine.hpp) adds: take the tempo from
+			// JACK only when the master actually sent one (info.bpm > 0 once
+			// the struct is value-initialised); otherwise keep
+			// SooperLooper's own tempo.  ROADMAP entry 14.
+#ifdef ALB_JACK_BEAT_TRACKING
+			const bool jack_tempo_known = (info.bpm > 0.0);
 #else
-			if (TEMPO_DIFF(_tempo,info.bpm)) {
+			const bool jack_tempo_known = true;
+#endif
+#ifdef ALB_TEMPO_ONLY_WHEN_ROLLING
+			if (info.state == TransportInfo::ROLLING && jack_tempo_known && TEMPO_DIFF(_tempo,info.bpm)) {
+#else
+			if (jack_tempo_known && TEMPO_DIFF(_tempo,info.bpm)) {
 #endif
 			//------ albEnd ----------------------------------
 				//------ albBegin ----------------------------------
@@ -3106,6 +3126,71 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				//------ albEnd ----------------------------------
 			}
 
+			//------ albBegin ----------------------------------
+			// ALB_JACK_BEAT_TRACKING (engine.hpp): cycle pulses and the GUI
+			// quarter-note blink from BeatTracker's beat count, carried
+			// through tempo changes, instead of framepos mod cycle length.
+			// Replaces both blocks under #else below, which are unchanged
+			// stock/ALB_BBT_SYNC code.  ROADMAP entries 8, 14 and 15.
+#ifdef ALB_JACK_BEAT_TRACKING
+			{
+				const double sr  = (double) _driver->get_samplerate();
+				// No tempo from the master: count at SooperLooper's own.
+				const double bpm = (info.bpm > 0.0) ? info.bpm : _tempo;
+				_beat_tracker.update (info.framepos, nframes, bpm,
+				                      info.state == TransportInfo::ROLLING, sr);
+
+				// Stock resets loops' lSamplesSinceSync on a backwards
+				// locate; it detected one from TransportInfo::last_framepos,
+				// which is copied from uninitialised memory (entry 14).
+				if (_beat_tracker.backwards()) {
+					for (Instances::iterator i = _rt_instances.begin(); i != _rt_instances.end(); ++i) {
+						(*i)->set_samples_since_sync(info.framepos + offset);
+					}
+				}
+
+				if (_tempo_frames > 0.0 && _beat_tracker.active()) {
+					// Cycle length in beats (_tempo_frames is frames per
+					// quantize unit at _tempo).
+					const double step = _tempo_frames * _tempo / (60.0 * sr);
+					uint32_t offs[8];
+					const int npulses = _beat_tracker.boundaries (step, nframes, offs, 8);
+					for (int k = 0; k < npulses; ++k) {
+						_internal_sync_buf[offset + offs[k]] = 2.0;
+#ifdef ALB_SYNC_PULSE_LOG
+						SyncPulseLogEvent pev = SyncPulseLogEvent();
+						pev.kind         = SyncPulseLogEvent::Pulse;
+						pev.framepos     = info.framepos + offset;
+						pev.thisval      = (nframes_t) lrint (_beat_tracker.frames_into_step (step));
+						pev.diff         = offs[k];
+						pev.bpm          = info.bpm;
+						pev.tempo_frames = _tempo_frames;
+						pev.eighth_cycle = _eighth_cycle;
+#ifdef ALB_BBT_SYNC
+						if (info.bbt_valid) {
+							pev.beat           = info.beat;
+							pev.tick           = info.tick;
+							pev.bar            = info.bar;
+							pev.bar_start_tick = info.bar_start_tick;
+							pev.beats_per_bar  = info.beats_per_bar;
+							pev.ticks_per_beat = info.ticks_per_beat;
+						}
+#endif
+						pev.use_bbt = false;
+						sync_log_push (pev);
+#endif
+					}
+				}
+
+				if (_quarter_note_frames > 0.0 && _beat_tracker.active()) {
+					uint32_t q[8];
+					if (_beat_tracker.boundaries (1.0, nframes, q, 8) > 0) {
+						hit_at = (int) q[0];
+					}
+				}
+			}
+#else
+			//------ albEnd ----------------------------------
 			if (_tempo_frames > 0.0 && info.state == TransportInfo::ROLLING) {
 
 				//====== albBegin — BBT-based JackSync pulse placement =====================
@@ -3279,6 +3364,9 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 					hit_at = (int) diff;
 				}
 			}
+			//------ albBegin ----------------------------------
+#endif // ALB_JACK_BEAT_TRACKING
+			//------ albEnd ----------------------------------
 		}
 	}
 	else if ((int)_sync_source > 0 && (size_t)_sync_source <= _rt_instances.size()) {
@@ -3578,9 +3666,14 @@ Engine::load_session (std::string fname, string * readstr)
 		        "  rt_safe_cond_signal: OFF"
 #endif
 #ifdef ALB_TEMPO_ONLY_WHEN_ROLLING
-		        "  tempo_only_when_rolling: ON\n",
+		        "  tempo_only_when_rolling: ON"
 #else
-		        "  tempo_only_when_rolling: OFF\n",
+		        "  tempo_only_when_rolling: OFF"
+#endif
+#ifdef ALB_JACK_BEAT_TRACKING
+		        "  jack_beat_tracking: ON\n",
+#else
+		        "  jack_beat_tracking: OFF\n",
 #endif
 		        g_late_hit_window_ms, g_late_hit_max_quant_unit_fraction,
 		        g_record_failsafe_seconds, g_mute_late_hit_ms);

@@ -105,6 +105,31 @@ typedef struct _jack_port jack_port_t;
 //#define ALB_SYNC_PULSE_LOG
 //------ albEnd ----------------------------------
 
+//------ albBegin ----------------------------------
+// ALB_JACK_BEAT_TRACKING: JackSync pulses from a beat count carried
+// through tempo changes (BeatTracker, beat_tracker.hpp) instead of stock
+// framepos mod cycle_length.  Stock placement drifts off a timebase
+// master that keeps its beat continuous through a tempo change made while
+// rolling (Hydrogen 1.2.x, a DAW playing through a tempo change) by up to
+// half a cycle until the next relocate -- measured as one eighth note on
+// a live rig.  See mod_docs/ROADMAP.rst entries 8 and 15.
+//
+// Also fixes a stock bug (ROADMAP entry 14): generate_sync() reads an
+// uninitialised TransportInfo -- the backwards-locate check compared
+// against leftover memory, and with no BBT master the tempo came from
+// leftover memory.  With this defined the struct is value-initialised,
+// the tempo is taken from JACK only when the master sends one, and the
+// backwards-locate check uses the tracker's own record of the previous
+// frame.
+//
+// WHEN NOT DEFINED (current default, until live-tested): the stock/BBT
+// JackSync code runs exactly as before.
+//#define ALB_JACK_BEAT_TRACKING
+#ifdef ALB_JACK_BEAT_TRACKING
+#include "beat_tracker.hpp"
+#endif
+//------ albEnd ----------------------------------
+
 namespace SooperLooper {
 
 #ifdef ALB_SYNC_PULSE_LOG
@@ -467,6 +492,14 @@ class Engine
 	void sync_log_push (const SyncPulseLogEvent & ev);
 	//------ albEnd ----------------------------------
 #endif // ALB_SYNC_PULSE_LOG
+
+#ifdef ALB_JACK_BEAT_TRACKING
+	//------ albBegin ----------------------------------
+	// JackSync beat position, counted through tempo changes.  Touched only
+	// by generate_sync() in the RT thread.  See ALB_JACK_BEAT_TRACKING.
+	BeatTracker _beat_tracker;
+	//------ albEnd ----------------------------------
+#endif
 };
 
 

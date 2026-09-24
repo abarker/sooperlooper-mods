@@ -1,0 +1,21 @@
+Tests for ALB_JACK_BEAT_TRACKING (JackSync beats counted through tempo
+changes; see ../beat_tracker.hpp and mod_docs/ROADMAP.rst entry 15).
+
+Unit tests, no JACK needed::
+
+    make check
+
+Integration test: the real engine against a scripted, Hydrogen-like JACK
+timebase master on a private dummy JACK server (no hardware, no effect on
+a running rig; the engine's HOME is a temporary directory).  Needs jackd,
+oscsend (liblo), python3 with the ``jack`` module, and an engine built
+with ALB_SYNC_PULSE_LOG defined, since it reads the pulses from that log::
+
+    ./jack_integration_test.py                   # built with ALB_JACK_BEAT_TRACKING
+    ./jack_integration_test.py --expect stock    # built without it
+
+The first passes when every sync pulse lands within 2 samples of the
+master's beat through tempo ramps, a relocate while rolling, a stop/start
+without a locate, and a stop / locate 0 / start.  The second passes when
+the stock code's drift is reproduced.  About 40 s each.  Set SL_BT_KEEP=1
+to keep the run's files for inspection.
