@@ -30,8 +30,10 @@ With JACK running (a dummy backend is sufficient)::
     make
 
 The tests run in real time against whatever server they connect to, so
-buffer size matters only for how long they take.  They pass at 48 kHz
-with 256- and 1024-frame buffers (the dummy backend's default is 1024).
+buffer size matters only for how long they take.  At 48 kHz they pass
+at every size tried, 64 to 4096 frames, including non-power-of-two
+sizes such as 384 (the dummy backend's default is 1024).  Waits are
+counted in buffers, with timeouts that scale with the buffer period.
 To keep them off a live rig's server, start a separately named one and
 point the tests at it::
 

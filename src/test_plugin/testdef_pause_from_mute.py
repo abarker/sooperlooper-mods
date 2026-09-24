@@ -58,7 +58,10 @@ class PauseFromMuteTestCase(unittest.TestCase):
 
     def wait_buffers(self, n, timeout=5.0):
         target   = self.looper.process_count + n
-        deadline = time.time() + timeout
+        # `timeout` is a floor; slow periods get 3x the real time n buffers take.
+        period = (float(self.looper.get_buffer_size())
+                  / float(self.engine.get_sample_rate()))
+        deadline = time.time() + max(timeout, 3.0 * n * period)
         while self.looper.process_count < target:
             if time.time() > deadline:
                 raise RuntimeError(
