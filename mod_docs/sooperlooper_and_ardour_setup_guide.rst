@@ -84,6 +84,13 @@ Mixer                         Behringer Xenyx 802S
    the generic kernel is used here because it includes a driver needed for
    other hardware that the low-latency kernel currently lacks.
 
+.. note::
+
+   Big Tempo and the remapper both depend on ``mididings``, which requires
+   JACK and is built for Linux; a community-maintained fork also lists
+   macOS as supported, though that has not been tried for this setup.
+   Windows is not supported by ``mididings``.
+
 
 1. Setup
 =========

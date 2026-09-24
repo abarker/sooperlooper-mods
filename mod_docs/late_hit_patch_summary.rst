@@ -36,6 +36,23 @@ SooperLooper Late-Hit Recording Modification Summary
    can remain ``false``.  The script prompts before running
    ``sudo make install``.
 
+.. tip:: **Platform**
+
+   Built and tested only on Ubuntu 24.04, using the script above.  It
+   should compile wherever stock SooperLooper 1.7.9 does, since this
+   patch leaves the Windows and macOS code paths untouched.
+
+   Stock's Windows build notes say JACK MIDI input does not work there.
+   That has not been rechecked; if it still holds, this patch's JACK MIDI
+   feature would not work there either.  The late-hit corrections go
+   through OSC and should be unaffected.
+
+   Stock's standalone macOS build has one reported startup hang on
+   Catalina, unrelated to this patch, with a workaround (enabling system
+   sharing): https://github.com/essej/sooperlooper/issues/32.  Other
+   users report it working, and stock has had several Catalina-specific
+   point releases.
+
 .. tip:: **Quick Start**
 
    The late-hit correction is active immediately after compiling — no session file
