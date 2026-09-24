@@ -36,7 +36,8 @@ This is a fairly low-budget setup built around commodity Linux audio hardware
 and open-source software. It lets you build loops locked to a Hydrogen drum
 pattern and record the result in Ardour with sample-accurate alignment. The
 Hydrogen beat plays continuously in the background as a click track and sync
-source; it is **not** captured into the loop. The bulk of the work in getting
+source.  The beat is not captured in a loop, but can be recorded with the DAW for
+mixing purposes and/or played through a PA. The bulk of the work in getting
 it to feel right is **latency calibration** -- making sure the loop you record
 lines up with what you actually heard when you played it. That is covered in
 detail in `2. Latency: Concepts and Calibration`_.
@@ -49,7 +50,9 @@ The signal/control chain at a glance:
   (chords, long-presses, repeat-on-hold, double-taps) and switches banks.
   One dedicated bank controls Hydrogen -- patterns, tempo, and so on. This
   allows switching drum patterns mid-performance from the footswitch, for
-  example moving between a 4/4 and a 3/4 pattern.
+  example moving between a 4/4 and a 3/4 pattern.  The remapper is optional,
+  but adds gestures like long press, double press, etc., which allow more
+  commands to be bound to a fixed number of buttons.
 * SooperLooper receives the mapped MIDI and records/plays loops, always
   locked to the Hydrogen beat while JACK transport is running.
 * Hydrogen runs in pattern mode as the JACK timebase master. Its drum
@@ -60,7 +63,7 @@ The signal/control chain at a glance:
   sends MIDI to toggle SooperLooper's sync and mute-quantize state accordingly,
   so loops can be recorded either locked to the Hydrogen beat or free-running.
   Big Tempo also displays a large tempo readout for the performer.
-* Ardour records everything and is used to measure and verify latency.
+* Ardour records everything and can be used to measure and verify latency.
 
 
 System Description
@@ -328,27 +331,28 @@ that, and this replaces that older arrangement.
 **Cancelling a record -- an inherent trade-off.** Be cautious with the record
 long-press. There is **no way to avoid** the following: the start of a genuine
 record/play press is indistinguishable from the eager single that precedes a
-long press that may or may not arrive. The system cannot know a long press is
+long press that may or may not arrive.  The system cannot know a long press is
 coming, so the eager single must fire, and the loop can briefly become audible
 during the long-press wait interval before ``cancel_record_mute`` retracts it.
-The
-most likely accidental trigger is a lingering press on the **record-to-play**
-switch -- if the foot rests on the pedal past the long-press threshold, the
-gesture fires and cancels a take meant to be kept. Deliberately cancelling a
-fresh take is therefore done on the **mute_trigger** button instead, which
-drops to silence immediately with no audible wait interval.
+(Without eager single being set and no multiple-press gestures defined for the
+button the record command would fire on release, since at that point it can
+rule out long press.) The most likely accidental trigger is a lingering
+press on the **record/play** switch -- if the foot rests on the pedal past
+the long-press threshold, the gesture fires and cancels a take meant to be
+kept. Deliberately cancelling an in-progress recording is therefore done on the
+**mute_trigger** button instead, which drops to silence immediately with no
+audible wait interval.
 
-**Record failsafe: a safety net for when nobody presses anything.**
-The ``cancel_record_mute`` command above still needs a press. Tapping record to end a
-playing loop's playback fires a real recording immediately -- if that was
-actually meant to be a long press to cancel instead, or attention just
-went elsewhere before pressing anything else, that recording runs forever
-with the previous take gone underneath it. SooperLooper now has a timeout
-for exactly that: leave a loop recording past ``record_failsafe_seconds``
-after it cut off an existing, playing take, and it auto-cancels back to
-that take, muted, the same as if the long press had landed. It only ever
-fires for a record that interrupted playback -- a fresh recording into an
-empty loop is never affected.
+**Record failsafe: a safety net for when nobody presses anything.** The
+``cancel_record_mute`` command above still needs a press. Tapping record to end
+a playing loop's playback fires a real recording immediately -- if that was
+actually meant to be a long press to cancel instead, or attention just went
+elsewhere before pressing anything else, that recording runs forever with the
+previous take gone underneath it. SooperLooper now has a timeout for exactly
+that: leave a loop recording past ``record_failsafe_seconds`` after it cut off
+an existing, playing take, and it auto-cancels back to that take, muted, the
+same as if the long press had landed. It only ever fires for a record that
+interrupted playback -- a fresh recording into an empty loop is never affected.
 
 It ships **off by default**. To turn it on, add the key to the session
 file's ``<Globals>`` line and restart::
