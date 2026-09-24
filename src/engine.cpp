@@ -239,6 +239,8 @@ Engine::Engine ()
 #ifdef ALB_SYNC_PULSE_LOG
 	_sync_pulse_log_queue = 0;
 	_sync_pulse_log_file  = 0;
+	_sync_log_next_framepos = 0;
+	_sync_log_have_next     = false;
 #endif
 	//------ albEnd ----------------------------------
 	_use_temp_input = true; // all the time for now
@@ -2052,12 +2054,29 @@ Engine::mainloop()
 			SyncPulseLogEvent & pev = pvec.buf[0][0];
 
 			if (_sync_pulse_log_file) {
-				fprintf (_sync_pulse_log_file,
-				         "frame=%u this=%u diff=%u bpm=%.3f tempoframes=%.3f "
-				         "eighth=%.2f beat=%d tick=%d bbt=%d\n",
-				         pev.framepos, pev.thisval, pev.diff, pev.bpm,
-				         pev.tempo_frames, pev.eighth_cycle, pev.beat, pev.tick,
-				         (int) pev.use_bbt);
+				// Pulse lines start with "frame=" (the original format,
+				// with the BBT fields appended); the other record types
+				// start with "event=" so a reader can tell them apart.
+				if (pev.kind == SyncPulseLogEvent::Relocate) {
+					fprintf (_sync_pulse_log_file,
+					         "event=relocate frame=%u expected=%u bpm=%.3f\n",
+					         pev.framepos, pev.expected, pev.bpm);
+				}
+				else if (pev.kind == SyncPulseLogEvent::TempoChange) {
+					fprintf (_sync_pulse_log_file,
+					         "event=tempo frame=%u from=%.3f to=%.3f\n",
+					         pev.framepos, pev.prev_bpm, pev.bpm);
+				}
+				else {
+					fprintf (_sync_pulse_log_file,
+					         "frame=%u this=%u diff=%u bpm=%.3f tempoframes=%.3f "
+					         "eighth=%.2f beat=%d tick=%d bbt=%d "
+					         "bar=%d bst=%.1f bpb=%.2f tpb=%.1f\n",
+					         pev.framepos, pev.thisval, pev.diff, pev.bpm,
+					         pev.tempo_frames, pev.eighth_cycle, pev.beat, pev.tick,
+					         (int) pev.use_bbt, pev.bar, pev.bar_start_tick,
+					         pev.beats_per_bar, pev.ticks_per_beat);
+				}
 				fflush (_sync_pulse_log_file);
 			}
 
@@ -2782,6 +2801,25 @@ Engine::calculate_midi_tick (bool rt)
 		_midi_loop_tick = 24;  // ..this can't happen, but quarter note is safe
 }
 
+//------ albBegin ----------------------------------
+#ifdef ALB_SYNC_PULSE_LOG
+// RT-safe push of one record onto the sync-pulse log queue (see
+// ALB_SYNC_PULSE_LOG in engine.hpp): one struct copy and a lock-free
+// write-pointer bump, no allocation, no syscall.  Drops the record if
+// the queue is full rather than blocking.
+void
+Engine::sync_log_push (const SyncPulseLogEvent & ev)
+{
+	if (!_sync_pulse_log_queue) return;
+	RingBuffer<SyncPulseLogEvent>::rw_vector vec;
+	_sync_pulse_log_queue->get_write_vector (&vec);
+	if (vec.len[0] > 0) {
+		vec.buf[0][0] = ev;
+		_sync_pulse_log_queue->increment_write_ptr (1);
+	}
+}
+#endif
+//------ albEnd ----------------------------------
 
 int
 Engine::generate_sync (nframes_t offset, nframes_t nframes)
@@ -3002,6 +3040,29 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 			//------ albEnd ----------------------------------
 
 			//------ albBegin ----------------------------------
+#ifdef ALB_SYNC_PULSE_LOG
+			// Log a relocate whenever a rolling cycle does not start where
+			// the previous rolling cycle would have carried the transport.
+			// A stop/start with no locate in between is not a relocate: the
+			// frame waits at the expected value while stopped.  JackSync
+			// only ever runs as generate_sync(0, nframes), once per cycle.
+			// Observation only: nothing here affects pulse placement.
+			if (info.state == TransportInfo::ROLLING) {
+				if (_sync_log_have_next && info.framepos != _sync_log_next_framepos) {
+					SyncPulseLogEvent rev = SyncPulseLogEvent();
+					rev.kind     = SyncPulseLogEvent::Relocate;
+					rev.framepos = info.framepos;
+					rev.expected = _sync_log_next_framepos;
+					rev.bpm      = info.bpm;
+					sync_log_push (rev);
+				}
+				_sync_log_next_framepos = info.framepos + nframes;
+				_sync_log_have_next     = true;
+			}
+#endif
+			//------ albEnd ----------------------------------
+
+			//------ albBegin ----------------------------------
 			// Guard: only update tempo from JACK when transport is actually
 			// rolling.  During JackTransportStarting (locate) info.bpm can
 			// be zero or unreliable, triggering set_tempo() unnecessarily.
@@ -3017,6 +3078,22 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 			if (TEMPO_DIFF(_tempo,info.bpm)) {
 #endif
 			//------ albEnd ----------------------------------
+				//------ albBegin ----------------------------------
+#ifdef ALB_SYNC_PULSE_LOG
+				// Log the exact frame of every JACK tempo change, with the
+				// tempo SooperLooper held just before it.  A prev_bpm that
+				// differs from the previous record's bpm means something
+				// else (e.g. an OSC tempo) changed _tempo in between.
+				{
+					SyncPulseLogEvent tev = SyncPulseLogEvent();
+					tev.kind     = SyncPulseLogEvent::TempoChange;
+					tev.framepos = info.framepos;
+					tev.bpm      = info.bpm;
+					tev.prev_bpm = _tempo;
+					sync_log_push (tev);
+				}
+#endif
+				//------ albEnd ----------------------------------
 				set_tempo(info.bpm, true);
 				calculate_tempo_frames ();
 				_tempo_changed = true;
@@ -3158,6 +3235,7 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 						_sync_pulse_log_queue->get_write_vector (&vec);
 						if (vec.len[0] > 0) {
 							SyncPulseLogEvent & pev = vec.buf[0][0];
+							pev.kind         = SyncPulseLogEvent::Pulse;
 							pev.framepos     = info.framepos + offset;
 							pev.thisval      = thisval;
 							pev.diff         = diff;
@@ -3167,9 +3245,17 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 #ifdef ALB_BBT_SYNC
 							pev.beat = pulse_used_bbt ? info.beat : 0;
 							pev.tick = pulse_used_bbt ? info.tick : 0;
+							pev.bar            = pulse_used_bbt ? info.bar : 0;
+							pev.bar_start_tick = pulse_used_bbt ? info.bar_start_tick : 0.0;
+							pev.beats_per_bar  = pulse_used_bbt ? info.beats_per_bar : 0.0f;
+							pev.ticks_per_beat = pulse_used_bbt ? info.ticks_per_beat : 0.0;
 #else
 							pev.beat = 0;
 							pev.tick = 0;
+							pev.bar            = 0;
+							pev.bar_start_tick = 0.0;
+							pev.beats_per_bar  = 0.0f;
+							pev.ticks_per_beat = 0.0;
 #endif
 							pev.use_bbt = pulse_used_bbt;
 							_sync_pulse_log_queue->increment_write_ptr (1);

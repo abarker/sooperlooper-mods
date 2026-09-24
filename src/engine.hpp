@@ -62,6 +62,13 @@ typedef struct _jack_port jack_port_t;
 // times a second at typical tempos), not once per buffer, so this is a
 // small fraction of the audio callback's own call rate.
 //
+// The same log also records transport relocates and JACK tempo changes,
+// each at its exact frame (lines starting "event="), so the grid's
+// relationship to the timebase master's beat can be reconstructed
+// afterwards.  Per buffer this adds one comparison and one addition while
+// rolling; a record is pushed only when a relocate or tempo change
+// actually happens, which is rarer than pulses.
+//
 // Fully additive: no pulse-placement arithmetic is changed anywhere. Purely
 // observes existing values and writes them out.
 //
@@ -102,21 +109,34 @@ namespace SooperLooper {
 
 #ifdef ALB_SYNC_PULSE_LOG
 //------ albBegin ----------------------------------
-// One record per actual JackSync cycle-boundary pulse.  POD by design: no
-// strings, no pointers, safe to build on the stack in the RT callback and
-// copy through a RingBuffer.  See ALB_SYNC_PULSE_LOG above.
+// One record per actual JackSync cycle-boundary pulse, plus one per
+// transport relocate and one per JACK tempo change (see `kind`).  POD by
+// design: no strings, no pointers, safe to build on the stack in the RT
+// callback and copy through a RingBuffer.  See ALB_SYNC_PULSE_LOG above.
 struct SyncPulseLogEvent
 {
-	nframes_t framepos;      // info.framepos + offset: absolute transport
-	                          // frame at which this pulse fired
-	nframes_t thisval;       // computed position within the tempo-frame cycle
-	nframes_t diff;          // computed offset into this buffer
-	double    bpm;           // info.bpm this buffer
-	double    tempo_frames;  // _tempo_frames at this instant
-	float     eighth_cycle;  // _eighth_cycle at this instant
-	int32_t   beat;          // info.beat (0 if the BBT path was not used)
-	int32_t   tick;          // info.tick (0 if the BBT path was not used)
-	bool      use_bbt;       // which formula path fired: BBT vs. frame-0 fallback
+	enum Kind { Pulse = 0, Relocate = 1, TempoChange = 2 };
+	uint8_t   kind;          // which of the three record types this is
+
+	nframes_t framepos;      // Pulse: info.framepos + offset, the absolute
+	                          // transport frame at which this pulse fired.
+	                          // Relocate/TempoChange: info.framepos.
+	nframes_t thisval;       // Pulse: position within the tempo-frame cycle
+	nframes_t diff;          // Pulse: offset into this buffer
+	double    bpm;           // info.bpm this buffer (TempoChange: the new value)
+	double    tempo_frames;  // Pulse: _tempo_frames at this instant
+	float     eighth_cycle;  // Pulse: _eighth_cycle at this instant
+	int32_t   beat;          // Pulse: info.beat (0 if the BBT path was not used)
+	int32_t   tick;          // Pulse: info.tick (0 if the BBT path was not used)
+	bool      use_bbt;       // Pulse: which formula path fired: BBT vs. frame-0 fallback
+	int32_t   bar;            // Pulse: info.bar (0 if the BBT path was not used)
+	double    bar_start_tick; // Pulse: info.bar_start_tick (ditto)
+	float     beats_per_bar;  // Pulse: info.beats_per_bar (ditto)
+	double    ticks_per_beat; // Pulse: info.ticks_per_beat (ditto)
+	nframes_t expected;       // Relocate: frame expected had transport
+	                          // simply rolled on from the previous cycle
+	double    prev_bpm;       // TempoChange: SooperLooper's _tempo just
+	                          // before this JACK tempo was applied
 };
 //------ albEnd ----------------------------------
 #endif // ALB_SYNC_PULSE_LOG
@@ -436,6 +456,15 @@ class Engine
 	// cleanup() -- same lifecycle as _sync_queue.
 	RingBuffer<SyncPulseLogEvent> * _sync_pulse_log_queue;
 	std::FILE *                     _sync_pulse_log_file;
+	// Relocate detection for the log: the frame the next rolling JackSync
+	// cycle should start at if the transport simply rolls on.  Tracked
+	// here because TransportInfo::last_framepos is copied from an
+	// uninitialised local (stock behaviour) and cannot be trusted.
+	nframes_t                       _sync_log_next_framepos;
+	bool                            _sync_log_have_next;
+	// RT-side push of a Relocate/TempoChange record; drops it silently if
+	// the queue is full, same as the Pulse push in generate_sync().
+	void sync_log_push (const SyncPulseLogEvent & ev);
 	//------ albEnd ----------------------------------
 #endif // ALB_SYNC_PULSE_LOG
 };
