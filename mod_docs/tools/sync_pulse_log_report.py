@@ -25,9 +25,12 @@ midway between the two pulses whose tempo differs (roughly +/-0.1 beat
 over a long ramp).
 
 Usage:
-    sync_pulse_log_report.py [LOGFILE] [--timeline N] [--sr 48000]
+    sync_pulse_log_report.py [LOGFILE] [--timeline N] [--current] [--sr 48000]
 
 --timeline N lists every change in predicted offset for session N.
+--current prints only the latest session's current predicted offset, for
+checking on the rig (the log is flushed line by line) whether a live
+test is worth running right now.
 """
 import argparse
 import os
@@ -113,6 +116,8 @@ def main():
                     default=os.path.expanduser(
                         "~/.sooperlooper/logs/sl_sync_pulse.log"))
     ap.add_argument("--timeline", type=int, metavar="N")
+    ap.add_argument("--current", action="store_true",
+                    help="print only the latest session's current offset")
     ap.add_argument("--sr", type=float, default=48000.0,
                     help="sample rate (default 48000)")
     ap.add_argument("--band", type=float, default=0.1,
@@ -122,6 +127,16 @@ def main():
     all_sessions = list(sessions(parse(args.logfile)))
     if not all_sessions:
         sys.exit("no pulses found in %s" % args.logfile)
+
+    if args.current:
+        s = all_sessions[-1]
+        offs = offsets(s)
+        off = offs[-1][1] if offs else 0.0
+        _, cycle_frames, bpm = s["pulses"][-1]
+        ms = off * cycle_frames / args.sr * 1000.0
+        print("session %d, bpm %.1f: predicted offset %+.2f cycle = %+.0f ms"
+              % (len(all_sessions) - 1, bpm, off, ms))
+        return
 
     print("sess  pulses  rolled   tempo-chg  odd-gaps  |offset|>0.1   final")
     for i, s in enumerate(all_sessions):
