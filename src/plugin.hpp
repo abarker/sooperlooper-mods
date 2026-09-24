@@ -317,6 +317,14 @@ typedef struct {
 	// Used together with eighthPerCycle by effectiveLateHitWindow() to
 	// apply an optional fraction-of-eighth cap that tracks live tempo.
 	unsigned long lLastSyncPeriodSamples;
+	// fSyncModeLastBuffer: *pfSyncMode as read at the end of the previous
+	// run() call, used solely to detect an off->on transition of the
+	// Sync port itself (see SYNC_MODE_LATE_HIT_RESET_FIX below, where
+	// this drives a reset of the three fields directly above). Distinct
+	// from the unrelated, pre-existing fSyncMode member elsewhere in
+	// this struct (a per-channel master/slave role flag, not a port
+	// snapshot -- do not confuse the two).
+	LADSPA_Data fSyncModeLastBuffer;
 	//------ albEnd ----------------------------------
 
 	//------ albBegin ----------------------------------

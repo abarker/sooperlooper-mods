@@ -36,7 +36,14 @@ class TestLooper
 	void run (jack_nframes_t offset, jack_nframes_t nframes);
 
 	float get_control_value (int ctrl);
-	
+
+	/* Test-support accessor: exposes the internal SooperLooperI
+	 * lGlobalSamplesSinceSync counter directly, for tests that need to
+	 * prove its value (e.g. that it freezes while fSyncMode == 0 and
+	 * survives a 0->1 toggle) rather than only inferring it from
+	 * button-press behaviour. Read-only, non-RT-path (test harness only). */
+	unsigned long long get_global_samples_since_sync (unsigned int index = 0) const;
+
 	void request_cmd (int cmd);
 	
 	void set_port (int n, float val) {

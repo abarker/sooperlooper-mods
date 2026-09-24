@@ -188,6 +188,16 @@ TestLooper::get_control_value (int ctrl)
 	return 0.0f;
 }
 
+unsigned long long
+TestLooper::get_global_samples_since_sync (unsigned int index) const
+{
+	if (index < _chan_count && _instances[index]) {
+		SooperLooperI * pLS = (SooperLooperI *) _instances[index];
+		return pLS->lGlobalSamplesSinceSync;
+	}
+	return 0;
+}
+
 
 void
 TestLooper::request_cmd (int cmd)

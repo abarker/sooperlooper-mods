@@ -265,6 +265,63 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 #define PAUSE_FROM_MUTE_FIX 1
 //------ albEnd ----------------------------------
 
+//------ albBegin ----------------------------------
+// SYNC_MODE_LATE_HIT_RESET_FIX: compile-time safety switch for a
+// fork-introduced bug (NOT stock -- the vulnerable field and its
+// gating pattern were both added by this fork's own late-hit
+// correction work; see mod_docs/ROADMAP.rst entry 8 for the full
+// investigation writeup).
+//
+// The bug: lGlobalSamplesSinceSync (added in the original Record
+// late-hit correction; also read by the later mute/unmute extension)
+// is incremented and reset entirely inside the `if (fSyncMode >= 1.0f)`
+// block further down in this function (alongside bSyncPulseReceived).
+// While fSyncMode == 0 that whole block is skipped, so the counter
+// FREEZES at whatever value it last held -- it neither increments nor
+// resets (there is nothing rolling to produce a pulse to reset it on).
+// When fSyncMode returns to >= 1.0, the counter resumes incrementing
+// from that stale frozen value; nothing resets it at the transition
+// itself, only the next real sync pulse does. Any button press landing
+// in that gap -- Record start/stop, Insert, Mute, Unmute -- captures a
+// lGlobalSyncAtButtonPress (T) reflecting stale pre-disable timing
+// rather than real elapsed time, and can misfire the late-hit
+// correction on a number with no relationship to any real sync
+// boundary. Reproduced by testdef_stale_sync_counter_after_toggle.py
+// through both the Record and the Mute/Unmute call sites.
+//
+// This is exactly the class of problem Looper::reset_late_hit_state()
+// (looper.cpp, "C6 fix") already guards against -- but that function is
+// only ever called from Engine::update_sync_source(), which fires on a
+// sync-SOURCE change (Event::SyncTo / "sync_source") or add_loop(). It
+// was never wired to the per-loop sync PORT itself (Event::SyncMode,
+// the plain "sync" on/off control -- a per-loop checkbox in slgui, and
+// also what this rig's big_tempo tool toggles via OSC on every JACK
+// transport start/stop) transitioning off->on, which is the trigger
+// this investigation actually found live.
+//
+// The fix lives here rather than in Looper::set_port() (looper.cpp,
+// where update_sync_source()'s equivalent reset is triggered from):
+// this file's test harness (src/test_plugin) drives plugin.cc directly
+// through a minimal TestLooper wrapper that never links looper.cpp at
+// all, so a fix placed in Looper::set_port() would be unverifiable by
+// the very regression tests written for it. Detecting the transition
+// here in run() -- using fSyncModeLastBuffer, a new per-instance field
+// tracking the port's own previous-buffer value -- is exercised
+// identically by the real engine and by the offline test harness,
+// since both ultimately just write into the same shared Sync port and
+// let run() read it each buffer.
+//
+// Safety: this runs in the same place, and at the same rate, as the
+// pre-existing lGlobalSamplesSinceSync increment/reset logic it
+// protects -- a few scalar reads/writes on a per-instance struct field,
+// no lock, no allocation, no syscall.
+//
+// Set to 0 to revert to the pre-fix (buggy) behaviour -- same "just in
+// case" escape hatch PAUSE_FROM_MUTE_FIX and LATE_HIT_MULTIPLY_CORRECTION
+// already provide for other corrections.
+#define SYNC_MODE_LATE_HIT_RESET_FIX 1
+//------ albEnd ----------------------------------
+
 //====== albBegin ==================================================================================
 // SYNCWDEBUG: master switch for ALL debug output in this file.
 // When defined:
@@ -1145,6 +1202,13 @@ activateSooperLooper(LADSPA_Handle Instance) {
   pLS->bSyncPulseReceived = false;
   pLS->lLastSyncPeriodSamples = ULONG_MAX; // sentinel: no period measured yet
   pLS->bLateHitBypassed = false;           // C2 fix: set each buffer by Looper::run()
+  // Initialise as "already on" so the very first run() call after
+  // instantiation never sees a spurious off->on transition (harmless
+  // either way here, since the three fields above are already fresh,
+  // but this keeps SYNC_MODE_LATE_HIT_RESET_FIX's transition check
+  // meaningful only for a real, later toggle). See its comment block
+  // near the top of run() for the full writeup.
+  pLS->fSyncModeLastBuffer = 1.0f;
   //====== albEnd ========
   
   clearLoopChunks(pLS);
@@ -2250,6 +2314,23 @@ runSooperLooper(LADSPA_Handle Instance,
   pLS->bRateCtrlActive = (int) *pLS->pfRateCtrlActive;
 
   fSyncMode = *pLS->pfSyncMode;
+
+  //------ albBegin ----------------------------------
+  // SYNC_MODE_LATE_HIT_RESET_FIX: see this macro's comment block near
+  // the top of this file. Detects the Sync port's own off->on
+  // transition and resets the same three fields
+  // Looper::reset_late_hit_state() already resets for a sync SOURCE
+  // change, so a stale value from before sync was disabled cannot
+  // survive into the first button press after it is re-enabled.
+#if SYNC_MODE_LATE_HIT_RESET_FIX
+  if (fSyncMode >= 1.0f && pLS->fSyncModeLastBuffer < 1.0f) {
+	  pLS->lGlobalSamplesSinceSync = 0;
+	  pLS->bSyncPulseReceived      = false;
+	  pLS->lLastSyncPeriodSamples  = ULONG_MAX;
+  }
+  pLS->fSyncModeLastBuffer = fSyncMode;
+#endif
+  //------ albEnd ----------------------------------
 
   fPlaybackSyncMode = *pLS->pfPlaybackSyncMode;
 
@@ -3594,7 +3675,7 @@ runSooperLooper(LADSPA_Handle Instance,
 	   SYNCWDBG(SL_LOG_RT(
 	       "\n%u:%u  MUTE/PAUSE button: lGlobalSyncAtButtonPress=%llu"
 	       "  windowSamples=%lu  withinMuteWindow=%d  fromState=%d"
-	       "  multiCtrl=%ld  (%.2f ms since boundary, window=%.1f ms)\n",
+	       "  multiCtrl=%d  (%.2f ms since boundary, window=%.1f ms)\n",
 	       pLS->lLoopIndex, pLS->lChannelIndex,
 	       lGlobalSyncAtButtonPress, muteShiftSamples,
 	       (int)withinMuteWindow, (int)pLS->state, lMultiCtrl,
