@@ -95,16 +95,26 @@ def offsets(sess):
     """
     pulses = sess["pulses"]
     exact = sorted(sess["tempos"])  # (frame, bpm) -- empty for old logs
-    first, T0, _ = pulses[0]
+    first, T0, bpm0 = pulses[0]
+    # Cycle length is inversely proportional to bpm: T = K / bpm.
+    K = T0 * bpm0
     master = first / T0
     out = []
-    for (pa, Ta, _), (pb, Tb, bpm_b) in zip(pulses, pulses[1:]):
-        if Ta == Tb:
+    for (pa, Ta, bpm_a), (pb, Tb, bpm_b) in zip(pulses, pulses[1:]):
+        steps = [(f, b) for f, b in exact if pa < f <= pb]
+        if steps:
+            # Exact frames logged: integrate every step, including ramps
+            # with several steps between two pulses.
+            last, bpm = pa, bpm_a
+            for f, b in steps:
+                master += (f - last) * bpm / K
+                last, bpm = f, b
+            master += (pb - last) * bpm / K
+        elif Ta == Tb:
             master += (pb - pa) / Ta
         else:
-            # Where did the tempo change?  Exact frame if logged, else midway.
-            changes = [f for f, _ in exact if pa < f <= pb]
-            fc = changes[-1] if changes else (pa + pb) / 2.0
+            # Old logs: tempo change placed midway between the pulses.
+            fc = (pa + pb) / 2.0
             master += (fc - pa) / Ta + (pb - fc) / Tb
         out.append((pb, wrap(master - pb / Tb), bpm_b))
     return out
