@@ -29,6 +29,15 @@ With JACK running (a dummy backend is sufficient)::
     jackd -d dummy &
     make
 
+The tests run in real time against whatever server they connect to, so
+buffer size matters only for how long they take.  They pass at 48 kHz
+with 256- and 1024-frame buffers (the dummy backend's default is 1024).
+To keep them off a live rig's server, start a separately named one and
+point the tests at it::
+
+    jackd -n sltest -d dummy -r 48000 -p 256 &
+    JACK_DEFAULT_SERVER=sltest python3 -m pytest
+
 This runs SWIG to generate the Python bindings and compiles the shared
 library ``_test_engine.so``.
 

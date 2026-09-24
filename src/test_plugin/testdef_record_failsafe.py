@@ -33,12 +33,13 @@ tests remain meaningful.
 Timing budget (buffer period is real wall-clock time -- this harness runs
 against a live JACK server, not a simulated clock):
   _TEST_SECONDS = 1.5s must clear recordTake()'s own 30+10-buffer settle
-  wait (~0.85s at the 1024/48000 dummy-backend rate used for these tests,
-  ~21.3ms/buffer) with margin, so an ordinary recordTake() never fires it
-  by accident; "let it fire" waits then use ~110 buffers (~2.3s) to clear
-  1.5s with margin the other way.  If the dummy backend's rate/period ever
-  changes, these buffer counts need re-tuning together.
+  wait (~0.85s at 1024 frames/48 kHz, ~0.21s at 256) with margin, so an
+  ordinary recordTake() never fires it by accident.  That holds for any
+  period up to 1024 frames at 48 kHz.  The "let it fire" and "safe leg"
+  waits are specified in seconds and converted to buffers at the
+  server's actual period (buffersFor()), so they hold at any period.
 """
+import math
 import time
 import unittest
 
@@ -52,8 +53,8 @@ TAKE_LEVEL  =  0.5    # the take we want back
 NOISE_LEVEL = -0.9    # what the input is doing while the failsafe is armed
 
 # Small timeout so the failsafe fires within a couple of seconds of real
-# JACK callbacks.  Must clear recordTake()'s own ~0.85s settle wait with
-# margin.  Restored in tearDown.
+# JACK callbacks.  Must clear recordTake()'s own settle wait (~0.85s at
+# 1024 frames) with margin.  Restored in tearDown.
 _TEST_SECONDS = 1.5
 # Not the compiled-in default (that's 0.0, off) -- just a representative
 # non-zero value these tests restore between cases so an accidental leak of
@@ -61,10 +62,11 @@ _TEST_SECONDS = 1.5
 # the feature for it.
 _DEFAULT_SECONDS = 45.0
 
-# Buffers to wait for the failsafe to have clearly fired at _TEST_SECONDS,
-# and buffers to wait for a single record leg that must clearly NOT fire it.
-_FIRE_WAIT_BUFFERS = 110    # ~2.3s at ~21.3ms/buffer -- comfortably over 1.5s
-_SAFE_LEG_BUFFERS  = 15     # ~0.32s -- comfortably under 1.5s
+# Time to wait for the failsafe to have clearly fired at _TEST_SECONDS,
+# and time for a single record leg that must clearly NOT fire it.
+# Converted to buffers by buffersFor() at the server's actual period.
+_FIRE_WAIT_SECONDS = 2.3     # comfortably over 1.5s
+_SAFE_LEG_SECONDS  = 0.32    # comfortably under 1.5s
 
 
 class _AudioHelpers(object):
@@ -74,6 +76,12 @@ class _AudioHelpers(object):
         self.looper = self.engine.looper
         self.looper.set_port(test_engine.DryLevel, 0.0)   # output = pure loop
         self.looper.set_port(test_engine.WetLevel, 1.0)
+
+    def buffersFor(self, seconds):
+        """Whole JACK buffers covering `seconds` at the server's period."""
+        period = (float(self.looper.get_buffer_size())
+                  / float(self.engine.get_sample_rate()))
+        return int(math.ceil(seconds / period))
 
     def waitBuffers(self, n, timeout=5.0):
         """Busy-wait until n more JACK callbacks have completed."""
@@ -125,7 +133,7 @@ class recordFailsafe(_AudioHelpers, testdef_simple_state.simpleStateTest):
         self.engine.request("RECORD")
         self.waitBuffers(2)
         self.assertState("Recording")
-        self.waitBuffers(_FIRE_WAIT_BUFFERS)
+        self.waitBuffers(self.buffersFor(_FIRE_WAIT_SECONDS))
         self.assertState("Recording")   # still recording -- never fired
 
     def testFiresOverExistingTakeAndRestoresIt(self):
@@ -143,7 +151,7 @@ class recordFailsafe(_AudioHelpers, testdef_simple_state.simpleStateTest):
         self.waitBuffers(10)
         self.assertState("Recording")
 
-        self.waitBuffers(_FIRE_WAIT_BUFFERS)      # let the failsafe fire
+        self.waitBuffers(self.buffersFor(_FIRE_WAIT_SECONDS))  # let it fire
         self.assertState("Muted")
 
         mn, mx = self.outputRange(40)
@@ -181,7 +189,7 @@ class recordFailsafe(_AudioHelpers, testdef_simple_state.simpleStateTest):
         for _ in range(6):
             self.looper.input_inject_value = TAKE_LEVEL
             self.engine.request("RECORD")
-            self.waitBuffers(_SAFE_LEG_BUFFERS)
+            self.waitBuffers(self.buffersFor(_SAFE_LEG_SECONDS))
             self.engine.request("RECORD")
             self.waitBuffers(2)
             self.assertState("Playing")
@@ -200,7 +208,7 @@ class recordFailsafe(_AudioHelpers, testdef_simple_state.simpleStateTest):
         self.engine.request("RECORD")
         self.waitBuffers(2)
         self.assertState("Recording")
-        self.waitBuffers(_FIRE_WAIT_BUFFERS)
+        self.waitBuffers(self.buffersFor(_FIRE_WAIT_SECONDS))
         self.assertState("Recording")   # still recording -- never fired
 
     def testDoesNotFireWhenEnteredFromMute(self):
@@ -220,7 +228,7 @@ class recordFailsafe(_AudioHelpers, testdef_simple_state.simpleStateTest):
         self.engine.request("RECORD")
         self.waitBuffers(2)
         self.assertState("Recording")
-        self.waitBuffers(_FIRE_WAIT_BUFFERS)
+        self.waitBuffers(self.buffersFor(_FIRE_WAIT_SECONDS))
         self.assertState("Recording")   # still recording -- never fired
 
     def testManualCancelStillWorksWithFailsafeArmed(self):
