@@ -9,7 +9,15 @@ loops from sllatency's output, through the helper, back to its input, so
 JACK adds one buffer for the loop; the expected round trip is the delay
 plus one buffer.
 
-Usage: test_sllatency.py            (about 30 s)
+The second part runs the whole tool, including SooperLooper: a real
+sooperlooper engine on the same private server, with its home directory
+pointed at a temporary folder.  If --session is given, a *copy* of that
+session file is loaded into it (so the test uses real settings without
+touching the file); otherwise loop 0 gets manual 743/743 latencies over
+OSC.  The loop's measured offset must equal (delay + one buffer) minus
+(input_latency + output_latency).
+
+Usage: test_sllatency.py [--engine PATH] [--session FILE]   (about 90 s)
 """
 import os
 import subprocess
@@ -81,7 +89,96 @@ def run_case(delay, lowpass_hz=None, noise=0.0):
         hw.c.close()
 
 
+def run_tool(delay, sl_port, sl_client):
+    """Run the sllatency command line through the fake hardware; return
+    (round trip, loop offset) parsed from its report, and the report."""
+    hw = FakeHardware(delay)
+    hw.c.activate()
+    try:
+        out = subprocess.run(
+            [sys.executable, os.path.join(HERE, "sllatency.py"), "--yes",
+             "--out", "fakehw:in", "--in", "fakehw:out",
+             "--sl-port", str(sl_port), "--sl-client", sl_client],
+            capture_output=True, text=True, timeout=90).stdout
+    finally:
+        hw.c.deactivate()
+        hw.c.close()
+    rt = off = None
+    for line in out.splitlines():
+        if "Round trip:" in line:
+            rt = float(line.split("Round trip:")[1].split()[0])
+        if "loop playback is" in line:
+            off = float(line.split("loop playback is")[1].split()[0])
+    return rt, off, out
+
+
+def sl_tests(engine, session):
+    import shutil, tempfile
+    sys.path.insert(0, HERE)
+    tmp = tempfile.mkdtemp(prefix="sllat_sl_")
+    port = 19500 + os.getpid() % 400
+    client = "sl_test"
+    eng = subprocess.Popen([engine, "-S", SERVER, "-p", str(port), "-l", "1",
+                            "-c", "2", "-j", client],
+                           env=dict(os.environ, HOME=tmp),
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    fails = 0
+    try:
+        time.sleep(3.0)
+        sl = sllatency.SooperLooper("127.0.0.1", port)
+        if session:
+            copy = os.path.join(tmp, "session_copy.slsess")
+            shutil.copy(session, copy)
+            sl.send("/load_session", copy, sl.url, "/err")
+            time.sleep(2.0)
+        else:
+            sl.set("autoset_latency", 0.0, loop=0)
+            sl.set("input_latency", 743.0, loop=0)
+            sl.set("output_latency", 743.0, loop=0)
+            sl.set("trigger_latency", 0.0, loop=0)
+        il = sl.get("input_latency", loop=0); ol = sl.get("output_latency", loop=0)
+        auto = sl.get("autoset_latency", loop=0)
+        before = {g: sl.get(g) for g in ("sync_source", "tempo", "eighth_per_cycle")}
+        before["loop0 quantize"] = sl.get("quantize", loop=0)
+        print("SooperLooper loop 0: input_latency %s output_latency %s autoset %s%s"
+              % (il, ol, auto, " (from a copy of %s)" % session if session else ""))
+        for delay in (1230, 1486, 1000):
+            rt, off, report = run_tool(delay, port, client)
+            exp_rt = delay + PERIOD
+            exp_off = exp_rt - (il + ol)
+            # SooperLooper's own record/playback arithmetic leaves a fixed
+            # offset of about 3 samples (0.06 ms); allow 5.
+            ok = (rt is not None and off is not None and abs(rt - exp_rt) <= 0.5
+                  and abs(off - exp_off) <= 5.0)
+            fails += not ok
+            print("%s delay %5d: round trip %s (expected %d), loop offset %s "
+                  "(expected %+g)" % ("PASS" if ok else "FAIL", delay, rt, exp_rt,
+                                      off, exp_off))
+            if not ok:
+                print(report)
+        n = sl.ping()
+        after = {g: sl.get(g) for g in ("sync_source", "tempo", "eighth_per_cycle")}
+        after["loop0 quantize"] = sl.get("quantize", loop=0)
+        ok = n == 1 and after == before
+        fails += not ok
+        print("%s temporary loop removed and settings restored (loop count %s; "
+              "before %s, after %s)" % ("PASS" if ok else "FAIL", n, before, after))
+    finally:
+        eng.terminate()
+        try:
+            eng.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            eng.kill()
+        shutil.rmtree(tmp, ignore_errors=True)
+    return fails
+
+
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--engine", default=os.path.join(HERE, "..", "src", "sooperlooper"))
+    ap.add_argument("--session", help="SooperLooper session file to load a copy of")
+    args = ap.parse_args()
     os.environ["JACK_DEFAULT_SERVER"] = SERVER
     os.environ["JACK_NO_START_SERVER"] = "1"
     jackd = subprocess.Popen(["jackd", "-n", SERVER, "-d", "dummy", "-r", str(SR),
@@ -107,6 +204,7 @@ def main():
                   "expected %d (+/-%.1f), xruns %d"
                   % ("PASS" if ok else "FAIL", delay, lp, noise, len(lags), med,
                      expect, tol, xruns))
+        fails += sl_tests(args.engine, args.session)
     finally:
         jackd.terminate()
         jackd.wait(timeout=5)
