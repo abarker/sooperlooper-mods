@@ -500,7 +500,7 @@ testing shows the compensation is a little too high or too low.
 **Using the drum-beat method:** Subtract JACK's known buffer contribution from
 the measured total and split the remainder evenly between the two fields::
 
-   hw_latency_total = measured_offset - (nperiods + 1) × period_size
+   hw_latency_total = measured_offset - nperiods × period_size
    Input Latency    = hw_latency_total / 2
    Output Latency   = hw_latency_total / 2
 
@@ -523,19 +523,24 @@ Settings: **256 frames/period**, **3 periods/buffer**, **48 kHz**.
 
 JACK's internal buffer contribution::
 
-   (nperiods + 1) × period_size = (3 + 1) × 256 = 1024 frames
+   nperiods × period_size = 3 × 256 = 768 frames
 
 Measured round-trip (``jack_iodelay`` or drum-beat method): approximately
-**1486 frames** (**30.9 ms**).
+**1458 frames** (**30.4 ms**).
 
 QJackctl hardware latency::
 
-   hw_total   = 1486 - 1024 = 462 frames  (~9.6 ms)
-   each box   = 462 / 2     = 231 frames  (~4.8 ms)
+   hw_total   = 1458 - 768 = 690 frames  (~14.4 ms)
+   each box   = 690 / 2    = 345 frames  (~7.2 ms)
+
+This setup has 343 in each box, which JACK then reports as a 1454-frame round
+trip -- a few frames short of the measurement, well within what matters.
 
 SooperLooper latency settings (compensating for the full round-trip directly,
-independent of QJackctl): approximately **743 frames** (**15.5 ms**) for both
-SL input and SL output latency, summing to ~1486 frames.
+independent of QJackctl): a total of about **1470 frames** (**30.6 ms**) --
+the round trip plus the 16 frames of plugin latency on the Ardour route that
+SooperLooper's output goes through -- split evenly, about **735 frames** each
+for SL input and SL output latency (see section 2.8).
 
 2.6 Why SooperLooper needs its own latency settings
 -----------------------------------------------------
@@ -665,13 +670,13 @@ in the selection clock above the tracks give the offset as End minus Start.
 -------------------------------------------------------------
 
 Both SL latency settings shift newly recorded material earlier. For a **plain
-loop** -- record, then play -- only their *sum* matters; the whole ~1486 frames
+loop** -- record, then play -- only their *sum* matters; the whole ~1470 frames
 could go into either box.
 
 **Overdubs** are different. An overdub plays the existing loop back *while*
 recording new material on top, so playback delay and capture delay act on two
 different signals. That is why the total is split roughly evenly (SL input
-latency ~743 / SL output latency ~743).
+latency ~735 / SL output latency ~735).
 
 *Overdub split test:* For this test, **turn the SooperLooper monitor up**
 (the opposite of the regular calibration test described in section 2.7 above).

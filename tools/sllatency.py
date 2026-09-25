@@ -439,11 +439,10 @@ class SLRun:
         print()
         explain("""
             Input and output latency are what this tool checks.  Trigger latency
-            is separate: SooperLooper moves commands that arrive without an exact
-            time (OSC, ALSA MIDI) that many samples earlier.  Commands on this
-            fork's JACK MIDI input are run at their exact sample (the buffer is
-            split there), so they need none: 0 is right when all commands come
-            that way.  Autoset sets one buffer.  This tool leaves it as it is.
+            is separate: it is how late SooperLooper takes a command to arrive
+            after the press, and it only changes where overdub, multiply,
+            insert, replace and substitute start taking input.  Autoset sets one buffer.  This
+            tool leaves it as it is.
         """)
         if self.saved.get("auto_disable_latency") and (self.common_dry or 0) > 0:
             print()
