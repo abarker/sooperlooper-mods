@@ -163,6 +163,7 @@ def sl_tests(engine, session):
                                       off, exp_off))
             if not ok:
                 print(report)
+        fails += autoset_row_tests(sl, port, client)
         fails += apply_save_tests(sl, port, client, tmp, session, il, ol)
         n = sl.ping()
         after = {g: sl.get(g) for g in ("sync_source", "tempo", "eighth_per_cycle")}
@@ -178,6 +179,49 @@ def sl_tests(engine, session):
         except subprocess.TimeoutExpired:
             eng.kill()
         shutil.rmtree(tmp, ignore_errors=True)
+    return fails
+
+
+def autoset_row_tests(sl, port, client):
+    """The "autoset would use" row must follow SooperLooper's own rule: with
+    use_common_ins/outs on it reads the common ports, which the rig leaves
+    unconnected (JACK reports 0), not loop 0's own ports."""
+    fails = 0
+    before = {k: sl.get(k, loop=0) for k in ("use_common_ins", "use_common_outs")}
+    wires = (("system:capture_1", "%s:loop0_in_1" % client),
+             ("%s:loop0_out_1" % client, "system:playback_1"))
+    c = jack.Client("autoset_row_test", no_start_server=True)
+    c.activate()
+    try:
+        for src, dst in wires:
+            c.connect(src, dst)
+        cap = sllatency.port_latency(c.get_port_by_name("system:capture_1"), False)[1]
+        pb = sllatency.port_latency(c.get_port_by_name("system:playback_1"), True)[1]
+        for common, expect, short in ((1.0, (0, 0), True), (0.0, (cap, pb), False)):
+            sl.set("use_common_ins", common, loop=0)
+            sl.set("use_common_outs", common, loop=0)
+            time.sleep(0.3)
+            _, _, report = run_tool(1230, port, client)
+            row = [l for l in report.splitlines() if "autoset would use" in l]
+            got = tuple(int(v) for v in row[0].split("autoset would use")[1].split()[:2]) \
+                if row else None
+            said_short = "Autoset would come out short" in report
+            ok = got == expect and said_short == short
+            fails += not ok
+            print("%s autoset row with use_common %d: %s (expected %s), short note %s"
+                  % ("PASS" if ok else "FAIL", common, got, expect, said_short))
+            if not ok:
+                print(report)
+    finally:
+        for src, dst in wires:
+            try:
+                c.disconnect(src, dst)
+            except jack.JackError:
+                pass
+        c.deactivate()
+        c.close()
+        for k, v in before.items():
+            sl.set(k, v, loop=0)
     return fails
 
 

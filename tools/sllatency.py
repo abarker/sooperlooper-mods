@@ -415,6 +415,11 @@ class SLRun:
         self.saved = {g: sl.get(g) for g in self.GLOBALS}
         self.loop0 = ({k: sl.get(k, loop=0) for k in self.LATENCY}
                       if self.loops else {})
+        # Autoset reads the common ports' latency instead of the loop's own
+        # when these are on (Looper::recompute_latencies()).
+        self.loop0_common = ({k: sl.get(k, loop=0)
+                              for k in ("use_common_ins", "use_common_outs")}
+                             if self.loops else {})
         self.common_dry = sl.get("dry", loop=-2)
         # SooperLooper spaces its sync pulses by loop 0's quantize setting
         # (Engine::calculate_tempo_frames() reads the first loop), not the
@@ -706,14 +711,16 @@ examples:
         sys.exit("sllatency: could not find ports; give --out and --in")
     lat_out = port_latency(probe.get_port_by_name(outs[0]), playback=True)
     lat_in = port_latency(probe.get_port_by_name(inp), playback=False)
-    sl_lat_in = sl_lat_out = None
-    try:
-        sl_lat_in = port_latency(probe.get_port_by_name(
-            "%s:loop0_in_1" % args.sl_client), playback=False)
-        sl_lat_out = port_latency(probe.get_port_by_name(
-            "%s:loop0_out_1" % args.sl_client), playback=True)
-    except jack.JackError:
-        pass
+    # SooperLooper's port latencies: loop 0's own ports and the common ones.
+    sl_ports = {}
+    for name, playback in (("loop0_in_1", False), ("loop0_out_1", True),
+                           ("common_in_1", False), ("common_out_1", True)):
+        try:
+            r = port_latency(probe.get_port_by_name(
+                "%s:%s" % (args.sl_client, name)), playback=playback)
+        except jack.JackError:
+            r = None
+        sl_ports[name] = r[1] if r else None
     probe.close()
     js = jack_settings()
 
@@ -859,9 +866,12 @@ examples:
     # the hardware, i.e. when it is not less than the hardware's own.
     downstream = 0
     unrouted = False
-    if sl_lat_out and lat_out:
-        if sl_lat_out[1] >= lat_out[1]:
-            downstream = sl_lat_out[1] - lat_out[1]
+    outs_sl = [v for v in (sl_ports.get("loop0_out_1"), sl_ports.get("common_out_1"))
+               if v is not None]
+    sl_out = max(outs_sl) if outs_sl else None
+    if sl_out is not None and lat_out:
+        if sl_out >= lat_out[1]:
+            downstream = sl_out - lat_out[1]
         else:
             unrouted = True
     heard = e + downstream
@@ -890,12 +900,29 @@ examples:
         return 0
     il, ol = int(l0["input_latency"]), int(l0["output_latency"])
     total = il + ol + int(round(heard))
-    if sl_lat_in and sl_lat_out and sl_lat_in[1] + sl_lat_out[1] > 0:
-        auto_in, auto_out = sl_lat_in[1], sl_lat_out[1]
-        new_in, new_out = split_total(total, auto_in, auto_out)
+    # JACK's latency along the path the audio actually takes: an unconnected
+    # port reports 0, so take whichever of the loop's own and the common
+    # port is larger.
+    def path(a, b):
+        vals = [v for v in (sl_ports.get(a), sl_ports.get(b)) if v is not None]
+        return max(vals) if vals else None
+    jack_in = path("loop0_in_1", "common_in_1")
+    jack_out = path("loop0_out_1", "common_out_1")
+    if jack_in is not None and jack_out is not None and jack_in + jack_out > 0:
+        new_in, new_out = split_total(total, jack_in, jack_out)
     else:
-        auto_in = auto_out = None
+        jack_in = jack_out = None
         new_in, new_out = split_total(total, il, ol)
+    # What autoset would set: the same rule SooperLooper uses.
+    common = sl_run.loop0_common
+    auto_in = sl_ports.get("common_in_1" if common.get("use_common_ins")
+                           else "loop0_in_1")
+    auto_out = sl_ports.get("common_out_1" if common.get("use_common_outs")
+                            else "loop0_out_1")
+    if auto_in is None or auto_out is None:
+        auto_in = auto_out = None
+    auto_misses = (auto_in is not None and jack_in is not None
+                   and (auto_in < jack_in or auto_out < jack_out))
     print()
     row = "   %-32s %7s %7s %7s"
     say(row % ("SooperLooper latency (samples)", "input", "output", "total"))
@@ -905,13 +932,28 @@ examples:
         say(row % ("autoset would use", auto_in, auto_out, auto_in + auto_out))
     say(row % ("measured best", new_in, new_out, total))
     print()
-    if auto_in is not None:
+    if jack_in is not None:
         explain("""
-            Autoset copies JACK's latencies for SooperLooper's own ports.  The
-            measured best keeps JACK's split between input and output and
+            Autoset copies the latencies JACK reports for SooperLooper's ports.
+            The measured best keeps JACK's split between input and output and
             corrects the total by what was measured.  The total sets how loops
             line up; input latency also sets where each recording starts.
         """)
+        if auto_misses:
+            print()
+            explain("""
+                Autoset would come out short here: with use_common_ins/outs on,
+                it reads SooperLooper's common ports, which are not connected
+                (JACK reports 0 latency for an unconnected port), not the loop's
+                own ports that carry the audio.
+            """)
+        if not l0.get("autoset_latency"):
+            print()
+            explain("""
+                Turning autoset on replaces the hand-set values in the running
+                SooperLooper, and turning it off again does not bring them back.
+                The session file keeps them until it is saved.
+            """)
     else:
         explain("""
             JACK gives no latencies for SooperLooper's ports, so the measured
