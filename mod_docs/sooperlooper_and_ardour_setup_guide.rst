@@ -255,10 +255,12 @@ with the remapper adding long-press gestures on top. The four-button switch's
 fourth button toggles the Hydrogen drums on and off, and on a long press
 returns to the drum-control bank (patterns, tempo, and so on).
 
-Gestures normally cost latency: to tell a long press apart from a plain press,
-the remapper must wait out a threshold before it knows which gesture occurred,
-and only then fire. **Record is the most latency-sensitive action in the
-setup**, so it cannot afford that wait. The remapper avoids the cost with an
+Gestures normally cost latency. To tell a plain press from a long press, the
+remapper has to wait for the release: a quick release means a plain press, so
+the plain command fires on the release, as late as the press was long. A
+double tap costs more: a plain press can only fire once the double-tap window
+has passed without a second press. **Record is the most latency-sensitive
+action in the setup**, so it cannot afford even the wait for the release. The remapper avoids the cost with an
 **eager single**: the single-press command fires *immediately*, and then --
 only if the button is still held past the long-press threshold -- the gesture's
 additional command(s) fire as well. The first press keeps zero added latency;
@@ -580,14 +582,17 @@ moves the newly-recorded material to the **left** (earlier in time);
    * At best it copies the numbers JACK reports, which are only as
      accurate as the QJackctl latency fields; a measurement is better.
 
-   If you want autoset anyway with individually connected loops, edit the
-   session file while SooperLooper is not running: on each loop's line,
-   change ``use_common_ins`` and ``use_common_outs`` to ``"no"`` and
-   ``auto_latency`` to ``"yes"``. (A loop's **main in** checkbox in slgui is
-   the same setting as ``use_common_ins``; there is no slgui control for
-   ``use_common_outs``.) This also stops those loops taking input from, and
-   sending output to, the main ports, which only matters if something is
-   connected to them.
+   SooperLooper's main ports are the ones JACK lists as
+   ``sooperlooper:common_in_1``, ``common_out_1`` and so on; each loop also
+   has its own (``loop0_in_1``, ``loop0_out_1``, ...). If you use the main
+   ports, autoset reads the right ones. If you connect loops individually
+   and want autoset anyway, edit the session file while SooperLooper is not
+   running: on each loop's line, change ``use_common_ins`` and
+   ``use_common_outs`` to ``"no"`` and ``auto_latency`` to ``"yes"``. (A
+   loop's **main in** checkbox in slgui is the same setting as
+   ``use_common_ins``; there is no slgui control for ``use_common_outs``.)
+   This also stops those loops taking input from, and sending output to, the
+   main ports, which only matters if something is connected to them.
 
 2.7 The monitor-feedback calibration method
 --------------------------------------------
