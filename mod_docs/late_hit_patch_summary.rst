@@ -187,34 +187,15 @@ A concise inventory of all significant capabilities added to SooperLooper
   and sends MIDI Start / Stop on JACK Transport transitions.  Replaces the need
   for ``a2jmidid`` when driving external hardware from SooperLooper.
 
-- **BBT-based JackSync pulse placement** (``ALB_BBT_SYNC``).
-  The sync-pulse generator uses JACK BBT position fields supplied by the
-  timebase master (``bar_start_tick``, ``beat``, ``bpm``, ``ticks_per_beat``)
-  to anchor sync pulses to the master's musical grid.  Correctly handles
-  locates to non-zero transport positions and mid-transport Eighths/Cycle
-  changes.  Falls back automatically to the stock ``fmod(framepos,
-  _tempo_frames)`` arithmetic when the timebase master does not supply BBT
-  data, or when the compile flag is disabled.
+- **JACK BBT position fields** (``ALB_BBT_SYNC``).  The timebase master's
+  bar/beat/tick position is read into ``TransportInfo``.  The pulse-placement
+  arithmetic built on it reduces to the stock frame-based grid, so it does
+  not change where sync pulses fall (see `JACK BBT Position Fields`_).
 
-  **Bug fixed (integer tick truncation):** the initial implementation used
-  ``info.tick`` (the integer-truncated tick-within-beat field) to compute the
-  phase of the current buffer relative to the cycle grid.  Because
-  ``jack_position_t.tick`` is the floor of the true fractional tick, the
-  accumulated integer tick count periodically lands on an exact multiple of
-  ``ticks_per_cycle`` (960 for QUANT_8TH) even when the true fractional
-  position is just past the boundary.  This caused a spurious second sync
-  pulse — 4 samples after the legitimate boundary-crossing pulse — which
-  produced double pulses that split loop recordings short.  The symptom was
-  loop lengths differing from the expected value by multiples of the JACK
-  buffer size (256 samples), with the magnitude and sign varying per recording.
-
-  The fix replaces the tick-based phase formula with a frame-based one that
-  uses only ``bar_start_tick`` (an exact integer) to compute
-  ``bar_start_frame``, then derives a ``phase_shift`` that aligns
-  ``fmod(frame_in_cycle, _tempo_frames)`` to the timebase master's bar grid.
-  The ``tick`` field is never used.  This is algebraically equivalent to the
-  stock ``fmod(framepos, _tempo_frames)`` formula for normal operation and
-  correctly re-anchors to the master's grid after a locate.
+- **JackSync beat tracking** (``ALB_JACK_BEAT_TRACKING``, off by default
+  until field-tested).  JackSync pulses follow a beat count carried through
+  tempo changes, so they stay on the timebase master's beat when the tempo
+  changes while the transport is rolling (see `JackSync Beat Tracking`_).
 
 .. rubric:: RT-Safety Fixes
 
@@ -628,31 +609,16 @@ The result is that JACK MIDI controller presses are handled with higher timing a
 than ALSA MIDI.
 
 
-BBT-Based JackSync Pulse Placement
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+JACK BBT Position Fields
+~~~~~~~~~~~~~~~~~~~~~~~~
 
-When ``ALB_BBT_SYNC`` is defined (the default), ``Engine::generate_sync()``
-uses JACK BBT position fields from the timebase master to determine where sync
-pulses fall within each buffer, rather than computing position as
-``fmod(framepos, _tempo_frames)`` anchored to JACK frame 0.
+When ``ALB_BBT_SYNC`` is defined (the default),
+``JackAudioDriver::get_transport_info()`` fills five extra ``TransportInfo``
+fields when the timebase master sets the ``JackPositionBBT`` valid bit:
+``bar``, ``beat``, ``bar_start_tick``, ``ticks_per_beat`` and ``bbt_valid``
+(``tick`` is copied too).
 
-The stock formula breaks in two real scenarios.  First, after a transport
-locate to a non-zero position: ``fmod(new_pos, _tempo_frames)`` gives a
-non-zero phase offset unless the locate target happens to be an exact multiple
-of ``_tempo_frames`` from frame 0, which it generally is not.  Second, after a
-mid-transport Eighths/Cycle change: ``_tempo_frames`` updates immediately, but
-``fmod(framepos, new_tempo_frames)`` then anchors to a different grid from what
-the timebase master uses.  Both problems are avoided in practice by always
-locating to position 0 before recording, but the BBT path makes the code
-correct unconditionally.
-
-Five additional fields are now populated in ``TransportInfo`` by
-``JackAudioDriver::get_transport_info()`` when the timebase master has set
-the ``JackPositionBBT`` valid bit: ``bar``, ``beat``, ``bar_start_tick``,
-``ticks_per_beat``, and the ``bbt_valid`` flag.  (``tick`` is also copied
-but is not used by the formula; see the bug-fix note in
-`What This Patch Adds at a Glance`_.)
-If ``bbt_valid`` is true, ``generate_sync()`` computes:
+``generate_sync()`` has a branch that uses them:
 
 .. code-block::
 
@@ -661,28 +627,52 @@ If ``bbt_valid`` is true, ``generate_sync()`` computes:
     frame_in_cycle  = (framepos + offset) − phase_shift
     thisval         = lrint(fmod(frame_in_cycle, _tempo_frames))
 
-Because ``bar_start_tick`` is an exact integer supplied by the timebase
-master, ``bar_start_frame`` is computed without rounding through an
-integer tick accumulator.  The ``phase_shift`` value is the frame of the
-most-recent cycle boundary on or before ``bar_start_frame``, which aligns
-the ``fmod`` grid to the
-master's bar grid.  The result is numerically equivalent to the stock
-``fmod(framepos, _tempo_frames)`` formula when starting from the transport
-origin, and correctly re-anchors after any locate.
+``phase_shift`` is a whole number of cycles by construction, so
+``fmod(frame_in_cycle, _tempo_frames)`` always equals
+``fmod(framepos + offset, _tempo_frames)``: pulses fall exactly where the
+stock formula puts them, anchored to JACK frame 0.  The branch therefore does
+not re-anchor pulses to the master's bar, and makes no difference to
+Eighths/Cycle changes.  (Hydrogen in pattern mode also sends constant
+bar/beat/tick values, so there would be no position to anchor to in any
+case.)
 
-Because ``_tempo_frames`` already encodes the correct cycle length for the
-current quantize mode (QUANT_8TH or QUANT_CYCLE), the formula is correct
-for both modes without any quantize-mode branching.
+What the stock grid gets right and wrong with a master such as Hydrogen
+1.2: after a locate, the master recomputes its position from the frame, so
+the frame-based grid lines up with its beat again.  After a tempo change made
+while the transport is rolling, the master keeps its beat continuous but the
+frame-based grid jumps, leaving pulses off the beat by up to half a cycle
+until the next locate.  ``ALB_JACK_BEAT_TRACKING`` addresses that.
 
-The ``beat_type == 4`` guard limits the BBT path to quarter-note beat signatures
-(the universal case for Hydrogen and essentially all JACK timebase masters).
-Any other denominator falls through to the stock ``fmod`` path rather than
-computing wrongly.  PipeWire's JACK compatibility layer implements the full BBT
-API; no special handling is needed.
+Commenting out ``#define ALB_BBT_SYNC`` in ``audio_driver.hpp`` removes the
+fields and the branch; pulse placement is unchanged either way.
 
-Commenting out ``#define ALB_BBT_SYNC`` in ``audio_driver.hpp`` removes the BBT
-fields from ``TransportInfo`` entirely and restores verbatim stock
-``generate_sync()`` behaviour.
+JackSync Beat Tracking
+~~~~~~~~~~~~~~~~~~~~~~
+
+When ``ALB_JACK_BEAT_TRACKING`` is defined in ``engine.hpp`` (commented out by
+default until field-tested), ``generate_sync()`` places JackSync pulses, and
+the GUI's beat indicator, from a running beat count instead of
+``fmod(framepos, _tempo_frames)``:
+
+* each rolling cycle it advances by ``nframes × bpm / (60 × SR)``, using the
+  tempo JACK reports for that cycle, so a tempo change alters the rate but not
+  the position;
+* while stopped it does not advance, and a stop/start that resumes at the
+  same frame continues where it left off;
+* on a relocate it re-anchors to ``framepos × bpm / (60 × SR)``, which is where
+  a master that recomputes its position from the frame puts its beat.
+
+At constant tempo since the last relocate it gives the same pulses as the
+stock formula, to within one sample.
+
+It also changes how ``TransportInfo`` is read: the struct is
+value-initialised (stock reads some fields uninitialised), the
+tempo is taken from JACK only when the master publishes one, and the
+backwards-locate reset of the loops' relative-sync counters uses the
+tracker's record of the previous frame.
+
+The arithmetic lives in ``src/beat_tracker.hpp``; ``src/test_beat_tracker``
+has its unit tests and a JACK integration test.
 
 New Tool: ``slbigstate``
 --------------------------
@@ -927,13 +917,17 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING`` and
    * - ``ALB_BBT_SYNC``
      - ``audio_driver.hpp``
      - defined
-     - **When defined (default):** adds BBT fields to ``TransportInfo``;
-       ``generate_sync()`` uses them to anchor JackSync pulses to the timebase
-       master's musical grid, with automatic runtime fallback to
-       ``fmod(framepos)`` when BBT data is unavailable.  **When not defined:**
-       BBT fields are absent from ``TransportInfo`` and ``generate_sync()``
-       uses the stock ``fmod(framepos, _tempo_frames)`` arithmetic in all
-       cases — identical to stock SooperLooper 1.7.9 JackSync behaviour.
+     - **When defined (default):** adds BBT fields to ``TransportInfo`` and a
+       ``generate_sync()`` branch that uses them; the branch places pulses
+       exactly where the stock formula does.  **When not defined:** the
+       fields and branch are absent.  Pulse placement is the same either way.
+   * - ``ALB_JACK_BEAT_TRACKING``
+     - ``engine.hpp``
+     - *(commented out)*
+     - **When defined:** JackSync pulses follow a beat count carried through
+       tempo changes, and ``TransportInfo`` is value-initialised (see
+       `JackSync Beat Tracking`_).  **When not defined (default until
+       field-tested):** stock JackSync pulse placement.
    * - ``ALB_SYNC_PULSE_LOG``
      - ``engine.hpp``
      - *(commented out)*
