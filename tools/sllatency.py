@@ -596,27 +596,46 @@ def split_total(total, base_in, base_out):
 def main():
     ap = argparse.ArgumentParser(
         prog="sllatency",
-        description="Measure JACK round-trip latency with a click and check "
-                    "SooperLooper's latency compensation.")
-    ap.add_argument("--out", action="append",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Measure JACK's audio round-trip latency with a click, and\n"
+                    "check SooperLooper's latency compensation.",
+        epilog="""how to use:
+  Start JACK and SooperLooper (with its usual session), hold the headphones
+  against the mic SooperLooper records from -- or connect a cable from an
+  output to that input -- and run sllatency.  It asks which outputs your
+  headphones hear, plays a click for about 15 s, records it with a
+  temporary SooperLooper loop (removed afterwards, settings restored), then
+  reports whether JACK's and SooperLooper's latency settings are right and
+  offers to apply and save new SooperLooper values.  Best run right after
+  starting SooperLooper; don't touch the pedals during the run.
+
+examples:
+  sllatency                                   ask as it goes
+  sllatency --session-file ~/sl/my.slsess     also offer to save there
+  sllatency --no-sl --in system:capture_2     round trip only
+  sllatency --yes --out system:playback_1     no questions, report only""")
+    ap.add_argument("--out", action="append", metavar="PORT",
                     help="JACK port to play the click to (repeatable).  Default: "
                          "ask, suggesting the outputs a DAW's master feeds.")
-    ap.add_argument("--in", dest="inp",
+    ap.add_argument("--in", dest="inp", metavar="PORT",
                     help="JACK port the click comes back on.  Default: the "
                          "capture port feeding SooperLooper's loop 0, else the "
                          "first physical capture port.")
-    ap.add_argument("--bpm", type=float, default=120.0)
-    ap.add_argument("--level", type=float, default=0.3,
+    ap.add_argument("--bpm", type=float, default=120.0, metavar="N",
+                    help="click tempo (default 120)")
+    ap.add_argument("--level", type=float, default=0.3, metavar="X",
                     help="click amplitude, 0-1 (default 0.3)")
-    ap.add_argument("--max-latency", type=float, default=250.0,
+    ap.add_argument("--max-latency", type=float, default=250.0, metavar="MS",
                     help="largest round trip searched, ms (default 250)")
-    ap.add_argument("--tolerance", type=float, default=1.0,
+    ap.add_argument("--tolerance", type=float, default=1.0, metavar="MS",
                     help="difference treated as nothing to fix, ms (default 1)")
-    ap.add_argument("--sl-host", default="127.0.0.1")
-    ap.add_argument("--sl-port", type=int, default=9951)
-    ap.add_argument("--sl-client", default="sooperlooper",
+    ap.add_argument("--sl-host", default="127.0.0.1", metavar="HOST",
+                    help="SooperLooper's OSC host (default 127.0.0.1)")
+    ap.add_argument("--sl-port", type=int, default=9951, metavar="N",
+                    help="SooperLooper's OSC port (default 9951)")
+    ap.add_argument("--sl-client", default="sooperlooper", metavar="NAME",
                     help="SooperLooper's JACK client name (default sooperlooper)")
-    ap.add_argument("--session-file",
+    ap.add_argument("--session-file", metavar="FILE",
                     help="the SooperLooper session file loaded at startup, to "
                          "save new values in.  Remembered for later runs.")
     ap.add_argument("--no-sl", action="store_true",
