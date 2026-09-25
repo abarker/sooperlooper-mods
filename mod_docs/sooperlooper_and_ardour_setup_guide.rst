@@ -563,6 +563,32 @@ As a practical guide when calibrating: **increasing** either latency value
 moves the newly-recorded material to the **left** (earlier in time);
 **decreasing** it moves material to the **right** (later in time).
 
+.. note::
+
+   Setting these values by hand, as measured in section 2.7, is recommended
+   over SooperLooper's automatic option (the autoset toggle in slgui's
+   **Preferences -> Latency**):
+
+   * Autoset reads the latency of SooperLooper's **main** inputs and
+     outputs, not each loop's own ports. Loops connected individually --
+     the usual way when each loop gets its own track or bus in the DAW --
+     leave the main ports unconnected, and autoset then sets both values
+     to 0.
+   * Turning autoset on replaces the hand-set values in the running
+     SooperLooper, and turning it off again does not bring them back.
+     Reload the session to recover them.
+   * At best it copies the numbers JACK reports, which are only as
+     accurate as the QJackctl latency fields; a measurement is better.
+
+   If you want autoset anyway with individually connected loops, edit the
+   session file while SooperLooper is not running: on each loop's line,
+   change ``use_common_ins`` and ``use_common_outs`` to ``"no"`` and
+   ``auto_latency`` to ``"yes"``. (A loop's **main in** checkbox in slgui is
+   the same setting as ``use_common_ins``; there is no slgui control for
+   ``use_common_outs``.) This also stops those loops taking input from, and
+   sending output to, the main ports, which only matters if something is
+   connected to them.
+
 2.7 The monitor-feedback calibration method
 --------------------------------------------
 
