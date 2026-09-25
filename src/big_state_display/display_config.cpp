@@ -60,6 +60,12 @@ DisplayConfig::config_path () const
 void
 DisplayConfig::load ()
 {
+	// A missing file is normal (it is created on first exit with this
+	// layout); skip parsing it so libxml does not print an "I/O warning:
+	// failed to load external entity" to the terminal.
+	if (!wxFileExists (config_path())) {
+		return;
+	}
 	string configfname (static_cast<const char *> (config_path().fn_str()));
 	XMLTree configdoc (configfname);
 
