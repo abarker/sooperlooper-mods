@@ -842,12 +842,11 @@ examples:
             samples), so the delay through the program itself is %.1f samples
             (%.2f ms).  There is no QJackctl setting to compare with.
 
-            Caution: connecting a program's output back to its input this way
-            is a feedback loop as far as the program is concerned.  Ardour
-            lights its "No Align" warning and reports a larger latency to JACK
-            on every run, and keeps both afterwards, which would skew a
-            SooperLooper check.  Restart the program (for Ardour, deactivating
-            and reactivating a bus also clears it) before running one.
+            Caution: to the program, its output coming back to its input is a
+            feedback loop.  Some programs react to that -- Ardour lights its
+            "No Align" warning and reports a larger latency to JACK after
+            every run -- and the effect can outlast the run and skew a
+            SooperLooper check.  Restart the program before running one.
         """ % (blocksize, through, ms(through)))
         return 0
     if lat_out and lat_in:
