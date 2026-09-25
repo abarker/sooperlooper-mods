@@ -166,6 +166,12 @@ With this fork, connect SooperLooper directly over **JACK MIDI** -- no ALSA,
 no a2jmidid. (Stock SooperLooper 1.7.9 must be reached over ALSA with
 ``aconnect`` and ``a2jmidid``.)
 
+If the pedals go through the remapper, start it with ``--jack-rt``. Commands
+then reach SooperLooper one JACK period sooner (about 5 ms at 256 frames), as
+early as with the pedal connected directly. The option runs the remapper's
+handler inside JACK's audio thread, so watch JACK's xrun count for a session
+or two afterwards, and drop the option if xruns go up.
+
 **Learning and saving MIDI bindings**
 
 Choose whatever MIDI channel and signals you want to drive SooperLooper, then
