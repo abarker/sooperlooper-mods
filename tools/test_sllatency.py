@@ -103,7 +103,8 @@ def run_tool(delay, sl_port, sl_client, extra=(), answers=None, home=None, wire=
     home = home or tempfile.mkdtemp(prefix="sllat_home_")
     cmd = [sys.executable, os.path.join(HERE, "sllatency.py"),
            "--out", "fakehw:in", "--in", "fakehw:out",
-           "--sl-port", str(sl_port), "--sl-client", sl_client] + list(extra)
+           "--sl-port", str(sl_port), "--sl-client", sl_client,
+           "--as-hardware"] + list(extra)
     if answers is None:
         cmd.append("--yes")
     try:
@@ -198,6 +199,32 @@ def sl_tests(engine, session):
             eng.kill()
         shutil.rmtree(tmp, ignore_errors=True)
     return fails
+
+
+def chain_test(delay=32):
+    """Through a non-hardware JACK program and back, like a DAW bus: the tool
+    must report the program's own delay (the round trip minus the one period
+    JACK adds to break the loop) and give no QJackctl advice."""
+    hw = FakeHardware(delay)
+    hw.c.activate()
+    try:
+        out = subprocess.run(
+            [sys.executable, os.path.join(HERE, "sllatency.py"), "--no-sl", "--yes",
+             "--out", "fakehw:in", "--in", "fakehw:out"],
+            capture_output=True, text=True, timeout=90).stdout
+    finally:
+        hw.c.deactivate()
+        hw.c.close()
+    got = None
+    flat = " ".join(out.split())
+    if "program itself is" in flat:
+        got = float(flat.split("program itself is")[1].split()[0])
+    ok = got is not None and abs(got - delay) <= 0.5 and "QJackctl, change" not in flat
+    print("%s chain through a JACK program: %s samples (expected %d), no QJackctl advice"
+          % ("PASS" if ok else "FAIL", got, delay))
+    if not ok:
+        print(out)
+    return 0 if ok else 1
 
 
 def autoset_row_tests(sl, port, client):
@@ -370,6 +397,7 @@ def main():
                   "expected %d (+/-%.1f), xruns %d"
                   % ("PASS" if ok else "FAIL", delay, lp, noise, len(lags), med,
                      expect, tol, xruns))
+        fails += chain_test()
         fails += sl_tests(args.engine, args.session)
     finally:
         jackd.terminate()

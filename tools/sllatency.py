@@ -670,6 +670,8 @@ examples:
   sllatency                                   ask as it goes
   sllatency --session-file ~/sl/my.slsess     also offer to save there
   sllatency --no-sl --in system:capture_2     round trip only
+  sllatency --no-sl --out "ardour:BUS/audio_in 1" --in "ardour:BUS/audio_out 1"
+                                              delay through a DAW bus (no mic)
   sllatency --yes --out system:playback_1     no questions, report only""")
     ap.add_argument("--out", action="append", metavar="PORT",
                     help="JACK port to play the click to (repeatable).  Default: "
@@ -695,6 +697,8 @@ examples:
     ap.add_argument("--session-file", metavar="FILE",
                     help="the SooperLooper session file loaded at startup, to "
                          "save new values in.  Remembered for later runs.")
+    # Tests stand in for the audio interface with an ordinary JACK client.
+    ap.add_argument("--as-hardware", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--no-sl", action="store_true",
                     help="measure the round trip only; leave SooperLooper alone")
     ap.add_argument("--yes", action="store_true",
@@ -716,6 +720,14 @@ examples:
     inp = args.inp or default_input(probe, args.sl_client)
     if not outs or not inp:
         sys.exit("sllatency: could not find ports; give --out and --in")
+    # Hardware ports mean a mic or cable loop through the audio interface.
+    # Otherwise the click goes through a JACK program (e.g. a DAW bus) and
+    # back: nothing to compare with QJackctl, and no SooperLooper check.
+    try:
+        hardware = args.as_hardware or all(
+            probe.get_port_by_name(p).is_physical for p in outs + [inp])
+    except jack.JackError:
+        hardware = False
     lat_out = port_latency(probe.get_port_by_name(outs[0]), playback=True)
     lat_in = port_latency(probe.get_port_by_name(inp), playback=False)
     # SooperLooper's port latencies: loop 0's own ports and the common ones.
@@ -732,7 +744,9 @@ examples:
     js = jack_settings()
 
     sl_run = None
-    if not args.no_sl:
+    if not args.no_sl and not hardware:
+        say("   These are not hardware ports, so SooperLooper is not checked.")
+    elif not args.no_sl:
         sl = SooperLooper(args.sl_host, args.sl_port)
         if sl.ping() is None:
             say("   SooperLooper did not answer on port %d; measuring the round "
@@ -744,12 +758,19 @@ examples:
     say("   Click out:   %s" % ", ".join(outs))
     say("   Returns on:  %s" % inp)
     print()
-    explain("""
-        Put the headphones fed by those outputs on or right next to the mic
-        on that input -- balancing them on the mic works -- or connect a cable
-        from one of the outputs to the input.  Don't wear them: the click
-        level is %.2f of full scale.
-    """ % args.level)
+    if hardware:
+        explain("""
+            Put the headphones fed by those outputs on or right next to the mic
+            on that input -- balancing them on the mic works -- or connect a cable
+            from one of the outputs to the input.  Don't wear them: the click
+            level is %.2f of full scale.
+        """ % args.level)
+    else:
+        explain("""
+            These are not hardware ports: the click goes into a JACK program
+            and is recorded where it comes out, so no mic or headphones are
+            involved.  Anything that output feeds will play the click.
+        """)
     if sl_run:
         print()
         explain("""
@@ -797,7 +818,7 @@ examples:
             sl_run.restore()
 
     ms = lambda f: f * 1000.0 / sr
-    heading("Result: audio interface")
+    heading("Result: audio interface" if hardware else "Result: delay through the chain")
     if rec.xruns:
         say("   WARNING: %d xrun(s) during the run -- the result may be wrong; "
             "run it again." % rec.xruns)
@@ -812,6 +833,16 @@ examples:
     spread = float(np.percentile(lags, 75) - np.percentile(lags, 25))
     say("   Round trip: %.1f samples (%.2f ms) from %d clicks, spread %.1f."
         % (rt, ms(rt), len(lags), spread))
+    if not hardware:
+        through = rt - blocksize
+        print()
+        explain("""
+            The click went from this tool through another JACK program and back
+            into this tool.  JACK breaks such a loop by adding one period (%d
+            samples), so the delay through the program itself is %.1f samples
+            (%.2f ms).  There is no QJackctl setting to compare with.
+        """ % (blocksize, through, ms(through)))
+        return 0
     if lat_out and lat_in:
         reported = lat_out[1] + lat_in[1]
         diff = rt - reported
