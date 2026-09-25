@@ -398,9 +398,12 @@ BigStateApp::OnInit ()
 	else {
 		int count = detect_loop_count (std::string (host.ToAscii()), (int) port);
 		if (count <= 0) {
-			fprintf (stderr, "slbigstate: could not detect loop count from "
-			         "%s:%ld within %dms, defaulting to loop 0 only. Pass "
-			         "--loop or --loops explicitly to skip this.\n",
+			// Normal when slbigstate starts before the engine: the
+			// config watch timer below keeps pinging, and the stack
+			// follows the real loop count once the engine answers.
+			fprintf (stderr, "slbigstate: SooperLooper at %s:%ld did not "
+			         "answer within %dms; showing loop 0 until it does, "
+			         "then following its loop count.\n",
 			         static_cast<const char *> (host.mb_str()), port,
 			         PING_TIMEOUT_MS);
 			count = 1;
