@@ -89,7 +89,7 @@ def run_case(delay, lowpass_hz=None, noise=0.0):
         hw.c.close()
 
 
-def run_tool(delay, sl_port, sl_client, extra=(), answers=None, home=None):
+def run_tool(delay, sl_port, sl_client, extra=(), answers=None, home=None, wire=()):
     """Run the sllatency command line through the fake hardware; return
     (round trip, loop offset) parsed from its report, and the report.
     With `answers`, run interactively and feed them as typed input.  HOME
@@ -97,6 +97,8 @@ def run_tool(delay, sl_port, sl_client, extra=(), answers=None, home=None):
     touch the real one."""
     hw = FakeHardware(delay)
     hw.c.activate()
+    for src, dst in wire:           # e.g. SooperLooper's main ports as "hardware"
+        hw.c.connect(src, dst)
     import tempfile
     home = home or tempfile.mkdtemp(prefix="sllat_home_")
     cmd = [sys.executable, os.path.join(HERE, "sllatency.py"),
@@ -164,6 +166,22 @@ def sl_tests(engine, session):
             if not ok:
                 print(report)
         fails += autoset_row_tests(sl, port, client)
+        # A rig using SooperLooper's main (common) ports: the mic feeds the
+        # main input and the main output goes to the speakers.  The
+        # temporary loop must not play out through them (the mic would hear
+        # it); the result must match the direct case above.
+        rt, off, report = run_tool(1230, port, client, wire=(
+            ("fakehw:out", "%s:common_in_1" % client),
+            ("%s:common_out_1" % client, "fakehw:in")))
+        exp_rt, exp_off = 1230 + PERIOD, 1230 + PERIOD - (il + ol)
+        ok = (rt is not None and off is not None and abs(rt - exp_rt) <= 0.5
+              and abs(off - exp_off) <= 5.0)
+        fails += not ok
+        print("%s main ports wired as the rig's I/O: round trip %s (expected %d), "
+              "loop offset %s (expected %+g)" % ("PASS" if ok else "FAIL", rt, exp_rt,
+                                                off, exp_off))
+        if not ok:
+            print(report)
         fails += apply_save_tests(sl, port, client, tmp, session, il, ol)
         n = sl.ping()
         after = {g: sl.get(g) for g in ("sync_source", "tempo", "eighth_per_cycle")}

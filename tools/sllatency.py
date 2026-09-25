@@ -387,15 +387,16 @@ def physical_ports(client, is_input):
 
 
 def default_input(client, sl_client):
-    """The capture port feeding SooperLooper's first loop, if any: that is
-    the input a performance actually goes through."""
-    try:
-        conns = client.get_all_connections("%s:loop0_in_1" % sl_client)
-        phys = [c.name for c in conns if c.is_physical]
-        if phys:
-            return phys[0]
-    except jack.JackError:
-        pass
+    """The capture port feeding SooperLooper's first loop, if any (else its
+    main input): that is the input a performance actually goes through."""
+    for name in ("loop0_in_1", "common_in_1"):
+        try:
+            conns = client.get_all_connections("%s:%s" % (sl_client, name))
+            phys = [c.name for c in conns if c.is_physical]
+            if phys:
+                return phys[0]
+        except jack.JackError:
+            pass
     caps = physical_ports(client, is_input=False)
     return caps[0] if caps else None
 
@@ -466,12 +467,18 @@ class SLRun:
         self.index = i = self.loops
         # A loop that behaves like loop 0 for latency, outputs only itself,
         # and records in whole cycles of one beat, synced to its own tempo.
+        # It uses loop 0's current values (whether set by hand or by autoset)
+        # with autoset off: its own ports go only to this tool, so autoset
+        # would come out differently for it.
+        sl.set("autoset_latency", 0.0, loop=i)
         if self.loop0:
-            sl.set("autoset_latency", self.loop0["autoset_latency"], loop=i)
-            if not self.loop0["autoset_latency"]:
-                for k in ("input_latency", "output_latency", "trigger_latency"):
-                    sl.set(k, self.loop0[k], loop=i)
-        for k, v in (("dry", 0.0), ("wet", 1.0), ("sync", 1.0), ("quantize", 1.0)):
+            for k in ("input_latency", "output_latency", "trigger_latency"):
+                sl.set(k, self.loop0[k], loop=i)
+        # Only its own ports, which this tool connects: no input from the
+        # main inputs, and no output to the main outputs (which may reach
+        # the speakers, and the mic).
+        for k, v in (("dry", 0.0), ("wet", 1.0), ("sync", 1.0), ("quantize", 1.0),
+                     ("use_common_ins", 0.0), ("use_common_outs", 0.0)):
             sl.set(k, v, loop=i)
         if self.loop0_quantize is not None and self.loop0_quantize != 1.0:
             sl.set("quantize", 1.0, loop=0)  # cycle; see __init__
