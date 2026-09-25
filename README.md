@@ -2,8 +2,9 @@
 
 This is a modified version of SooperLooper which adds late-hit correction
 for record, mute/unmute, and multiply operations, two new commands around
-recording safety, direct JACK MIDI ports, BBT-based sync pulse placement,
-and a standalone at-a-distance loop-state display.
+recording safety, direct JACK MIDI ports, JACK sync that stays on the
+beat through tempo changes, and a standalone at-a-distance loop-state
+display.
 
 **Late-hit correction.** When sync is active, a press that lands within a
 configurable window after a sync boundary is corrected back to that
@@ -31,6 +32,12 @@ silence, on the same pedal.  A companion setting, record failsafe (off by
 default), covers the
 case where that second trigger never comes at all — a record simply left
 running too long, with no press of any kind.
+
+**JACK sync through tempo changes.**  With a JACK timebase master such
+as Hydrogen, stock SooperLooper's sync pulses drift off the master's beat
+-- by up to half a beat -- after a tempo change made while the transport
+is rolling, and stay off until the next relocate.  This fork counts beats
+through tempo changes, so the pulses stay on the beat.
 
 **Direct JACK MIDI ports.**  A `sooperlooper:midi_in` port accepts MIDI
 commands with sub-buffer sample-accurate timestamps.  A

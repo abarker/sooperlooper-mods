@@ -122,9 +122,10 @@ typedef struct _jack_port jack_port_t;
 // backwards-locate check uses the tracker's own record of the previous
 // frame.
 //
-// WHEN NOT DEFINED (current default, until live-tested): the stock/BBT
-// JackSync code runs exactly as before.
-//#define ALB_JACK_BEAT_TRACKING
+// WHEN DEFINED (default since 2026-09-25, after a full live practice
+// session: 102 min, 33 tempo changes, drums within ~2 ms of the pulses).
+// WHEN NOT DEFINED: the stock JackSync code runs exactly as before.
+#define ALB_JACK_BEAT_TRACKING
 #ifdef ALB_JACK_BEAT_TRACKING
 #include "beat_tracker.hpp"
 #endif

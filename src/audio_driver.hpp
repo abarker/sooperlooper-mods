@@ -38,13 +38,17 @@ typedef struct _jack_client jack_client_t;
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
-// ALB_BBT_SYNC: when defined, Engine::generate_sync() uses JACK BBT position
-// fields (bar, beat, tick, bar_start_tick, ticks_per_beat) to place sync
-// pulses on the timebase master's musical grid rather than anchoring to JACK
-// frame 0.  This corrects pulse placement after transport locates to non-zero
-// positions and after mid-transport Eighths/Cycle changes.
+// ALB_BBT_SYNC: NOT DEFINED by default (since 2026-09-25).  It was meant to
+// place sync pulses from the JACK BBT fields, but the arithmetic is a no-op:
+// its phase shift is always a whole number of cycles, so pulses fall exactly
+// where the stock framepos mod cycle_length puts them (ROADMAP entries 8 and
+// 13).  ALB_JACK_BEAT_TRACKING (engine.hpp, on by default) replaces the
+// pulse code entirely; with it defined, this flag only adds the BBT fields
+// to the sync-pulse log.  Kept, not deleted, as the starting point for a
+// correct BBT layer (ROADMAP entry 15).  The description below is the
+// original intent, not what the code achieves.
 //
-// WHEN DEFINED (default):
+// WHEN DEFINED:
 //   generate_sync() checks info.bbt_valid at runtime.  If the timebase master
 //   has set JackPositionBBT (Hydrogen, Ardour, etc.) AND beat_type == 4 AND
 //   bpm and ticks_per_beat are non-zero, the BBT path is taken.  Otherwise
@@ -63,7 +67,7 @@ typedef struct _jack_client jack_client_t;
 // in TransportInfo, which is included by multiple translation units.  The
 // jack_audio_driver.cpp population block and the engine.cpp pulse-placement
 // block both check #ifdef ALB_BBT_SYNC.
-#define ALB_BBT_SYNC
+//#define ALB_BBT_SYNC
 //------ albEnd ----------------------------------
 
 namespace SooperLooper {

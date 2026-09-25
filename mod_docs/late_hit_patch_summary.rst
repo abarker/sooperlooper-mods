@@ -187,13 +187,13 @@ A concise inventory of all significant capabilities added to SooperLooper
   and sends MIDI Start / Stop on JACK Transport transitions.  Replaces the need
   for ``a2jmidid`` when driving external hardware from SooperLooper.
 
-- **JACK BBT position fields** (``ALB_BBT_SYNC``).  The timebase master's
-  bar/beat/tick position is read into ``TransportInfo``.  The pulse-placement
-  arithmetic built on it reduces to the stock frame-based grid, so it does
-  not change where sync pulses fall (see `JACK BBT Position Fields`_).
+- **JACK BBT position fields** (``ALB_BBT_SYNC``, compiled out by default).
+  The timebase master's bar/beat/tick position can be read into
+  ``TransportInfo``, but the pulse-placement arithmetic built on it reduces
+  to the stock frame-based grid, so it does not change where sync pulses
+  fall (see `JACK BBT Position Fields`_).
 
-- **JackSync beat tracking** (``ALB_JACK_BEAT_TRACKING``, off by default
-  until field-tested).  JackSync pulses follow a beat count carried through
+- **JackSync beat tracking** (``ALB_JACK_BEAT_TRACKING``, on by default).  JackSync pulses follow a beat count carried through
   tempo changes, so they stay on the timebase master's beat when the tempo
   changes while the transport is rolling (see `JackSync Beat Tracking`_).
 
@@ -612,7 +612,7 @@ than ALSA MIDI.
 JACK BBT Position Fields
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-When ``ALB_BBT_SYNC`` is defined (the default),
+When ``ALB_BBT_SYNC`` is defined (it is commented out by default),
 ``JackAudioDriver::get_transport_info()`` fills five extra ``TransportInfo``
 fields when the timebase master sets the ``JackPositionBBT`` valid bit:
 ``bar``, ``beat``, ``bar_start_tick``, ``ticks_per_beat`` and ``bbt_valid``
@@ -643,14 +643,19 @@ while the transport is rolling, the master keeps its beat continuous but the
 frame-based grid jumps, leaving pulses off the beat by up to half a cycle
 until the next locate.  ``ALB_JACK_BEAT_TRACKING`` addresses that.
 
-Commenting out ``#define ALB_BBT_SYNC`` in ``audio_driver.hpp`` removes the
-fields and the branch; pulse placement is unchanged either way.
+``#define ALB_BBT_SYNC`` in ``audio_driver.hpp`` is commented out by
+default, which removes the fields and the branch; pulse placement is the
+same either way.  With ``ALB_JACK_BEAT_TRACKING`` defined the branch is not
+compiled at all, and defining ``ALB_BBT_SYNC`` only adds the BBT fields to
+the sync-pulse log.  The code is kept as a starting point for a correct BBT
+layer.
 
 JackSync Beat Tracking
 ~~~~~~~~~~~~~~~~~~~~~~
 
-When ``ALB_JACK_BEAT_TRACKING`` is defined in ``engine.hpp`` (commented out by
-default until field-tested), ``generate_sync()`` places JackSync pulses, and
+When ``ALB_JACK_BEAT_TRACKING`` is defined in ``engine.hpp`` (the default;
+field-tested over a full live session with frequent tempo changes),
+``generate_sync()`` places JackSync pulses, and
 the GUI's beat indicator, from a running beat count instead of
 ``fmod(framepos, _tempo_frames)``:
 
@@ -916,18 +921,20 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING`` and
        stock behaviour — tempo updated on every cycle regardless of state.
    * - ``ALB_BBT_SYNC``
      - ``audio_driver.hpp``
-     - defined
-     - **When defined (default):** adds BBT fields to ``TransportInfo`` and a
+     - *(commented out)*
+     - **When defined:** adds BBT fields to ``TransportInfo`` and a
        ``generate_sync()`` branch that uses them; the branch places pulses
-       exactly where the stock formula does.  **When not defined:** the
-       fields and branch are absent.  Pulse placement is the same either way.
+       exactly where the stock formula does, and is not compiled when
+       ``ALB_JACK_BEAT_TRACKING`` is defined.  **When not defined
+       (default):** the fields and branch are absent.  Pulse placement is
+       the same either way.
    * - ``ALB_JACK_BEAT_TRACKING``
      - ``engine.hpp``
-     - *(commented out)*
-     - **When defined:** JackSync pulses follow a beat count carried through
-       tempo changes, and ``TransportInfo`` is value-initialised (see
-       `JackSync Beat Tracking`_).  **When not defined (default until
-       field-tested):** stock JackSync pulse placement.
+     - defined
+     - **When defined (default):** JackSync pulses follow a beat count
+       carried through tempo changes, and ``TransportInfo`` is
+       value-initialised (see `JackSync Beat Tracking`_).  **When not
+       defined:** stock JackSync pulse placement.
    * - ``ALB_SYNC_PULSE_LOG``
      - ``engine.hpp``
      - *(commented out)*
