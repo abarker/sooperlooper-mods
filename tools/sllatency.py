@@ -16,7 +16,11 @@ Requires JACK, Python 3, numpy and the Python ``jack`` module.
 import argparse
 import ctypes
 import ctypes.util
+import os
+import re
+import shutil
 import socket
+import subprocess
 import struct
 import sys
 import threading
@@ -458,14 +462,145 @@ def _n(v):
     return "?" if v is None else "%g" % v
 
 
+# ------------------------------------------------------- choosing outputs
+
+def output_feeds(client):
+    """{physical playback port: [ports feeding it]}, in port order."""
+    return {p.name: [q.name for q in client.get_all_connections(p)]
+            for p in client.get_ports(is_physical=True, is_audio=True, is_input=True)}
+
+
+def suggest_outputs(feeds):
+    """Guess the outputs the performer hears: those a DAW's master bus
+    feeds, else the (up to two) most-fed outputs, else the first two."""
+    names = list(feeds)
+    master = [n for n in names if any("master" in f.lower() for f in feeds[n])]
+    if master:
+        return master
+    busy = [n for n in sorted(names, key=lambda n: -len(feeds[n])) if feeds[n]][:2]
+    return sorted(busy, key=names.index) if busy else names[:2]
+
+
+def choose_outputs(client, interactive):
+    feeds = output_feeds(client)
+    names = list(feeds)
+    guess = suggest_outputs(feeds)
+    say("   Outputs, and what feeds each (* = suggested for the click):")
+    for i, n in enumerate(names, 1):
+        f = feeds[n]
+        shown = ", ".join(f[:3]) + (" (+%d more)" % (len(f) - 3) if len(f) > 3 else "")
+        say("   %s %d  %-20s %s" % ("*" if n in guess else " ", i, n,
+                                     "<- " + shown if f else "(nothing)"))
+    if not interactive:
+        return guess
+    ans = input("   Press Enter to use the * outputs, or type the numbers of the "
+                "outputs your headphones hear: ").strip()
+    picked = [names[int(t) - 1] for t in ans.replace(",", " ").split()
+              if t.isdigit() and 1 <= int(t) <= len(names)]
+    return picked or guess
+
+
+def ask(question, default=False):
+    ans = input("   %s [%s] " % (question, "Y/n" if default else "y/N")).strip().lower()
+    return default if not ans else ans.startswith("y")
+
+
+# ------------------------------------------------------- JACK's settings
+
+def jack_settings():
+    """JACK's buffer settings and QJackctl's extra latencies:
+    {period, nperiods, in_extra, out_extra}.  Read through jackdbus's own
+    interface (``jack_control dp``) -- only when jackdbus is the server
+    running, checked by asking D-Bus whether the name is owned, which
+    starts nothing.  Empty when not available (plain jackd, PipeWire's
+    JACK, another OS); the report then speaks in totals."""
+    try:
+        owned = subprocess.run(
+            ["dbus-send", "--session", "--print-reply",
+             "--dest=org.freedesktop.DBus", "/org/freedesktop/DBus",
+             "org.freedesktop.DBus.NameHasOwner", "string:org.jackaudio.service"],
+            capture_output=True, text=True, timeout=5).stdout
+        if "boolean true" not in owned:
+            return {}
+        txt = subprocess.run(["jack_control", "dp"], capture_output=True,
+                             text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    keys = {"period": "period", "nperiods": "nperiods",
+            "input-latency": "in_extra", "output-latency": "out_extra"}
+    out = {}
+    for line in txt.splitlines():
+        k = keys.get(line.split(":", 1)[0].strip())
+        m = re.search(r":(\d+)\)\s*$", line)
+        if k and m:
+            out[k] = int(m.group(1))
+    return out
+
+
+# ---------------------------------------------------------- session file
+
+CONFIG = os.path.join(os.path.expanduser("~"), ".sooperlooper", "sllatency.conf")
+
+
+def remembered_session_file():
+    try:
+        with open(CONFIG) as f:
+            for line in f:
+                k, _, v = line.partition("=")
+                if k.strip() == "session_file" and v.strip():
+                    return v.strip()
+    except OSError:
+        pass
+    return None
+
+
+def remember_session_file(path):
+    try:
+        os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
+        with open(CONFIG, "w") as f:
+            f.write("# written by sllatency\nsession_file = %s\n" % path)
+    except OSError:
+        pass
+
+
+def save_latency_to_session(path, il, ol):
+    """Change only the latency values in a SooperLooper session file (and
+    auto_latency to "no", so they are used), keeping a backup copy.
+    Everything else in the file stays byte-for-byte as it was, unlike
+    SooperLooper's /save_session, which writes the whole live state."""
+    with open(path) as f:
+        text = f.read()
+    text, n_in = re.subn(r'(<Control name="input_latency" value=")[^"]*(")',
+                         r"\g<1>%d\g<2>" % il, text)
+    text, n_out = re.subn(r'(<Control name="output_latency" value=")[^"]*(")',
+                          r"\g<1>%d\g<2>" % ol, text)
+    text, _ = re.subn(r'(\bauto_latency=")[^"]*(")', r"\g<1>no\g<2>", text)
+    if not (n_in and n_out):
+        raise RuntimeError("no latency values found in %s" % path)
+    backup = path + time.strftime(".bak-%Y%m%d-%H%M%S")
+    shutil.copy2(path, backup)
+    tmp = path + ".sllatency-tmp"
+    with open(tmp, "w") as f:
+        f.write(text)
+    os.replace(tmp, path)
+    return backup, n_in
+
+
+def split_total(total, base_in, base_out):
+    """Split a total latency like base_in/base_out (JACK's own split),
+    sharing the difference evenly; the two parts always sum to total."""
+    r = total - (base_in + base_out)
+    return base_in + r // 2, base_out + (r - r // 2)
+
+
 def main():
     ap = argparse.ArgumentParser(
         prog="sllatency",
         description="Measure JACK round-trip latency with a click and check "
                     "SooperLooper's latency compensation.")
     ap.add_argument("--out", action="append",
-                    help="JACK port to play the click to (repeatable). "
-                         "Default: the first two physical playback ports.")
+                    help="JACK port to play the click to (repeatable).  Default: "
+                         "ask, suggesting the outputs a DAW's master feeds.")
     ap.add_argument("--in", dest="inp",
                     help="JACK port the click comes back on.  Default: the "
                          "capture port feeding SooperLooper's loop 0, else the "
@@ -481,23 +616,43 @@ def main():
     ap.add_argument("--sl-port", type=int, default=9951)
     ap.add_argument("--sl-client", default="sooperlooper",
                     help="SooperLooper's JACK client name (default sooperlooper)")
+    ap.add_argument("--session-file",
+                    help="the SooperLooper session file loaded at startup, to "
+                         "save new values in.  Remembered for later runs.")
     ap.add_argument("--no-sl", action="store_true",
                     help="measure the round trip only; leave SooperLooper alone")
     ap.add_argument("--yes", action="store_true",
-                    help="do not wait for Enter before starting")
+                    help="no questions: use the suggested outputs, and apply or "
+                         "save only if --apply / --save are given")
+    ap.add_argument("--apply", action="store_true",
+                    help="with --yes: apply the recommended SooperLooper values")
+    ap.add_argument("--save", action="store_true",
+                    help="with --yes and --apply: also save them in the session file")
     args = ap.parse_args()
+    interactive = not args.yes
 
     say("sllatency: audio round-trip and SooperLooper latency check")
+    say()
+    say("Setup")
     probe = jack.Client("sllatency_probe", no_start_server=True)
     sr = probe.samplerate
     blocksize = probe.blocksize
-    outs = args.out or physical_ports(probe, is_input=True)[:2]
+    outs = args.out or choose_outputs(probe, interactive)
     inp = args.inp or default_input(probe, args.sl_client)
     if not outs or not inp:
         sys.exit("sllatency: could not find ports; give --out and --in")
     lat_out = port_latency(probe.get_port_by_name(outs[0]), playback=True)
     lat_in = port_latency(probe.get_port_by_name(inp), playback=False)
+    sl_lat_in = sl_lat_out = None
+    try:
+        sl_lat_in = port_latency(probe.get_port_by_name(
+            "%s:loop0_in_1" % args.sl_client), playback=False)
+        sl_lat_out = port_latency(probe.get_port_by_name(
+            "%s:loop0_out_1" % args.sl_client), playback=True)
+    except jack.JackError:
+        pass
     probe.close()
+    js = jack_settings()
 
     sl_run = None
     if not args.no_sl:
@@ -508,14 +663,12 @@ def main():
         else:
             sl_run = SLRun(sl, args.sl_client, args.bpm)
 
-    say()
-    say("Setup")
     explain("""
         The click goes out of: %s
         and should come back on: %s
         Hold the headphones fed by those outputs against the mic on that
-        input, or connect a cable from the output to the input.  Start
-        quietly: the click level is %.2f of full scale.
+        input (not on your ears), or connect a cable from the output to the
+        input.  The click level is %.2f of full scale.
     """ % (", ".join(outs), inp, args.level))
     if sl_run:
         explain("""
@@ -525,7 +678,7 @@ def main():
             and do not touch the pedals during the run (about 15 s).
         """)
         sl_run.describe()
-    if not args.yes:
+    if interactive:
         input("   Press Enter when ready... ")
 
     period = 60.0 * sr / args.bpm
@@ -543,6 +696,7 @@ def main():
     """ % (len(starts), args.bpm))
     in_sources = [inp]
     actions, extra = [], []
+    loop_len = None
     try:
         if sl_run:
             sl_run.set_up()
@@ -550,19 +704,18 @@ def main():
             extra.append((inp, sl_run.port("in")))
             actions = [(1.0, lambda: sl_run.sl.hit("record", sl_run.index)),
                        (1.0 + rec_secs + 0.05, lambda: sl_run.sl.hit("record", sl_run.index))]
-            explain("""
-                SooperLooper records four beats of it, then plays the loop back.
-            """)
+            explain("SooperLooper records four beats of it, then plays the loop back.")
         rec = ClickRecorder("sllatency", outs, in_sources)
         recs = rec.run(signal, actions=actions, extra_connections=extra)
-        loop_len = sl_run.sl.get("loop_len", loop=sl_run.index) if sl_run else None
+        if sl_run:
+            loop_len = sl_run.sl.get("loop_len", loop=sl_run.index)
     finally:
         if sl_run:
             sl_run.restore()
 
     ms = lambda f: f * 1000.0 / sr
     say()
-    say("Result")
+    say("Result: audio interface")
     if rec.xruns:
         say("   WARNING: %d xrun(s) during the run -- the result may be wrong; "
             "run it again." % rec.xruns)
@@ -573,79 +726,163 @@ def main():
             % (len(lags), len(starts)))
         if not len(lags):
             return 1
-    med = float(np.median(lags))
+    rt = float(np.median(lags))
     spread = float(np.percentile(lags, 75) - np.percentile(lags, 25))
     say("   Round trip: %.1f samples (%.2f ms) from %d clicks, spread %.1f."
-        % (med, ms(med), len(lags), spread))
+        % (rt, ms(rt), len(lags), spread))
     if lat_out and lat_in:
         reported = lat_out[1] + lat_in[1]
-        diff = med - reported
+        diff = rt - reported
+        extras = ""
+        if "in_extra" in js and "out_extra" in js:
+            extras = ("  JACK's settings: period %s x %s, extra input latency %d, "
+                      "extra output latency %d." % (js.get("period", "?"),
+                      js.get("nperiods", "?"), js["in_extra"], js["out_extra"]))
         explain("""
             JACK reports %d samples of playback latency on %s and %d of
-            capture latency on %s: %d in total, at buffer size %d.  These
-            include QJackctl's extra output/input latency settings.
-        """ % (lat_out[1], outs[0], lat_in[1], inp, reported, blocksize))
+            capture latency on %s: %d in total.%s
+        """ % (lat_out[1], outs[0], lat_in[1], inp, reported, extras))
         if abs(ms(diff)) <= args.tolerance:
-            say("   JACK: difference %+.1f samples (%+.2f ms), within %.1f ms -- "
-                "nothing to change." % (diff, ms(diff), args.tolerance))
+            say("   JACK: off by %+.1f samples (%+.2f ms), within %.1f ms -- nothing "
+                "to change." % (diff, ms(diff), args.tolerance))
         else:
-            say("   JACK: difference %+.1f samples (%+.2f ms): its latency settings "
-                "are %s." % (diff, ms(diff), "too low" if diff > 0 else "too high"))
             total = int(round(diff))
-            explain("""
-                Change QJackctl's input latency plus output latency by %+d
-                samples in total (for example %+d on input and %+d on output),
-                then restart JACK.  A loopback measures only the sum; the split
-                does not matter for recording alignment.
-            """ % (total, total // 2, total - total // 2))
+            say("   JACK: off by %+.1f samples (%+.2f ms): its latency settings are "
+                "%s." % (diff, ms(diff), "too low" if diff > 0 else "too high"))
+            if "in_extra" in js and "out_extra" in js:
+                explain("""
+                    In QJackctl, change extra input latency %d -> %d and extra
+                    output latency %d -> %d, then restart JACK.  (A loopback
+                    measures only the sum; the split does not matter for
+                    recording alignment.)
+                """ % (js["in_extra"], js["in_extra"] + total // 2,
+                       js["out_extra"], js["out_extra"] + total - total // 2))
+            else:
+                explain("""
+                    Change QJackctl's extra input + output latency by %+d samples
+                    in total, then restart JACK.
+                """ % total)
     else:
         say("   Could not read JACK's reported latencies for these ports.")
 
-    if sl_run:
-        offs = measure_loop_offset(recs[1], starts, click, sr, period)
+    if not sl_run:
+        return 0
+
+    say()
+    say("Result: SooperLooper")
+    beats = loop_len / beat if loop_len else None
+    if beats is None or abs(beats - round(beats)) > 0.01:
+        say("   The loop is %s beats long, not a whole number, so it was not "
+            "recorded in sync and cannot be measured.  Check that SooperLooper's "
+            "sync works (loop 0 quantize, sync source)."
+            % ("?" if beats is None else "%.3f" % beats))
+        return 1
+    offs = measure_loop_offset(recs[1], starts, click, sr, period)
+    if len(offs) < 4:
+        say("   Only %d loop clicks found -- the loop may not have recorded.  Check "
+            "that its input is connected." % len(offs))
+        return 1
+    e = float(np.median(offs))
+    sp = float(np.percentile(offs, 75) - np.percentile(offs, 25))
+    downstream = 0
+    if sl_lat_out and lat_out:
+        downstream = sl_lat_out[1] - lat_out[1]
+    heard = e + downstream
+    say("   At SooperLooper's output the loop is %+.1f samples (%+.2f ms) from the "
+        "live click (%d clicks, spread %.1f)." % (e, ms(e), len(offs), sp))
+    if downstream:
+        explain("""
+            SooperLooper's output goes through more processing (e.g. DAW
+            plugins) before the speakers: JACK reports %d samples more latency
+            there than on %s -- %.2f ms added after SooperLooper.
+        """ % (downstream, outs[0], ms(downstream)))
+    say("   As heard, loops play %+.1f samples (%+.2f ms) %s."
+        % (heard, ms(heard), "late" if heard > 0 else "early"))
+
+    l0 = sl_run.loop0
+    if not l0:
+        return 0
+    il, ol = int(l0["input_latency"]), int(l0["output_latency"])
+    total = il + ol + int(round(heard))
+    if sl_lat_in and sl_lat_out:
+        auto_in, auto_out = sl_lat_in[1], sl_lat_out[1]
+        new_in, new_out = split_total(total, auto_in, auto_out)
+    else:
+        auto_in = auto_out = None
+        new_in, new_out = split_total(total, il, ol)
+    say()
+    say("   SooperLooper latency (samples)     input   output   total")
+    say("     current%s          %6d   %6d   %5d"
+        % (" (autoset)" if l0.get("autoset_latency") else " (manual) ", il, ol, il + ol))
+    if auto_in is not None:
+        say("     autoset would use             %6d   %6d   %5d"
+            % (auto_in, auto_out, auto_in + auto_out))
+    say("     measured best                 %6d   %6d   %5d" % (new_in, new_out, total))
+    explain("""
+        Autoset copies JACK's latencies for SooperLooper's own ports.  The
+        measured best keeps JACK's split between input and output (only the
+        total affects how loops line up) and corrects the total by what was
+        measured.
+    """)
+    within = abs(ms(heard)) <= args.tolerance
+    if within:
+        say("   Within %.1f ms -- nothing needs changing." % args.tolerance)
+    if not l0.get("autoset_latency"):
+        explain("""
+            Manual latencies include buffer-dependent latency: they are right
+            for buffer size %d only; measure again after changing it.
+        """ % blocksize)
+
+    if (new_in, new_out) == (il, ol):
+        return 0
+    if interactive:
         say()
-        beats = loop_len / beat if loop_len else None
-        if beats is None or abs(beats - round(beats)) > 0.01:
-            say("   SooperLooper: the loop is %s beats long, not a whole number, so it "
-                "was not recorded in sync and cannot be measured.  Check that "
-                "SooperLooper's sync works (loop 0 quantize, sync source)."
-                % ("?" if beats is None else "%.3f" % beats))
+        apply_it = ask("Apply the measured best values to SooperLooper now (all "
+                       "loops, autoset off)?", default=not within)
+    else:
+        apply_it = args.apply
+    if not apply_it:
+        return 0
+    sl = sl_run.sl
+    sl.set("autoset_latency", 0.0, loop=-1)
+    sl.set("input_latency", new_in, loop=-1)
+    sl.set("output_latency", new_out, loop=-1)
+    time.sleep(0.3)
+    got = (sl.get("input_latency", loop=0), sl.get("output_latency", loop=0))
+    if got != (float(new_in), float(new_out)):
+        say("   SooperLooper reports %s after applying -- not what was set." % (got,))
+        return 1
+    say("   Applied: input_latency %d, output_latency %d on all loops." % (new_in, new_out))
+
+    explain("""
+        These last until SooperLooper restarts.  To keep them, the tool can
+        change only the latency values in the session file SooperLooper loads
+        at startup (a backup copy is kept); the rest of the file stays exactly
+        as it is.
+    """)
+    path = args.session_file
+    if interactive:
+        if not ask("Save them in the session file?"):
+            return 0
+        if not path:
+            known = remembered_session_file()
+            ans = input("   Session file%s: " % (" [%s]" % known if known else "")).strip()
+            path = os.path.expanduser(ans) if ans else known
+        save_it = bool(path)
+    else:
+        path = path or remembered_session_file()
+        save_it = args.save and bool(path)
+        if args.save and not path:
+            say("   --save needs --session-file (or one remembered from an "
+                "earlier run).")
+    if save_it:
+        if not os.path.isfile(path):
+            say("   %s does not exist; nothing saved." % path)
             return 1
-        if len(offs) < 4:
-            say("   SooperLooper: only %d loop clicks found -- the loop may not "
-                "have recorded.  Check that its input is connected." % len(offs))
-            return 1
-        e = float(np.median(offs))
-        sp = float(np.percentile(offs, 75) - np.percentile(offs, 25))
-        l0 = sl_run.loop0
-        say("   SooperLooper: loop playback is %+.1f samples (%+.2f ms) from the "
-            "live click, from %d clicks, spread %.1f." % (e, ms(e), len(offs), sp))
-        if abs(ms(e)) <= args.tolerance:
-            say("   Within %.1f ms -- SooperLooper's latency compensation is right."
-                % args.tolerance)
-        else:
-            say("   Its loops play %s." % ("late" if e > 0 else "early"))
-            if l0 and not l0.get("autoset_latency"):
-                il, ol = l0["input_latency"], l0["output_latency"]
-                total = int(round(e))
-                d_in = total // 2                 # the two parts sum to total
-                d_out = total - d_in
-                explain("""
-                    input_latency + output_latency should change by %+d samples:
-                    for example input_latency %g -> %d and output_latency
-                    %g -> %d.
-                """ % (total, il, int(il) + d_in, ol, int(ol) + d_out))
-            else:
-                explain("""
-                    SooperLooper takes its latencies from JACK (autoset), so fix
-                    JACK's latency settings first and measure again.
-                """)
-        if l0 and not l0.get("autoset_latency"):
-            explain("""
-                SooperLooper's manual latencies include buffer-dependent latency:
-                they are right for buffer size %d only, and need measuring again
-                if the buffer size changes.
-            """ % blocksize)
+        remember_session_file(path)
+        backup, n = save_latency_to_session(path, new_in, new_out)
+        say("   Saved in %s (%d loop%s); the old file is %s."
+            % (path, n, "" if n == 1 else "s", backup))
     return 0
 
 

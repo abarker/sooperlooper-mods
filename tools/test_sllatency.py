@@ -89,17 +89,24 @@ def run_case(delay, lowpass_hz=None, noise=0.0):
         hw.c.close()
 
 
-def run_tool(delay, sl_port, sl_client):
+def run_tool(delay, sl_port, sl_client, extra=(), answers=None, home=None):
     """Run the sllatency command line through the fake hardware; return
-    (round trip, loop offset) parsed from its report, and the report."""
+    (round trip, loop offset) parsed from its report, and the report.
+    With `answers`, run interactively and feed them as typed input.  HOME
+    is a temporary directory so the tool's remembered settings never
+    touch the real one."""
     hw = FakeHardware(delay)
     hw.c.activate()
+    import tempfile
+    home = home or tempfile.mkdtemp(prefix="sllat_home_")
+    cmd = [sys.executable, os.path.join(HERE, "sllatency.py"),
+           "--out", "fakehw:in", "--in", "fakehw:out",
+           "--sl-port", str(sl_port), "--sl-client", sl_client] + list(extra)
+    if answers is None:
+        cmd.append("--yes")
     try:
-        out = subprocess.run(
-            [sys.executable, os.path.join(HERE, "sllatency.py"), "--yes",
-             "--out", "fakehw:in", "--in", "fakehw:out",
-             "--sl-port", str(sl_port), "--sl-client", sl_client],
-            capture_output=True, text=True, timeout=90).stdout
+        out = subprocess.run(cmd, input=answers, capture_output=True, text=True,
+                             timeout=90, env=dict(os.environ, HOME=home)).stdout
     finally:
         hw.c.deactivate()
         hw.c.close()
@@ -107,8 +114,8 @@ def run_tool(delay, sl_port, sl_client):
     for line in out.splitlines():
         if "Round trip:" in line:
             rt = float(line.split("Round trip:")[1].split()[0])
-        if "loop playback is" in line:
-            off = float(line.split("loop playback is")[1].split()[0])
+        if "At SooperLooper's output the loop is" in line:
+            off = float(line.split("the loop is")[1].split()[0])
     return rt, off, out
 
 
@@ -156,6 +163,7 @@ def sl_tests(engine, session):
                                       off, exp_off))
             if not ok:
                 print(report)
+        fails += apply_save_tests(sl, port, client, tmp, session, il, ol)
         n = sl.ping()
         after = {g: sl.get(g) for g in ("sync_source", "tempo", "eighth_per_cycle")}
         after["loop0 quantize"] = sl.get("quantize", loop=0)
@@ -173,6 +181,102 @@ def sl_tests(engine, session):
     return fails
 
 
+def _session_file(sl, tmp, session, name):
+    """A session file to save into: a copy of the given one, or one written
+    by SooperLooper itself."""
+    import shutil
+    path = os.path.join(tmp, name)
+    if session:
+        shutil.copy(session, path)
+    else:
+        sl.send("/save_session", path, sl.url, "/err")
+        time.sleep(1.0)
+    return path
+
+
+def _check_saved(path, orig_text, new_in, new_out):
+    """Only the latency values and auto_latency may differ; backup exists."""
+    import glob, re
+    now = open(path).read()
+    lines_a, lines_b = orig_text.splitlines(), now.splitlines()
+    changed = [(x, y) for x, y in zip(lines_a, lines_b) if x != y]
+    ok = len(lines_a) == len(lines_b) and all(
+        ("input_latency" in x or "output_latency" in x or "auto_latency" in x)
+        for x, _ in changed)
+    ok = ok and ('name="input_latency" value="%d"' % new_in) in now
+    ok = ok and ('name="output_latency" value="%d"' % new_out) in now
+    ok = ok and bool(glob.glob(path + ".bak-*"))
+    return ok, len(changed)
+
+
+def apply_save_tests(sl, port, client, tmp, session, il, ol):
+    """Step 3: scripted --apply --save, then the interactive questions."""
+    fails = 0
+    delay = 1486                          # loops heard 256 - 3 samples late
+    # scripted
+    path = _session_file(sl, tmp, session, "scripted.slsess")
+    orig = open(path).read()
+    rt, off, report = run_tool(delay, port, client,
+                               ["--apply", "--save", "--session-file", path])
+    exp_total = int(il + ol) + int(round(off))
+    got = (sl.get("input_latency", loop=0), sl.get("output_latency", loop=0))
+    saved_ok, nchanged = _check_saved(path, orig, int(got[0]), int(got[1]))
+    ok = (got[0] is not None and int(got[0] + got[1]) == exp_total
+          and sl.get("autoset_latency", loop=0) == 0.0 and saved_ok)
+    fails += not ok
+    print("%s scripted --apply --save: live %s, total %s (expected %d), file "
+          "changed only in %d latency line(s), backup kept"
+          % ("PASS" if ok else "FAIL", got, None if got[0] is None else got[0] + got[1],
+             exp_total, nchanged))
+    if not ok:
+        print(report)
+    # put loop 0 back for the interactive run
+    for k, v in (("input_latency", il), ("output_latency", ol)):
+        sl.set(k, v, loop=0)
+    time.sleep(0.3)
+    # interactive: Enter to start, y to apply, y to save, then the file path
+    path2 = _session_file(sl, tmp, session, "interactive.slsess")
+    orig2 = open(path2).read()
+    rt, off, report = run_tool(delay, port, client,
+                               answers="\ny\ny\n%s\n" % path2)
+    got2 = (sl.get("input_latency", loop=0), sl.get("output_latency", loop=0))
+    saved_ok2, n2 = _check_saved(path2, orig2, int(got2[0]), int(got2[1]))
+    ok2 = got2 == got and saved_ok2 and "Save them in the session file?" in report
+    fails += not ok2
+    print("%s interactive apply and save (asked for the file path): live %s, "
+          "file changed in %d line(s)" % ("PASS" if ok2 else "FAIL", got2, n2))
+    if not ok2:
+        print(report)
+    for k, v in (("input_latency", il), ("output_latency", ol)):
+        sl.set(k, v, loop=0)
+    return fails
+
+
+def suggest_tests():
+    """Output suggestion, from JACK's routing (no server needed)."""
+    rig = {  # this rig's routing, 2026-09-24
+        "system:playback_1": ["PipeWire:playback_FL", "ardour:Master/audio_out 1",
+                              "ardour:voc_mon/audio_out 1"],
+        "system:playback_2": ["PipeWire:playback_FR", "ardour:Master/audio_out 2",
+                              "ardour:voc_mon/audio_out 2"],
+        "system:playback_3": [],
+        "system:playback_4": ["ardour:SL_vol_mon/audio_out 1", "ardour:SL_vol_mon/audio_out 2"],
+    }
+    no_master = {"system:playback_1": [], "system:playback_2": ["hydrogen:out_L"],
+                 "system:playback_3": ["hydrogen:out_R", "x:y"], "system:playback_4": []}
+    nothing = {"system:playback_1": [], "system:playback_2": [], "system:playback_3": []}
+    cases = [(rig, ["system:playback_1", "system:playback_2"]),
+             (no_master, ["system:playback_2", "system:playback_3"]),
+             (nothing, ["system:playback_1", "system:playback_2"])]
+    fails = 0
+    for feeds, want in cases:
+        got = sllatency.suggest_outputs(feeds)
+        ok = got == want
+        fails += not ok
+        print("%s output suggestion: %s" % ("PASS" if ok else "FAIL", got))
+    return fails
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser()
@@ -184,7 +288,7 @@ def main():
     jackd = subprocess.Popen(["jackd", "-n", SERVER, "-d", "dummy", "-r", str(SR),
                               "-p", str(PERIOD)],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    fails = 0
+    fails = suggest_tests()
     try:
         time.sleep(2.0)
         cases = [
