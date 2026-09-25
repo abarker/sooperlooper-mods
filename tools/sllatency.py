@@ -841,6 +841,11 @@ examples:
             into this tool.  JACK breaks such a loop by adding one period (%d
             samples), so the delay through the program itself is %.1f samples
             (%.2f ms).  There is no QJackctl setting to compare with.
+
+            Caution: the loop can leave that program reporting a larger
+            latency to JACK afterwards (Ardour grew by its own latency on every
+            run), which would skew a SooperLooper check.  Restart it before
+            running one.
         """ % (blocksize, through, ms(through)))
         return 0
     if lat_out and lat_in:
