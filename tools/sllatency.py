@@ -426,22 +426,32 @@ class SLRun:
     def describe(self):
         l0 = self.loop0
         if not l0:
-            explain("SooperLooper has no loops yet; the temporary loop uses its defaults.")
+            explain("SooperLooper has no loops yet; the temporary loop uses its "
+                    "default settings.")
             return
         auto = l0.get("autoset_latency")
         explain("""
-            SooperLooper loop 0: input_latency %s, output_latency %s,
-            trigger_latency %s samples; autoset_latency %s.
+            SooperLooper's current latency settings (loop 0): input %s, output
+            %s, trigger %s samples, %s.
         """ % (_n(l0.get("input_latency")), _n(l0.get("output_latency")),
-               _n(l0.get("trigger_latency")), "on" if auto else "off"))
-        if auto:
-            explain("""
-                With autoset on, SooperLooper copies these from the latencies
-                JACK reports for its ports, so they follow QJackctl's settings.
-            """)
+               _n(l0.get("trigger_latency")),
+               "chosen automatically (autoset on)" if auto else "set by hand (autoset off)"))
+        print()
+        explain("""
+            Input and output latency are what this tool checks.  Trigger latency
+            is separate: SooperLooper moves commands that arrive without an exact
+            time (OSC, ALSA MIDI) that many samples earlier.  Commands on this
+            fork's JACK MIDI input are run at their exact sample (the buffer is
+            split there), so they need none: 0 is right when all commands come
+            that way.  Autoset sets one buffer.  This tool leaves it as it is.
+        """)
         if self.saved.get("auto_disable_latency") and (self.common_dry or 0) > 0:
-            say("   WARNING: auto_disable_latency is on and SooperLooper's input monitor")
-            say("   (common dry) is up, so latency compensation is switched OFF.")
+            print()
+            explain("""
+                WARNING: auto_disable_latency is on and SooperLooper's input
+                monitor (common dry) is up, so its latency compensation is
+                switched OFF.
+            """)
 
     def set_up(self):
         """Add the temporary loop and configure it and the tempo."""
@@ -722,9 +732,10 @@ examples:
     say("   Returns on:  %s" % inp)
     print()
     explain("""
-        Hold the headphones fed by those outputs against the mic on that
-        input (not on your ears), or connect a cable from the output to the
-        input.  The click level is %.2f of full scale.
+        Put the headphones fed by those outputs on or right next to the mic
+        on that input -- balancing them on the mic works -- or connect a cable
+        from one of the outputs to the input.  Don't wear them: the click
+        level is %.2f of full scale.
     """ % args.level)
     if sl_run:
         print()
