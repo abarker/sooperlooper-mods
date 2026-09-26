@@ -208,8 +208,8 @@ The core button actions:
 Button         Action
 ============== ==============================================================
 record         Records on the first press; plays the recording on the second.
-mute_trigger   Mutes active playback and restarts the loop from the top on
-               unmute. Effectively the **Stop** button.
+mute_trigger   Mutes active playback; pressed again while muted, restarts the
+               loop from the top. Effectively the **Stop** button.
 undo           (optional) Undo the last action.
 overdub        (optional) Layer additional material onto the loop.
 ============== ==============================================================
@@ -217,8 +217,9 @@ overdub        (optional) Layer additional material onto the loop.
 .. note::
 
    SooperLooper is always running; ``mute_trigger`` is a "stop everything you
-   can hear" command -- the loop cycles silently and resumes from the start
-   when unmuted. Pressing **record** while recording begins playback of what
+   can hear" command -- the loop keeps cycling silently. Pressing
+   ``mute_trigger`` again restarts it from the top, while a plain unmute
+   resumes it where it is in its cycle. Pressing **record** while recording begins playback of what
    was just recorded.
 
 **Sync and quantize settings**
@@ -282,16 +283,16 @@ much harder to trigger by accident.
    but a delay large enough to cross a quantize boundary jumps the start or end
    by a whole quantize unit.
 
-**Long press on record -> cancel the record, keeping the loop.** The goal is
-to hold the record button to abandon a take you have just started, without
-losing what was already there. Because the eager single has *already* fired a
-real ``record``, the long press cannot simply mute -- it has to retract that
-record too.
+**Long press on record: stop, keeping the loop.** With the eager single,
+one switch does the whole cycle: press to record, press again to play, and
+hold to stop. The hold's press fires a new ``record`` at once, as every press
+on this switch does; the long press then sends ``cancel_record_mute``, a
+command added to SooperLooper for this, which cancels that new recording and
+leaves the loop you made **muted**. Unmuting resumes it where it is in its
+cycle; **mute_trigger** restarts it from the top.
 
-This is now a single command, ``cancel_record_mute``, added to SooperLooper
-for this purpose. The remapper's long press sends it and nothing else.
-
-What it does depends on how far the record has progressed:
+The command is **state-aware**, which is what lets one switch carry all of
+this. What it does depends on how far the record it follows has got:
 
 .. list-table::
    :header-rows: 1
@@ -299,35 +300,37 @@ What it does depends on how far the record has progressed:
 
    * - State when the long press lands
      - Result
-   * - Recording (past the boundary)
-     - The take is discarded, the previous loop is restored, and the looper
-       is left **muted**.
-   * - Record still pending on the sync boundary
-     - The pending record is cancelled and the loop **keeps playing** --
-       nothing was captured, so there is nothing to hide.
-   * - Anything else (playing, or ending a record)
+   * - Recording (the recording has started)
+     - The new recording is discarded, the previous loop is restored, and
+       the looper is left **muted**. Only that one recording is undone.
+   * - Record still waiting for the sync boundary
+     - The waiting record is cancelled and the loop **keeps playing** --
+       nothing was recorded.
+   * - Anything else (for example, just after a press that ended a
+       recording)
      - **Nothing at all happens.**
 
-That last row is what makes the gesture safe to overload. If you press to
-*end* a record and your foot lingers past the threshold, the take is kept.
+A remapper sending plain ``mute_on`` and ``undo`` cannot tell these cases
+apart, which is why this is a command inside SooperLooper.
 
-Accepted trade-off: if you meant to record and lingered anyway, the take
-dies. The long-press threshold (400 ms) needs to stay comfortably longer than
-a normal stomp.
+What this means in practice:
 
-The command being **state-aware** is what makes one switch able to carry both
-jobs. It can tell a record that actually started from one still waiting on
-the boundary, and it knows when there is no record to cancel at all -- so the
-same gesture that rescues a bad take is harmless when there is nothing to
-rescue. A remapper sending plain ``mute_on`` and ``undo`` cannot see any of
-that, and this replaces that older arrangement.
-
-.. note::
-
-   Open question from live use: in the *pending* case the command currently
-   leaves the loop playing rather than muting. If the long press is being
-   used as a general "stop" gesture -- and with sync on the pending case is
-   the common one -- muting there too may be preferable.
+* **The hold usually lands after the recording has started**, so the loop
+  stops, muted. If record was pressed early in a long cycle, the hold can
+  land while the record is still waiting for the beat; then the loop simply
+  keeps playing. Press **mute_trigger** to stop it.
+* **A long press cannot abandon a recording in progress.** Pressing to end a
+  recording finishes it at once -- the new take plays -- and the long press
+  that follows does nothing. That is also what makes the gesture safe:
+  lingering on the pedal after ending a recording keeps the take. To stop a
+  recording in progress without hearing it, press **mute_trigger** instead:
+  it ends the recording into a muted loop (at the next beat when
+  mute-quantize is on), keeping the new take.
+* **The one trade-off that cannot be avoided:** the start of a real record
+  press looks exactly like the start of a long press, so a foot resting on
+  the **record/play** switch past the long-press threshold (400 ms here)
+  cancels a take you meant to keep. Keep the threshold comfortably longer
+  than a normal stomp.
 
 .. note::
 
@@ -336,39 +339,17 @@ that, and this replaces that older arrangement.
    long-press: its long-press for Undo is *Undo All*, which clears the whole
    loop stack rather than retracting a single record.
 
-**Cancelling a record with the long press.** The record button's short
-press fires at once, so a long press on it always follows a real ``record``.
-What the long press does depends on what that record did:
-
-* **The press started a recording**, or queued one waiting for the beat: the
-  long press cancels it. Only that one recording is undone. The loop goes
-  back to the previous take, muted -- or, if the record was still waiting for
-  the beat, the previous take simply keeps playing. Nothing is heard in
-  between.
-* **The press ended a recording**: the new take is kept and plays, and the
-  long press does nothing. A long press cannot abandon a recording in
-  progress, because the press itself has already finished it.
-
-The one trade-off that cannot be avoided: the start of a real record press
-looks exactly like the start of a long press, so a foot resting on the
-**record/play** switch past the long-press threshold cancels a take you
-meant to keep. Keep the threshold comfortably longer than a normal stomp.
-
-To stop a recording in progress without hearing it, press **mute_trigger**
-instead. It ends the recording into a muted loop (at the next beat when
-mute-quantize is on), so nothing is heard; unlike the long press, it keeps
-the new take.
-
 **Record failsafe: a safety net for when nobody presses anything.** The
 ``cancel_record_mute`` command above still needs a press. Tapping record to end
 a playing loop's playback fires a real recording immediately -- if that was
 actually meant to be a long press to cancel instead, or attention just went
 elsewhere before pressing anything else, that recording runs forever with the
-previous take gone underneath it. SooperLooper now has a timeout for exactly
+previous take gone underneath it. SooperLooper has a timeout for exactly
 that: leave a loop recording past ``record_failsafe_seconds`` after it cut off
 an existing, playing take, and it auto-cancels back to that take, muted, the
 same as if the long press had landed. It only ever fires for a record that
-interrupted playback -- a fresh recording into an empty loop is never affected.
+interrupted playback -- a fresh recording into an empty loop, or one started
+from Mute or Pause, is never affected.
 
 It ships **off by default**. To turn it on, add the key to the session
 file's ``<Globals>`` line and restart::

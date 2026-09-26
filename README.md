@@ -22,7 +22,7 @@ stopping: a long hold or a quick double tap, always following the eager
 `record` that started it.  It always fires immediately and eagerly;
 waiting to see whether a second trigger will follow would cost the very
 timing accuracy this patch exists to protect.  A separate button bound to
-`mute_trigger` could stop play too (keeping the new take), but costs a
+`mute_trigger` would do the same job for a playing loop, but costs a
 second pedal and is one more control to remember under performance
 pressure.  Internally
 `cancel_record_mute` works by discarding the take and restoring the

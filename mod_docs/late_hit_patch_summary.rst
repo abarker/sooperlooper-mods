@@ -144,9 +144,10 @@ item links to its full description.
 - **New command** ``cancel_record_mute``.  Cancels a recording that has
   started, or one still waiting for the beat, and brings back the previous
   take; does nothing otherwise.  It is meant to be fired by a long or
-  double press after an eager-firing ``record``, so one switch can both
-  record and cancel, with no added latency on the record itself; doing
-  nothing in other states is what makes that safe.  See `New Command:
+  double press after an eager-firing ``record``, so one switch can record,
+  play, and -- on a hold -- stop, leaving the loop muted, with no added
+  latency on the record itself; doing nothing in other states is what
+  makes that safe.  See `New Command:
   cancel_record_mute`_.
 
 - **Record failsafe.**  If a recording that cut off a playing loop is left
@@ -278,10 +279,12 @@ actually recorded; otherwise the previous take simply keeps playing.  In
 every other situation it does nothing, which is what makes it safe to put
 on the same footswitch as ``record``.
 
-Motivation: plain ``record`` already carries a loop from recording into
-play on its own, and that needs nothing new.  What ``cancel_record_mute``
-adds is a clean way to stop instead, on the same switch, without a second
-button.
+The intended use is one switch that records, plays and stops.  Press to
+record, press again to play, and hold to stop.  The hold's press fires a new
+``record`` at once, as every press on the switch does; the long press then
+fires ``cancel_record_mute``, which cancels that new recording and leaves
+the loop you made muted.  Unmuting resumes it where it is in its cycle;
+``mute_trigger`` restarts it from the top.
 
 It is fired by an optional second gesture that always follows the eager
 ``record``: a long hold (the pedal is already down), or a quick double tap
@@ -291,10 +294,10 @@ whose second tap is mapped to ``cancel_record_mute`` instead of another
 to see whether a second gesture follows would cost the timing accuracy the
 late-hit correction exists to protect.
 
-A separate button bound to ``mute_trigger`` could stop play too, though it
-keeps the new take.  It also costs a second pedal, and is one more control
-to reach for under performance pressure instead of an extension of the
-gesture already in progress.
+A separate button bound to ``mute_trigger`` does the same job for a
+playing loop.  The hold saves that second pedal, and is an extension of the
+gesture already in progress rather than one more control to reach for under
+performance pressure.
 
 What happens, by what the loop is doing when the command arrives:
 
@@ -311,7 +314,8 @@ What happens, by what the loop is doing when the command arrives:
      - Silence: the loop is muted.  Unmute to hear the previous take.
    * - waiting for the beat to start a recording
      - The queued recording is cancelled.
-     - The previous take keeps playing, uninterrupted.
+     - The previous take keeps playing, uninterrupted: the hold does not
+       stop it.
    * - waiting for the beat to end a recording
      - Nothing.  The take is kept.
      - The new take plays from the beat.
@@ -319,8 +323,11 @@ What happens, by what the loop is doing when the command arrives:
      - Nothing.
      - No change.
 
-The third row is the accident the design has to tolerate: pressing to end
-a recording and lingering on the pedal must not destroy the take.  How the
+The hold usually lands after the recording has started, so the loop stops.
+It can land while the record is still waiting for the beat -- mostly when
+record was pressed early in a long cycle -- and then the loop keeps playing.
+The third row is the accident the design has to tolerate: pressing to end a
+recording and lingering on the pedal must not destroy the take.  How the
 command tells these cases apart, and what it changes internally, is in
 `cancel_record_mute Implementation`_ in the appendix.
 
