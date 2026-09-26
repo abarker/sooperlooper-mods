@@ -417,6 +417,119 @@ static void test_follow_song_mode_mixed_bars ()
 	CHECK (bad == 0, "%d uneven beat pulse gap(s)", bad);
 }
 
+// Hydrogen's song looping (4/4 + 3/4 + 3/4 = 10 beats, as sampled live):
+// the JACK frame keeps counting while the position returns to bar 1.  With
+// a 4-beat cycle, which does not divide the song, the pulses must stay
+// evenly spaced: each loop is absorbed as an offset, never a jump.
+static double loop_song_publish (double beats)
+{
+	const double s = std::fmod (beats, 10.0);
+	const int bar = s < 4 ? 1 : (s < 7 ? 2 : 3);
+	const double st = bar == 1 ? 0 : (bar == 2 ? 4 : 7), bpb = bar == 1 ? 4 : 3;
+	const double t = std::floor ((s - st) * 48.0);
+	const int beat = (int) (t / 48.0) + 1, tick = (int) (t - (beat - 1) * 48.0);
+	return BeatTracker::bbt_beats (bar, beat, tick, st * 48.0, bpb, 48.0);
+}
+
+static void test_follow_song_loop_absorbed ()
+{
+	const uint32_t nf = 256;
+	const double bpm = 141.0, rate = bpm / (60.0 * SR), step = 4.0;
+	BeatTracker bt;
+	uint32_t pos = 0;
+	std::vector<double> p;
+	int snaps = 0, absorbs = 0;
+	for (int c = 0; c < 40 * 48000 / 256; ++c) {     // 40 s, about 9 loops
+		bt.update (pos, nf, bpm, true, SR);
+		bt.follow_master (loop_song_publish (pos * rate), 48.0);
+		if (bt.snapped ()) ++snaps;
+		if (bt.absorbed ()) ++absorbs;
+		uint32_t o[8];
+		int n = bt.boundaries (step, nf, o, 8);
+		for (int i = 0; i < n; ++i) p.push_back ((double) pos + o[i]);
+		pos += nf;
+	}
+	const int loops = (int) (pos * rate / 10.0);
+	CHECK (snaps == 0, "%d jump(s) at song loops", snaps);
+	CHECK (absorbs == loops, "%d loop(s) absorbed, expected %d", absorbs, loops);
+	int bad = 0;
+	for (size_t k = 1; k < p.size (); ++k)
+		if (std::fabs ((p[k] - p[k - 1]) * rate - step) > 0.02) ++bad;
+	CHECK (bad == 0, "%d uneven cycle gap(s) across song loops", bad);
+
+	// Then a relocate to the start of bar 2 (song beat 4): the count must
+	// land on the master's position itself, not on it plus the offset the
+	// loops left behind.
+	pos += 1000000;
+	const double at = 4.0 - pos * rate;     // master = pos * rate + at
+	for (int c = 0; c < 50; ++c) {
+		bt.update (pos, nf, bpm, true, SR);
+		bt.follow_master (published (pos * rate + at, 48.0));
+		if (c == 0) {
+			CHECK (bt.relocated () && bt.snapped (), "relocate after song loops not a jump");
+			CHECK (std::fabs (bt.start_beats () - 4.0) < 0.03,
+			       "after song loops, relocate landed on %.4f, not 4", bt.start_beats ());
+		}
+		pos += nf;
+	}
+}
+
+// Following that starts with the master somewhere else (the transport
+// started in bar 3 of a song with a tempo change before it) jumps to the
+// master once, even without a relocate.
+static void test_follow_start_mid_song ()
+{
+	const uint32_t nf = 256;
+	const double bpm = 120.0, rate = bpm / (60.0 * SR), off = 2.03;
+	BeatTracker bt;
+	uint32_t pos = 480000;
+	int snaps = 0;
+	for (int c = 0; c < 200; ++c) {
+		bt.update (pos, nf, bpm, true, SR);
+		bt.follow_master (published (pos * rate + off, 1920.0));
+		if (bt.snapped ()) ++snaps;
+		pos += nf;
+	}
+	CHECK (snaps == 1, "%d jump(s) when following started off the master", snaps);
+	const double err = bt.start_beats () - ((pos - nf) * rate + off);
+	CHECK (std::fabs (err) < 0.01, "%.4f beats off the master after starting", err);
+}
+
+// The song sampled live: 4/4 + 3/4 at 141 BPM, then bar 3 at 100 BPM,
+// looping for ten minutes.  Modelled as Hydrogen does it: the position
+// follows the tempo that applies one cycle before JACK reports it.  The
+// count must stay on the master's position (unwrapped) for the whole run,
+// with every loop absorbed and no jumps -- one-cycle rounding errors and
+// the tempo step at each loop must not add up.
+static void test_follow_song_loop_tempo_change ()
+{
+	const uint32_t nf = 256;
+	BeatTracker bt;
+	uint32_t pos = 0;
+	double U = 0.0;                   // the master's position, unwrapped
+	double shown_bpm = 141.0;         // tempo JACK reports (a cycle late)
+	int snaps = 0, absorbs = 0;
+	double worst = 0.0;
+	const int cycles = 600 * 48000 / 256;
+	for (int c = 0; c < cycles; ++c) {
+		const double song = std::fmod (U, 10.0);
+		const double bpm_now = song >= 7.0 ? 100.0 : 141.0;
+		bt.update (pos, nf, shown_bpm, true, SR);
+		bt.follow_master (loop_song_publish (U), 48.0);
+		if (bt.snapped ()) ++snaps;
+		if (bt.absorbed ()) ++absorbs;
+		if (c > 1000) worst = std::max (worst, std::fabs (bt.start_beats () - U));
+		U += nf * bpm_now / (60.0 * SR);
+		shown_bpm = bpm_now;
+		pos += nf;
+	}
+	const int loops = (int) (U / 10.0);
+	CHECK (snaps == 0, "%d jump(s) in a looping song with a tempo change", snaps);
+	CHECK (absorbs == loops, "%d loop(s) absorbed, expected %d", absorbs, loops);
+	CHECK (worst < 0.02, "count up to %.4f beats off the master over %d loops", worst, loops);
+	printf ("  song-loop model: %d loops, count within %.4f beats of the master\n", loops, worst);
+}
+
 static int replay ()
 {
 	BeatTracker bt;
@@ -448,6 +561,9 @@ int main (int argc, char ** argv)
 	test_follow_not_when_stopped ();
 	test_bbt_beats_formula ();
 	test_follow_song_mode_mixed_bars ();
+	test_follow_song_loop_absorbed ();
+	test_follow_start_mid_song ();
+	test_follow_song_loop_tempo_change ();
 	if (g_fail) { fprintf (stderr, "%d check(s) failed\n", g_fail); return 1; }
 	printf ("all beat_tracker tests passed\n");
 	return 0;

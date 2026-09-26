@@ -54,7 +54,12 @@
 // map, Hydrogen in song mode -- follow_master() keeps the count on it.
 // Small differences are nudged in a little each cycle, added to the end
 // of the cycle so the count never runs backwards (no doubled or dropped
-// pulse); a large one, or any relocate, jumps to the master's position.
+// pulse).  A relocate, or a large difference when following starts,
+// jumps to the master's position.  A large jump in the master's position
+// without a relocate -- Hydrogen's song looping back to bar 1 while the
+// JACK frame keeps counting -- is kept as an offset instead, so the
+// pulses stay evenly spaced even when the song is not a whole number of
+// cycles long.
 // A master that publishes constants (Hydrogen in pattern mode sends bar 1,
 // beat 1, tick 0 throughout) never counts as live and is ignored.
 //
@@ -81,7 +86,9 @@ class BeatTracker
 		  _active (false), _relocated (false), _backwards (false),
 		  _m_have (false), _m_last (0.0), _m_changes (0), _m_quiet (0.0),
 		  _followed (false), _snapped (false), _live (false),
-		  _live_changed (false), _follow_err (0.0) {}
+		  _live_changed (false), _absorbed (false), _follow_err (0.0),
+		  _m_offset (0.0), _err_avg (0.0), _tick (0.0), _settle_left (0.0),
+		  _settle_sum (0.0), _settle_n (0), _settle_base (0.0) {}
 
 	// Call exactly once per audio cycle.  framepos is the transport frame
 	// at the start of the cycle, bpm the tempo reported for this cycle
@@ -95,6 +102,7 @@ class BeatTracker
 		_followed = false;
 		_snapped = false;
 		_live_changed = false;
+		_absorbed = false;
 
 		if (!rolling) {
 			return;           // frozen; a resume at _next_frame continues
@@ -163,14 +171,16 @@ class BeatTracker
 
 	// Call after update(), in a cycle where the master publishes a
 	// bar/beat/tick position: master_beats is that position, in beats, at
-	// the start of the cycle.  Does nothing unless this cycle is active and
-	// the master's position is live -- seen changing at least twice, and
+	// the start of the cycle, and ticks_per_beat the master's tick size (0
+	// if unknown).  Does nothing unless this cycle is active and the
+	// master's position is live -- seen changing at least twice, and
 	// within the last half second.
-	void follow_master (double master_beats)
+	void follow_master (double master_beats, double ticks_per_beat = 0.0)
 	{
 		_followed = false;
 		_snapped = false;
 		_live_changed = false;
+		_absorbed = false;
 		if (!_active) {
 			return;
 		}
@@ -188,20 +198,57 @@ class BeatTracker
 		if (!live) {
 			return;               // constants (pattern mode) or gone quiet
 		}
-		const double SNAP  = 0.25;   // beats: beyond this, jump
+		const double SNAP  = 0.25;   // beats: a larger difference is a jump
 		const double NUDGE = 0.05;   // fraction of a small error taken per cycle
-		const double err = master_beats - _b0;
+		_tick = ticks_per_beat > 0.0 ? 1.0 / ticks_per_beat : 0.0;
+		if (_relocated || _live_changed) {
+			_m_offset = 0.0;
+			_err_avg = 0.0;
+			_settle_left = 0.0;
+		}
+		const double err = master_beats + _m_offset - _b0;
 		_follow_err = err;
-		if (_relocated || std::fabs (err) > SNAP) {
-			// Jump to the master's position (a relocate into a tempo map, or
-			// a jump in the master's own position).
+		if (_relocated || (_live_changed && std::fabs (err) > SNAP)) {
+			// Jump to the master's position: a relocate (into a tempo map,
+			// say), or following starting somewhere else.
 			_seg_beats += err;
 			_b0 += err;
 			_b1 += err;
+			_err_avg = 0.0;
+			_settle_left = 0.0;
 			_snapped = true;
+		} else if (std::fabs (err) > SNAP) {
+			// The master's position jumped with no relocate: a song
+			// looping back to its start.  Keep the count, and measure the
+			// master from here on relative to where it jumped to.  This
+			// first estimate of the jump includes this one cycle's tick
+			// rounding -- always the same way round just after a song
+			// loops, so it would add up over many loops -- so it is
+			// refined while settling (below).
+			if (_settle_left > 0.0) {
+				finish_settle ();
+			}
+			_m_offset -= err - _err_avg;
+			_settle_left = 0.5 * _sr;
+			_settle_sum = 0.0;
+			_settle_n = 0;
+			_settle_base = _err_avg;
+			_absorbed = true;
+			return;
+		} else if (_settle_left > 0.0) {
+			// Settling after a song loop: leave the count alone and average
+			// the difference over many ticks, then correct the offset.
+			_settle_sum += err;
+			++_settle_n;
+			_settle_left -= (double) _nframes;
+			if (_settle_left <= 0.0) {
+				finish_settle ();
+			}
+			return;
 		} else {
 			// Nudge: add a little of the error to the end of this cycle, so
 			// the count stays continuous and never runs backwards.
+			_err_avg += NUDGE * (err - _err_avg);
 			double shift = NUDGE * err;
 			const double span = _b1 - _b0;
 			if (shift < -0.5 * span) {
@@ -214,11 +261,32 @@ class BeatTracker
 		_followed = true;
 	}
 
+	// End of settling after a song loop: take out of the offset the average
+	// difference seen since, less the one before the loop.  A song is a
+	// whole number of the master's ticks long, so the offset (a sum of
+	// song lengths) is then rounded to a whole tick; that also removes any
+	// small step (under half a tick) that happened at the loop itself, such
+	// as a tempo change the master published a cycle late, which the
+	// nudging then follows.
+	void finish_settle ()
+	{
+		if (_settle_n > 0) {
+			_m_offset -= _settle_sum / _settle_n - _settle_base;
+		}
+		if (_tick > 0.0) {
+			_m_offset = std::floor (_m_offset / _tick + 0.5) * _tick;
+		}
+		_settle_left = 0.0;
+	}
+
 	// True if follow_master() adjusted the count this cycle; snapped() if
-	// it jumped rather than nudged.  follow_error() is the master's
-	// position minus the count before the adjustment, in beats.
+	// it jumped rather than nudged; absorbed() if the master jumped without
+	// a relocate and the count was kept.  follow_error() is the master's
+	// position (plus any offset) minus the count before the adjustment,
+	// in beats.
 	bool followed () const { return _followed; }
 	bool snapped () const { return _snapped; }
+	bool absorbed () const { return _absorbed; }
 	double follow_error () const { return _follow_err; }
 	// Whether the master's position is live (see follow_master()), and
 	// whether that changed this cycle -- for logging.
@@ -305,7 +373,15 @@ class BeatTracker
 	bool     _snapped;
 	bool     _live;
 	bool     _live_changed;
+	bool     _absorbed;
 	double   _follow_err;
+	double   _m_offset;       // added to the master's position (song loops)
+	double   _err_avg;        // smoothed recent small differences
+	double   _tick;           // the master's tick, in beats (0: unknown)
+	double   _settle_left;    // frames of settling left after a song loop
+	double   _settle_sum;     // sum of differences while settling
+	int      _settle_n;
+	double   _settle_base;    // _err_avg just before the song loop
 };
 
 } // namespace SooperLooper

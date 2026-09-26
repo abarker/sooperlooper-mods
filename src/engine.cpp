@@ -2070,8 +2070,9 @@ Engine::mainloop()
 				else if (pev.kind == SyncPulseLogEvent::Follow) {
 					// err: the master's position minus SooperLooper's
 					// count, in beats, just before the jump (or when
-					// following started).
-					static const char * what[] = { "snap", "start", "stop" };
+					// following started, or the master jumped by itself:
+					// "absorb", e.g. a song looping).
+					static const char * what[] = { "snap", "start", "stop", "absorb" };
 					if (pev.follow_what == SyncPulseLogEvent::FollowStop) {
 						fprintf (_sync_pulse_log_file,
 						         "event=follow what=stop frame=%u bpm=%.3f\n",
@@ -3172,17 +3173,19 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 						info.bar, info.beat, info.tick, info.bar_start_tick,
 						info.beats_per_bar, info.ticks_per_beat);
 					if (master_beats >= 0.0) {
-						_beat_tracker.follow_master (master_beats);
+						_beat_tracker.follow_master (master_beats, info.ticks_per_beat);
 					}
 #ifdef ALB_SYNC_PULSE_LOG
-					// Log when following starts or stops, and every jump;
-					// not the per-cycle nudges.
-					if (_beat_tracker.live_changed() || _beat_tracker.snapped()) {
+					// Log when following starts or stops, every jump and
+					// every absorbed master jump; not the per-cycle nudges.
+					if (_beat_tracker.live_changed() || _beat_tracker.snapped()
+					    || _beat_tracker.absorbed()) {
 						SyncPulseLogEvent fev = SyncPulseLogEvent();
 						fev.kind        = SyncPulseLogEvent::Follow;
 						fev.framepos    = info.framepos;
 						fev.bpm         = info.bpm;
 						fev.follow_what = _beat_tracker.snapped() ? SyncPulseLogEvent::FollowSnap
+							: _beat_tracker.absorbed() ? SyncPulseLogEvent::FollowAbsorb
 							: (_beat_tracker.live() ? SyncPulseLogEvent::FollowStart
 							                        : SyncPulseLogEvent::FollowStop);
 						fev.follow_err  = _beat_tracker.follow_error();

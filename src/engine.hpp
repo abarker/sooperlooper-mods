@@ -136,10 +136,12 @@ typedef struct _jack_port jack_port_t;
 // (BeatTracker::follow_master), so the pulses also follow a master whose
 // position is not frames * beat length -- a DAW relocated into a song with
 // earlier tempo changes.  Small differences are nudged away over a few
-// cycles; a relocate or a difference over a quarter beat snaps.  A master
+// cycles; a relocate snaps, and so does a difference over a quarter beat
+// when following starts (a song loop is absorbed instead).  A master
 // whose position does not advance (Hydrogen in pattern mode) is ignored.
 // With ALB_SYNC_PULSE_LOG, adds "event=follow" lines to the pulse log
-// when following starts or stops and at every jump.
+// when following starts or stops, at every jump, and when the master's
+// position jumps by itself (a song looping: kept as an offset).
 // Needs ALB_JACK_BEAT_TRACKING, and ALB_BBT_SYNC (audio_driver.hpp) for
 // the BBT fields.  ROADMAP entries 13 and 15.
 //#define ALB_JACK_BBT_TRACKING
@@ -187,7 +189,7 @@ struct SyncPulseLogEvent
 	                          // before this JACK tempo was applied
 	// Follow (ALB_JACK_BBT_TRACKING): what happened, and the master's
 	// position minus SooperLooper's count in beats (not for FollowStop).
-	enum FollowWhat { FollowSnap = 0, FollowStart = 1, FollowStop = 2 };
+	enum FollowWhat { FollowSnap = 0, FollowStart = 1, FollowStop = 2, FollowAbsorb = 3 };
 	uint8_t   follow_what;
 	double    follow_err;
 };
