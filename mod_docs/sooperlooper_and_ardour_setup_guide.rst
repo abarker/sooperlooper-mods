@@ -94,12 +94,7 @@ Mixer                         Behringer Xenyx 802S
 .. note::
 
    Big Tempo and the remapper both depend on ``mididings``, which requires
-   JACK and is built for Linux. Use the maintained community version from
-   PyPI (``pip install mididings``). Installing the remapper with pip pulls
-   it in automatically; for Big Tempo, install with its ``midi`` or ``full``
-   extra (for example ``pip install ".[full]"``). Ubuntu 24.04 has no
-   distribution package for it, and older distribution packages, where they
-   exist, are the original, unmaintained release. The maintained version also lists
+   JACK and is built for Linux. A community-maintained fork of it also lists
    macOS as supported, though that has not been tried for this setup.
    Windows is not supported by ``mididings``.
 
