@@ -125,6 +125,9 @@ class BeatTracker
 		// summing per-cycle increments, so no rounding drift builds up.
 		_b0 = _seg_beats + (double) (uint32_t) (framepos - _seg_frame) * _rate;
 		_b1 = _seg_beats + (double) (uint32_t) (framepos + nframes - _seg_frame) * _rate;
+		// The rate boundaries() uses.  Equal to _rate unless
+		// follow_master() nudges this cycle, so without layer 3 the
+		// pulses are exactly as before.
 		_cycle_rate = _rate;
 		_nframes = nframes;
 		_sr = sr;
