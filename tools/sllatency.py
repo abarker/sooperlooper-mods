@@ -341,7 +341,9 @@ def _envelope(x, sr):
 def onset(env, lo, hi, frac=0.2):
     """First sample in [lo, hi) where the envelope reaches `frac` of its
     peak in that window, with sub-sample interpolation; None if no clear
-    transient (peak not well above the level just before the window)."""
+    transient (peak not well above the level just before the window, or
+    the level already over the threshold where the window starts -- which
+    is what a window of noise alone looks like)."""
     if hi <= lo:
         return None
     seg = env[lo:hi]
@@ -352,7 +354,7 @@ def onset(env, lo, hi, frac=0.2):
     thr = frac * pk
     i = int(np.argmax(seg > thr))
     if i == 0:
-        return float(lo)
+        return None
     y0, y1 = seg[i - 1], seg[i]
     return lo + i - 1 + (thr - y0) / (y1 - y0)
 
@@ -928,6 +930,8 @@ examples:
                          "save new values in.  Remembered for later runs.")
     # Tests stand in for the audio interface with an ordinary JACK client.
     ap.add_argument("--as-hardware", action="store_true", help=argparse.SUPPRESS)
+    # Debugging: save the recordings and click times to a .npz file.
+    ap.add_argument("--dump", metavar="FILE", help=argparse.SUPPRESS)
     ap.add_argument("--reported", action="store_true",
                     help="no clicks and no mic: suggest SooperLooper values from "
                          "the latencies JACK (and a DAW) report -- a quick "
@@ -1107,6 +1111,9 @@ examples:
         rec = ClickRecorder("sllatency", outs, in_sources, probe_targets)
         recs = rec.run(signal, actions=actions, extra_connections=extra,
                        probe_signal=probe_signal)
+        if args.dump:
+            np.savez(args.dump, mic=recs[0], starts=starts,
+                     probe_starts=np.array(probe_starts), click=click, sr=sr)
         if sl_run:
             loop_len = sl_run.sl.get("loop_len", loop=sl_run.index)
     finally:
@@ -1215,10 +1222,12 @@ examples:
     measured_down = None
     second = None
     if probe_targets:
+        # A return sooner than the direct round trip cannot be the probe:
+        # nothing after SooperLooper takes negative time.
         found = []
         for st in probe_starts:
             lg = measure_round_trip(recs[0], [st], click, sr, args.max_latency)
-            if len(lg):
+            if len(lg) and lg[0] > rt - 0.001 * sr:
                 found.append((st, float(lg[0])))
         if len(found) >= len(probe_starts) // 2:
             measured_down = float(np.median([lg for _, lg in found])) - rt

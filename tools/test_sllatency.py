@@ -90,13 +90,14 @@ def run_case(delay, lowpass_hz=None, noise=0.0):
         hw.c.close()
 
 
-def run_tool(delay, sl_port, sl_client, extra=(), answers=None, home=None, wire=()):
+def run_tool(delay, sl_port, sl_client, extra=(), answers=None, home=None, wire=(),
+             noise=0.0):
     """Run the sllatency command line through the fake hardware; return
     (round trip, loop offset) parsed from its report, and the report.
     With `answers`, run interactively and feed them as typed input.  HOME
     is a temporary directory so the tool's remembered settings never
     touch the real one."""
-    hw = FakeHardware(delay)
+    hw = FakeHardware(delay, noise=noise)
     hw.c.activate()
     for src, dst in wire:           # e.g. SooperLooper's main ports as "hardware"
         hw.c.connect(src, dst)
@@ -308,6 +309,18 @@ def monitor_check_tests(sl, port, client):
         ok = "Nothing came back from the path" in _flat(report)
         fails += not ok
         print("%s monitoring path not heard is reported" % ("PASS" if ok else "FAIL"))
+        if not ok:
+            print(report)
+        # Not heard, with a quiet, noisy mic (the rig, 2026-09-26: the noise
+        # alone once read as a return 1472 samples before the direct one).
+        rt, _, report = run_tool(1230, port, client, extra=["--level", "0.03"],
+                                 noise=0.002)
+        flat = _flat(report)
+        ok = (rt is not None and abs(rt - (1230 + PERIOD)) <= 1.0
+              and "Nothing came back from the path" in flat)
+        fails += not ok
+        print("%s monitoring path not heard, noisy mic: reported as not heard "
+              "(round trip %s)" % ("PASS" if ok else "FAIL", rt))
         if not ok:
             print(report)
         # Two routes: a second bus at 300 samples also reaches the hardware.
