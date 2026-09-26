@@ -25,12 +25,12 @@ https://github.com/abarker/sooperlooper-mods (branch ``late-hit-and-jack-midi``)
    This guide assumes the modified SooperLooper 1.7.9 from the fork above.
    Among other things, it adds **late-hit corrections** (a press just after
    the beat counts as on time), sync that stays on the JACK transport master's
-   beat through tempo changes, a command for cancelling a recording with a
-   long press, and **direct JACK MIDI** input and output. Stock SooperLooper
-   1.7.9 has no JACK MIDI; with it you route MIDI over ALSA using ``aconnect``
-   and **a2jmidid**. With this fork you can connect directly over JACK and
-   skip ALSA entirely. The fork's ``mod_docs/late_hit_patch_summary.rst``
-   lists every change in detail.
+   beat through tempo changes, a command that -- bound to a long press on
+   record -- stops a playing loop and keeps it, muted, and **direct JACK
+   MIDI** input and output. Stock SooperLooper 1.7.9 has no JACK MIDI; with it
+   you route MIDI over ALSA using ``aconnect`` and **a2jmidid**. With this
+   fork you can connect directly over JACK and skip ALSA entirely. The fork's
+   ``mod_docs/late_hit_patch_summary.rst`` lists every change in detail.
 
 
 Overview
@@ -94,7 +94,12 @@ Mixer                         Behringer Xenyx 802S
 .. note::
 
    Big Tempo and the remapper both depend on ``mididings``, which requires
-   JACK and is built for Linux. A community-maintained fork of it also lists
+   JACK and is built for Linux. Use the maintained community version from
+   PyPI (``pip install mididings``). Installing the remapper with pip pulls
+   it in automatically; for Big Tempo, install with its ``midi`` or ``full``
+   extra (for example ``pip install ".[full]"``). Ubuntu 24.04 has no
+   distribution package for it, and older distribution packages, where they
+   exist, are the original, unmaintained release. The maintained version also lists
    macOS as supported, though that has not been tried for this setup.
    Windows is not supported by ``mididings``.
 
