@@ -336,20 +336,28 @@ that, and this replaces that older arrangement.
    long-press: its long-press for Undo is *Undo All*, which clears the whole
    loop stack rather than retracting a single record.
 
-**Cancelling a record -- an inherent trade-off.** Be cautious with the record
-long-press. There is **no way to avoid** the following: the start of a genuine
-record/play press is indistinguishable from the eager single that precedes a
-long press that may or may not arrive.  The system cannot know a long press is
-coming, so the eager single must fire, and the loop can briefly become audible
-during the long-press wait interval before ``cancel_record_mute`` retracts it.
-(Without eager single being set and no multiple-press gestures defined for the
-button the record command would fire on release, since at that point it can
-rule out long press.) The most likely accidental trigger is a lingering
-press on the **record/play** switch -- if the foot rests on the pedal past
-the long-press threshold, the gesture fires and cancels a take meant to be
-kept. Deliberately cancelling an in-progress recording is therefore done on the
-**mute_trigger** button instead, which drops to silence immediately with no
-audible wait interval.
+**Cancelling a record with the long press.** The record button's short
+press fires at once, so a long press on it always follows a real ``record``.
+What the long press does depends on what that record did:
+
+* **The press started a recording**, or queued one waiting for the beat: the
+  long press cancels it. Only that one recording is undone. The loop goes
+  back to the previous take, muted -- or, if the record was still waiting for
+  the beat, the previous take simply keeps playing. Nothing is heard in
+  between.
+* **The press ended a recording**: the new take is kept and plays, and the
+  long press does nothing. A long press cannot abandon a recording in
+  progress, because the press itself has already finished it.
+
+The one trade-off that cannot be avoided: the start of a real record press
+looks exactly like the start of a long press, so a foot resting on the
+**record/play** switch past the long-press threshold cancels a take you
+meant to keep. Keep the threshold comfortably longer than a normal stomp.
+
+To stop a recording in progress without hearing it, press **mute_trigger**
+instead. It ends the recording into a muted loop (at the next beat when
+mute-quantize is on), so nothing is heard; unlike the long press, it keeps
+the new take.
 
 **Record failsafe: a safety net for when nobody presses anything.** The
 ``cancel_record_mute`` command above still needs a press. Tapping record to end

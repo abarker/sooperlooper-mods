@@ -306,33 +306,34 @@ state**, which is what makes it safe to overload onto a footswitch that also
 fires ``record``.
 
 Motivation: plain ``record`` already carries a loop from recording into
-play on its own -- that part needs nothing new.  What ``cancel_record_mute``
-adds is a clean way to stop that play again -- the same job ``mute_trigger``
-would do -- without needing a second button.  An optional second
-trigger on the same switch does the stopping: a long hold or a quick double
-tap, always following the eager ``record`` that started it.  It always
-fires immediately and *eagerly* on the first press, with no
-wait-and-see delay: delaying to find out whether a second trigger will
-follow would cost the very timing accuracy the whole late-hit correction
-system exists to protect.  A long hold on the same switch is one natural
-choice for that second, optional trigger (the pedal is already down); a
-quick double tap works just as well -- the first tap firing the eager
-``record`` as always, a second tap within a short window mapped to
-``cancel_record_mute`` instead of a second ``record``.  The command itself
-is indifferent to which gesture triggers it: all it needs is that an eager
-``record`` has already landed.  A separate button bound to ``mute_trigger``
-would do the same job, but costs a second pedal and is one more control to
-consciously reach for under performance pressure, instead of an extension
-of the gesture already in progress.  Internally the command works by
-discarding the take just captured and restoring the previous loop muted --
-that is implementation, not intent: the performer is not undoing a
-mistake, they are choosing to stop play in favor of silence, on the same
-pedal, in one motion.  Doing the retraction externally -- in whatever
-software or hardware maps the pedal's MIDI -- is unreliable because that
-layer cannot see SooperLooper's state: it cannot tell a committed record
-from one still pending on a boundary, and cannot tell whether the loop was
-already muted.  An in-engine command has ``state``, ``waitingForSync``,
-``wasMuted`` and ``headLoopChunk``, and acts in a single realtime dispatch.
+play on its own, and that needs nothing new.  What ``cancel_record_mute``
+adds is a clean way to stop instead, on the same switch, without a second
+button.
+
+It is fired by an optional second gesture that always follows the eager
+``record``: a long hold (the pedal is already down), or a quick double tap
+whose second tap is mapped to ``cancel_record_mute`` instead of another
+``record``.  The command does not care which; it only needs an eager
+``record`` to have landed.  The first press always fires at once: waiting
+to see whether a second gesture follows would cost the timing accuracy the
+late-hit correction exists to protect.
+
+A separate button bound to ``mute_trigger`` could stop play too, though it
+keeps the new take.  It also costs a second pedal, and is one more control
+to reach for under performance pressure instead of an extension of the
+gesture already in progress.
+
+Internally the command discards the take just captured and restores the
+previous loop, muted.  That is implementation, not intent: the performer
+is not undoing a mistake but choosing silence over play, on the same pedal,
+in one motion.
+
+It lives in the engine because whatever maps the pedal's MIDI cannot see
+SooperLooper's state: it cannot tell a committed record from one still
+pending on a boundary, or whether the loop was already muted, so a
+retraction done there is unreliable.  The engine has ``state``,
+``waitingForSync``, ``wasMuted`` and ``headLoopChunk``, and acts in a
+single realtime dispatch.
 
 Behaviour by state at the moment the command arrives:
 

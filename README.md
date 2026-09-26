@@ -17,14 +17,14 @@ quantized Pause press while Muted resolved to Playing instead of Paused.
 **`cancel_record_mute` and record failsafe.**  Plain `record` already
 carries a loop from recording into play on its own — that part needs
 nothing new.  What `cancel_record_mute` adds is a clean way to stop that
-play again — the same job `mute_trigger` would do — without needing a
-second button.  An optional second trigger on the same switch does the
+play again without needing a second button.  An optional second trigger on the same switch does the
 stopping: a long hold or a quick double tap, always following the eager
 `record` that started it.  It always fires immediately and eagerly;
 waiting to see whether a second trigger will follow would cost the very
 timing accuracy this patch exists to protect.  A separate button bound to
-`mute_trigger` would do the same job, but costs a second pedal and is one
-more control to remember under performance pressure.  Internally
+`mute_trigger` could stop play too (keeping the new take), but costs a
+second pedal and is one more control to remember under performance
+pressure.  Internally
 `cancel_record_mute` works by discarding the take and restoring the
 previous loop muted, but that's implementation, not intent — the performer
 isn't undoing a mistake, they're choosing to stop play in favor of
