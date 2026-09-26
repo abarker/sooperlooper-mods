@@ -129,6 +129,26 @@ typedef struct _jack_port jack_port_t;
 #ifdef ALB_JACK_BEAT_TRACKING
 #include "beat_tracker.hpp"
 #endif
+
+// ALB_JACK_BBT_TRACKING: NOT DEFINED by default -- built and unit-tested
+// (src/test_beat_tracker), not yet tried against a real master.  Keeps
+// the beat count on the timebase master's own bar/beat/tick position
+// (BeatTracker::follow_master), so the pulses also follow a master whose
+// position is not frames * beat length -- a DAW relocated into a song with
+// earlier tempo changes.  Small differences are nudged away over a few
+// cycles; a relocate or a difference over a quarter beat snaps.  A master
+// whose position does not advance (Hydrogen in pattern mode) is ignored.
+// Needs ALB_JACK_BEAT_TRACKING, and ALB_BBT_SYNC (audio_driver.hpp) for
+// the BBT fields.  ROADMAP entries 13 and 15.
+//#define ALB_JACK_BBT_TRACKING
+#ifdef ALB_JACK_BBT_TRACKING
+#ifndef ALB_JACK_BEAT_TRACKING
+#error "ALB_JACK_BBT_TRACKING needs ALB_JACK_BEAT_TRACKING"
+#endif
+#ifndef ALB_BBT_SYNC
+#error "ALB_JACK_BBT_TRACKING needs ALB_BBT_SYNC (audio_driver.hpp)"
+#endif
+#endif
 //------ albEnd ----------------------------------
 
 namespace SooperLooper {

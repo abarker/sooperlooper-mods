@@ -48,6 +48,16 @@
 // The error is bounded by one buffer and does not accumulate, so it is
 // not compensated here.
 //
+// Following the master's own position (layer 3, ROADMAP entry 15; used
+// only when engine.hpp defines ALB_JACK_BBT_TRACKING): when the timebase
+// master publishes a live bar/beat/tick position -- a DAW with a tempo
+// map, Hydrogen in song mode -- follow_master() keeps the count on it.
+// Small differences are nudged in a little each cycle, added to the end
+// of the cycle so the count never runs backwards (no doubled or dropped
+// pulse); a large one, or any relocate, jumps to the master's position.
+// A master that publishes constants (Hydrogen in pattern mode sends bar 1,
+// beat 1, tick 0 throughout) never counts as live and is ignored.
+//
 // Header-only and free of JACK/engine dependencies so the RT code and the
 // unit tests (src/test_beat_tracker) run the same arithmetic.  RT-safe:
 // scalar arithmetic only, no allocation, no locks, no syscalls.
@@ -67,7 +77,10 @@ class BeatTracker
 	BeatTracker ()
 		: _have_pos (false), _have_next (false), _next_frame (0),
 		  _seg_frame (0), _seg_beats (0.0), _b0 (0.0), _b1 (0.0), _rate (0.0),
-		  _active (false), _relocated (false), _backwards (false) {}
+		  _cycle_rate (0.0), _nframes (0), _sr (0.0),
+		  _active (false), _relocated (false), _backwards (false),
+		  _m_have (false), _m_last (0.0), _m_changes (0), _m_quiet (0.0),
+		  _followed (false) {}
 
 	// Call exactly once per audio cycle.  framepos is the transport frame
 	// at the start of the cycle, bpm the tempo reported for this cycle
@@ -78,6 +91,7 @@ class BeatTracker
 		_active = false;
 		_relocated = false;
 		_backwards = false;
+		_followed = false;
 
 		if (!rolling) {
 			return;           // frozen; a resume at _next_frame continues
@@ -111,10 +125,62 @@ class BeatTracker
 		// summing per-cycle increments, so no rounding drift builds up.
 		_b0 = _seg_beats + (double) (uint32_t) (framepos - _seg_frame) * _rate;
 		_b1 = _seg_beats + (double) (uint32_t) (framepos + nframes - _seg_frame) * _rate;
+		_cycle_rate = _rate;
+		_nframes = nframes;
+		_sr = sr;
 		_next_frame = framepos + nframes;
 		_have_next = true;
 		_active = true;
 	}
+
+	// Call after update(), in a cycle where the master publishes a
+	// bar/beat/tick position: master_beats is that position, in beats, at
+	// the start of the cycle.  Does nothing unless this cycle is active and
+	// the master's position is live -- seen changing at least twice, and
+	// within the last half second.
+	void follow_master (double master_beats)
+	{
+		_followed = false;
+		if (!_active) {
+			return;
+		}
+		if (_m_have && master_beats != _m_last) {
+			if (_m_changes < 1000) ++_m_changes;
+			_m_quiet = 0.0;
+		} else if (_m_have) {
+			_m_quiet += (double) _nframes;
+		}
+		_m_last = master_beats;
+		_m_have = true;
+		if (_m_changes < 2 || _m_quiet > 0.5 * _sr) {
+			return;               // constants (pattern mode) or gone quiet
+		}
+		const double SNAP  = 0.25;   // beats: beyond this, jump
+		const double NUDGE = 0.05;   // fraction of a small error taken per cycle
+		const double err = master_beats - _b0;
+		if (_relocated || std::fabs (err) > SNAP) {
+			// Jump to the master's position (a relocate into a tempo map, or
+			// a jump in the master's own position).
+			_seg_beats += err;
+			_b0 += err;
+			_b1 += err;
+		} else {
+			// Nudge: add a little of the error to the end of this cycle, so
+			// the count stays continuous and never runs backwards.
+			double shift = NUDGE * err;
+			const double span = _b1 - _b0;
+			if (shift < -0.5 * span) {
+				shift = -0.5 * span;
+			}
+			_seg_beats += shift;
+			_b1 += shift;
+			_cycle_rate = (_b1 - _b0) / (double) _nframes;
+		}
+		_followed = true;
+	}
+
+	// True if follow_master() adjusted the count this cycle.
+	bool followed () const { return _followed; }
 
 	// True if this cycle advanced the position (rolling, tempo known).
 	bool active () const { return _active; }
@@ -144,10 +210,10 @@ class BeatTracker
 		// rule seen from the neighbouring cycle excludes it there, so each
 		// boundary is counted once.
 		const double EPS = 1e-6;                     // frames
-		double b = std::ceil ((_b0 - EPS * _rate) / step) * step;
+		double b = std::ceil ((_b0 - EPS * _cycle_rate) / step) * step;
 		int n = 0;
 		while (n < max_out) {
-			double off = (b - _b0) / _rate;
+			double off = (b - _b0) / _cycle_rate;
 			if (off >= (double) nframes - EPS) {
 				break;
 			}
@@ -169,7 +235,7 @@ class BeatTracker
 		if (!_active || !(step > 0.0)) {
 			return 0.0;
 		}
-		return (_b0 - std::floor (_b0 / step) * step) / _rate;
+		return (_b0 - std::floor (_b0 / step) * step) / _cycle_rate;
 	}
 
   private:
@@ -180,10 +246,19 @@ class BeatTracker
 	double   _seg_beats;      // beat position at _seg_frame
 	double   _b0;
 	double   _b1;
-	double   _rate;
+	double   _rate;           // beats per frame at the reported tempo
+	double   _cycle_rate;     // this cycle's rate, including any nudge
+	uint32_t _nframes;
+	double   _sr;
 	bool     _active;
 	bool     _relocated;
 	bool     _backwards;
+	// follow_master() state
+	bool     _m_have;
+	double   _m_last;         // the master's position last cycle
+	int      _m_changes;      // times it has changed (capped)
+	double   _m_quiet;        // frames since it last changed
+	bool     _followed;
 };
 
 } // namespace SooperLooper

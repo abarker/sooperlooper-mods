@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <algorithm>
 #include <vector>
 #include <string>
 
@@ -210,6 +211,137 @@ static void test_step_change ()
 	}
 }
 
+// ---- follow_master() (layer 3, ALB_JACK_BBT_TRACKING) ----
+
+// What a master publishes for a true position of `beats`: whole ticks,
+// plus the half tick the engine adds to centre the estimate.
+static double published (double beats, double tpb)
+{
+	return (std::floor (beats * tpb) + 0.5) / tpb;
+}
+
+// A master publishing constants (Hydrogen in pattern mode: bar 1, beat 1,
+// tick 0) changes nothing, through tempo changes and a relocate.
+static void test_follow_ignores_constant_master ()
+{
+	const uint32_t nf = 256;
+	BeatTracker a, b;
+	uint32_t pos = 0;
+	std::vector<double> pa, pb;
+	bool ever = false;
+	for (int c = 0; c < 4000; ++c) {
+		if (c == 2000) pos = 0;
+		const double bpm = c < 1000 ? 120.0 : (c < 1500 ? 150.0 : 97.0);
+		a.update (pos, nf, bpm, true, SR);
+		b.update (pos, nf, bpm, true, SR);
+		b.follow_master (published (0.0, 48.0));
+		ever = ever || b.followed ();
+		uint32_t oa[8], ob[8];
+		int na = a.boundaries (1.0, nf, oa, 8), nb = b.boundaries (1.0, nf, ob, 8);
+		for (int i = 0; i < na; ++i) pa.push_back ((double) pos + oa[i]);
+		for (int i = 0; i < nb; ++i) pb.push_back ((double) pos + ob[i]);
+		pos += nf;
+	}
+	CHECK (!ever, "a constant master was followed");
+	CHECK (pa == pb, "a constant master changed the pulses");
+}
+
+// A DAW with a tempo map: after a relocate into the song the master's
+// position is not frame * beat length.  The count jumps to the master's
+// position on the relocate and stays with it.
+static void test_follow_snaps_on_relocate ()
+{
+	const uint32_t nf = 256;
+	const double bpm = 120.0, rate = bpm / (60.0 * SR), tpb = 1920.0, off = 0.1;  // under the snap threshold
+	BeatTracker bt;
+	uint32_t pos = 0;
+	for (int c = 0; c < 400; ++c) {
+		bt.update (pos, nf, bpm, true, SR);
+		bt.follow_master (published (pos * rate, tpb));
+		pos += nf;
+	}
+	pos = 1000000;
+	bt.update (pos, nf, bpm, true, SR);
+	bt.follow_master (published (pos * rate + off, tpb));
+	CHECK (bt.relocated () && bt.followed (), "relocate not followed");
+	CHECK (std::fabs (bt.start_beats () - (pos * rate + off)) < 1.0 / tpb,
+	       "not on the master after the relocate: %.6f vs %.6f",
+	       bt.start_beats (), pos * rate + off);
+	double worst = 0.0;
+	for (int c = 0; c < 400; ++c) {
+		pos += nf;
+		bt.update (pos, nf, bpm, true, SR);
+		bt.follow_master (published (pos * rate + off, tpb));
+		worst = std::max (worst, std::fabs (bt.start_beats () - (pos * rate + off)));
+	}
+	CHECK (worst < 1.0 / tpb, "drifted off the master after the relocate: %.6f beats", worst);
+}
+
+// A small difference is nudged away without doubling or dropping a pulse,
+// even with coarse ticks (Hydrogen publishes 48 per beat).
+static void test_follow_nudges_without_double ()
+{
+	const uint32_t nf = 256;
+	const double bpm = 120.0, rate = bpm / (60.0 * SR), tpb = 48.0, off = 0.2;
+	BeatTracker bt;
+	uint32_t pos = 0;
+	std::vector<double> p;
+	for (int c = 0; c < 4000; ++c) {
+		bt.update (pos, nf, bpm, true, SR);
+		bt.follow_master (published (pos * rate + off, tpb));
+		uint32_t o[8];
+		int n = bt.boundaries (1.0, nf, o, 8);
+		for (int i = 0; i < n; ++i) p.push_back ((double) pos + o[i]);
+		pos += nf;
+	}
+	const double err = bt.start_beats () - ((pos - nf) * rate + off);
+	CHECK (std::fabs (err) < 0.01, "not converged: %.5f beats off", err);
+	int bad = 0;
+	for (size_t k = 1; k < p.size (); ++k)
+		if (p[k] - p[k - 1] < 0.7 / rate) ++bad;
+	CHECK (bad == 0, "%d pulse pair(s) closer than 0.7 beat", bad);
+	const double beats = (pos - nf) * rate + off;
+	CHECK (std::fabs ((double) p.size () - beats) <= 1.0,
+	       "%zu pulses over %.2f beats", p.size (), beats);
+}
+
+// A master whose position stops changing for over half a second is no
+// longer followed.
+static void test_follow_quiet_master ()
+{
+	const uint32_t nf = 256;
+	const double rate = 120.0 / (60.0 * SR);
+	BeatTracker bt;
+	uint32_t pos = 0;
+	for (int c = 0; c < 50; ++c) {
+		bt.update (pos, nf, 120.0, true, SR);
+		bt.follow_master (published (pos * rate, 1920.0));
+		pos += nf;
+	}
+	CHECK (bt.followed (), "a live master was not followed");
+	const double frozen = published (pos * rate, 1920.0);
+	for (int c = 0; c < 200; ++c) {
+		bt.update (pos, nf, 120.0, true, SR);
+		bt.follow_master (frozen);
+		pos += nf;
+	}
+	CHECK (!bt.followed (), "a frozen master was still followed");
+}
+
+// Nothing is followed while stopped.
+static void test_follow_not_when_stopped ()
+{
+	const uint32_t nf = 256;
+	BeatTracker bt;
+	bool ever = false;
+	for (int c = 0; c < 100; ++c) {
+		bt.update (0, nf, 120.0, false, SR);
+		bt.follow_master (c * 0.01);
+		ever = ever || bt.followed ();
+	}
+	CHECK (!ever, "followed while stopped");
+}
+
 static int replay ()
 {
 	BeatTracker bt;
@@ -234,6 +366,11 @@ int main (int argc, char ** argv)
 	test_unknown_tempo ();
 	test_wrap ();
 	test_step_change ();
+	test_follow_ignores_constant_master ();
+	test_follow_snaps_on_relocate ();
+	test_follow_nudges_without_double ();
+	test_follow_quiet_master ();
+	test_follow_not_when_stopped ();
 	if (g_fail) { fprintf (stderr, "%d check(s) failed\n", g_fail); return 1; }
 	printf ("all beat_tracker tests passed\n");
 	return 0;

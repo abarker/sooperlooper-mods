@@ -3149,6 +3149,17 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 					}
 				}
 
+#ifdef ALB_JACK_BBT_TRACKING
+				// Keep the count on the master's own bar/beat/tick
+				// (engine.hpp).  The half tick centres the estimate, since
+				// JACK's tick is rounded down to a whole tick.
+				if (info.bbt_valid && info.ticks_per_beat > 0.0 && info.beats_per_bar > 0.0f) {
+					const double master_beats = (info.bar - 1) * (double) info.beats_per_bar
+						+ (info.beat - 1) + (info.tick + 0.5) / info.ticks_per_beat;
+					_beat_tracker.follow_master (master_beats);
+				}
+#endif
+
 				if (_tempo_frames > 0.0 && _beat_tracker.active()) {
 					// Cycle length in beats (_tempo_frames is frames per
 					// quantize unit at _tempo).
