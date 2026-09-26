@@ -6,9 +6,12 @@ more precise:
 
 - a Record start or stop, Mute or Unmute, or Multiply-end press that lands a
   moment after the beat counts as on time, instead of waiting a whole cycle;
-- loops stay on a JACK drum machine's beat through tempo changes;
-- SooperLooper takes commands and sends MIDI clock over JACK MIDI directly;
-- two safety features cover a recording started by mistake or left running;
+- when synced to JACK transport, loops stay on the transport master's beat
+  through tempo changes;
+- SooperLooper can take commands, and send MIDI clock, over JACK MIDI
+  directly;
+- a new command cancels a recording just started, and an optional timeout
+  cancels a recording left running over a playing loop;
 - a separate large-text display, ``slbigstate``, shows loop state from
   across the room.
 
@@ -140,15 +143,19 @@ item links to its full description.
 
 - **New command** ``cancel_record_mute``.  Cancels a recording that has
   started, or one still waiting for the beat, and brings back the previous
-  take; does nothing otherwise.  This lets one switch, firing at once on
-  every press, carry record, play, and "stop instead" -- with no added
-  latency at any step.  See `New Command: cancel_record_mute`_.
+  take; does nothing otherwise.  It is meant to be fired by a long or
+  double press after an eager-firing ``record``, so one switch can both
+  record and cancel, with no added latency on the record itself; doing
+  nothing in other states is what makes that safe.  See `New Command:
+  cancel_record_mute`_.
 
 - **Record failsafe.**  If a recording that cut off a playing loop is left
   running longer than ``record_failsafe_seconds``, it is cancelled
-  automatically and the previous take comes back, muted -- for when nobody
-  presses anything at all.  Off by default.  It never touches a first
-  recording into an empty loop, or one started from Mute or Pause.  See
+  automatically and the previous take comes back, muted.  It catches a
+  record pressed to stop a loop without the long press that would cancel
+  the new recording, and any other accidental record trigger over a
+  playing loop.  Off by default.  It never touches a first recording into
+  an empty loop, or one started from Mute or Pause.  See
   `New Feature: record failsafe`_.
 
 - **Four settings, one place.** ``late_hit_window_ms``,
@@ -159,24 +166,20 @@ item links to its full description.
 
 .. rubric:: JACK MIDI and JACK Sync
 
-- **JACK MIDI input port** (``sooperlooper:midi_in``).  Takes MIDI commands
-  directly from JACK, with no ALSA bridge or ``a2jmidid``, and acts on each
-  at its exact sample within the audio buffer.  See `JACK MIDI Ports`_.
+- **JACK MIDI input port** (``sooperlooper:midi_in``).  SooperLooper can
+  take MIDI commands directly from JACK, with no ALSA bridge or
+  ``a2jmidid``, acting on each at its exact sample within the audio
+  buffer.  OSC and ALSA MIDI work as before.  See `JACK MIDI Ports`_.
 
 - **JACK MIDI output port** (``sooperlooper:midi_out``).  Sends 24-ppqn MIDI
   clock, and MIDI Start/Stop on JACK transport start and stop, for driving
   external hardware.  See `JACK MIDI Ports`_.
 
 - **Sync that follows tempo changes** (``ALB_JACK_BEAT_TRACKING``, on by
-  default).  With a JACK timebase master such as Hydrogen, sync stays on
-  the master's beat when the tempo changes while the transport is rolling;
-  stock drifts off by up to half a beat until the next relocate.  See
-  `JackSync Beat Tracking`_.
-
-- **JACK bar/beat fields** (``ALB_BBT_SYNC``, compiled out).  Earlier code
-  that reads the master's bar/beat/tick position; it never changed where
-  pulses fall, so it is off.  See `JACK BBT Position Fields`_ in the
-  appendix.
+  default).  With the sync source set to JACK, sync stays on the transport
+  master's beat -- Hydrogen's, a DAW's, or any other master's -- when the
+  tempo changes while the transport is rolling; stock drifts off by up to
+  half a cycle until the next relocate.  See `JackSync Beat Tracking`_.
 
 .. rubric:: Realtime-Safety Fixes
 
@@ -328,20 +331,19 @@ If a recording is left running longer than ``record_failsafe_seconds``,
 SooperLooper cancels it exactly as ``cancel_record_mute`` would: the take is
 discarded, the previous take comes back, and the loop ends muted.
 
-``cancel_record_mute`` still needs a second gesture -- a long hold or a
-double tap -- after the eager ``record``.  If attention simply goes
-elsewhere and nothing is pressed at all, a recording otherwise runs
-forever: recording has no automatic end.
+It is meant for this case: you press ``record`` to stop a playing loop,
+intending the long press (or double tap) that fires ``cancel_record_mute``,
+but forget it.  A new recording then starts over the loop and keeps
+running -- recording has no automatic end -- with the playing take replaced
+by whatever is being recorded.  The failsafe equally catches any other
+accidental record trigger over a playing loop, such as a bumped pedal.
 
 **It only fires for a recording that cut off a playing loop** -- one started
 while the loop was playing and audible.  It never fires for a first
-recording into an empty loop, or for one started from Mute or Pause.  The
-case worth a safety net is the one ``cancel_record_mute`` is built around:
-a tap fires a real ``record`` at once, and only a second gesture takes it
-back, so a player who meant to send that gesture, or got distracted before
-deciding, can silently leave a playing take replaced by whatever is being
-recorded over it.  A first recording into an empty loop has no take at
-stake, so it runs as long as it likes, as before.
+recording into an empty loop, or for one started from Mute or Pause: with
+nothing playing, a record press cannot have been meant to stop playback, so
+it is taken as a deliberate new take and runs as long as it likes, as
+before.
 
 **Trade-off:** if you really did mean to start a new take right after
 ending a loop's playback, that take can now last at most
@@ -462,9 +464,10 @@ JACK MIDI Ports
 
 SooperLooper gets two JACK MIDI ports:
 
-- ``sooperlooper:midi_in`` takes MIDI commands directly from JACK MIDI
-  controllers and programs, with no ALSA MIDI connection or ``a2jmidid``
-  needed.  Commands are bound in ``slgui`` as usual.
+- ``sooperlooper:midi_in`` lets SooperLooper take MIDI commands directly
+  from JACK MIDI controllers and programs, with no ALSA MIDI connection or
+  ``a2jmidid`` needed.  Commands are bound in ``slgui`` as usual, and OSC
+  and ALSA MIDI still work as before.
 - ``sooperlooper:midi_out`` sends 24-ppqn MIDI clock whenever a tempo is
   known, each tick placed to the sample, and MIDI Start and Stop when the
   JACK transport starts and stops -- for driving external hardware without
@@ -477,27 +480,21 @@ effect at that exact sample.  Commands over OSC or ALSA MIDI carry no
 position and take effect at the start of a buffer, so JACK MIDI commands
 are timed more precisely.
 
-**Trigger latency.**  SooperLooper's *trigger latency* setting is how late
-it takes a command to arrive after the press; it only affects where
-overdub, multiply, insert, replace and substitute start taking input.  The
-fork does not apply it to a JACK MIDI command placed within the buffer.
-OSC and ALSA MIDI commands, and a JACK MIDI command that falls on a
-buffer's first sample, get the full setting.
-
-How this is done inside the engine is in `JACK MIDI Input: Implementation`_
-in the appendix.
+How this is done inside the engine, including how it interacts with
+SooperLooper's trigger latency setting, is in `JACK MIDI Input:
+Implementation`_ in the appendix.
 
 JackSync Beat Tracking
 ~~~~~~~~~~~~~~~~~~~~~~
 
-With the sync source set to JACK and a timebase master such as Hydrogen,
-stock SooperLooper places its sync pulses on a fixed grid counted from
-JACK frame 0.  Hydrogen, like a DAW playing through a tempo change, keeps
-its beat continuous when the tempo changes while the transport is rolling.
-The stock grid does not, so the two drift apart -- by up to half a cycle --
-and stay apart until the next relocate, such as a stop and restart from the
-drum machine.  Loops then start and stop off the beat, which shows up as a
-loop landing an eighth note away from where it should.
+With the sync source set to JACK, stock SooperLooper places its sync pulses
+on a fixed grid counted from JACK frame 0. A transport master that keeps
+its beat continuous when the tempo changes while the transport is rolling
+-- as Hydrogen does, and a DAW playing through a tempo change -- drifts off
+that grid, by up to half a cycle, and stays off until the next relocate,
+such as stopping and restarting the transport. Loops then start and stop
+off the beat, which shows up as a loop landing an eighth note away from
+where it should.
 
 This fork counts beats as the music plays, at whatever tempo JACK reports
 at each moment, so the pulses stay on the master's beat through any number
@@ -945,47 +942,6 @@ tracker's record of the previous frame.
 
 The arithmetic lives in ``src/beat_tracker.hpp``; ``src/test_beat_tracker``
 has its unit tests and a JACK integration test.
-
-JACK BBT Position Fields
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-When ``ALB_BBT_SYNC`` is defined (it is commented out by default),
-``JackAudioDriver::get_transport_info()`` fills five extra ``TransportInfo``
-fields when the timebase master sets the ``JackPositionBBT`` valid bit:
-``bar``, ``beat``, ``bar_start_tick``, ``ticks_per_beat`` and ``bbt_valid``
-(``tick`` is copied too).
-
-``generate_sync()`` has a branch that uses them:
-
-.. code-block::
-
-    bar_start_frame = bar_start_tick × (60 × SR / bpm) / ticks_per_beat
-    phase_shift     = bar_start_frame − fmod(bar_start_frame, _tempo_frames)
-    frame_in_cycle  = (framepos + offset) − phase_shift
-    thisval         = lrint(fmod(frame_in_cycle, _tempo_frames))
-
-``phase_shift`` is a whole number of cycles by construction, so
-``fmod(frame_in_cycle, _tempo_frames)`` always equals
-``fmod(framepos + offset, _tempo_frames)``: pulses fall exactly where the
-stock formula puts them, anchored to JACK frame 0.  The branch therefore does
-not re-anchor pulses to the master's bar, and makes no difference to
-Eighths/Cycle changes.  (Hydrogen in pattern mode also sends constant
-bar/beat/tick values, so there would be no position to anchor to in any
-case.)
-
-What the stock grid gets right and wrong with a master such as Hydrogen
-1.2: after a locate, the master recomputes its position from the frame, so
-the frame-based grid lines up with its beat again.  After a tempo change made
-while the transport is rolling, the master keeps its beat continuous but the
-frame-based grid jumps, leaving pulses off the beat by up to half a cycle
-until the next locate.  ``ALB_JACK_BEAT_TRACKING`` addresses that.
-
-``#define ALB_BBT_SYNC`` in ``audio_driver.hpp`` is commented out by
-default, which removes the fields and the branch; pulse placement is the
-same either way.  With ``ALB_JACK_BEAT_TRACKING`` defined the branch is not
-compiled at all, and defining ``ALB_BBT_SYNC`` only adds the BBT fields to
-the sync-pulse log.  The code is kept as a starting point for a correct BBT
-layer.
 
 slbigstate: Implementation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1567,46 +1523,6 @@ Buffer Variables (local to ``runSooperLooper()``)
        bound in the trim guard.
 
 
-
-Fields added to ``TransportInfo`` (``audio_driver.hpp``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-These fields exist only when ``ALB_BBT_SYNC`` is defined.  They are populated
-by ``JackAudioDriver::get_transport_info()`` from the ``jack_position_t``
-returned by ``jack_transport_query()`` when the timebase master has set the
-``JackPositionBBT`` valid bit.  ``Engine::generate_sync()`` reads ``bbt_valid``
-before accessing any other field; when ``bbt_valid`` is false the BBT fields
-are not touched and the stock ``fmod`` path is used instead.
-
-.. list-table::
-   :header-rows: 1
-
-   * - Name
-     - Type
-     - Description
-   * - ``bar``
-     - ``int32_t``
-     - 1-indexed current bar from the timebase master.
-   * - ``beat``
-     - ``int32_t``
-     - 1-indexed beat within the current bar.
-   * - ``tick``
-     - ``int32_t``
-     - Tick within the current beat (0 to ``ticks_per_beat − 1``).
-   * - ``bar_start_tick``
-     - ``double``
-     - Cumulative ticks from the transport origin (frame 0) to the start of
-       the current bar.  Used with ``beat`` and ``tick`` to compute the
-       absolute cumulative tick count at the start of each buffer.
-   * - ``ticks_per_beat``
-     - ``double``
-     - Tick resolution set by the timebase master (Hydrogen uses 1920.0).
-   * - ``bbt_valid``
-     - ``bool``
-     - ``true`` when all of the above fields were successfully populated from
-       ``JackPositionBBT`` this buffer.  Always ``false`` when no timebase
-       master is active, when ``ALB_BBT_SYNC`` is not defined, or when the
-       master does not set ``JackPositionBBT``.
 
 Session File Key (``engine.cpp``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
