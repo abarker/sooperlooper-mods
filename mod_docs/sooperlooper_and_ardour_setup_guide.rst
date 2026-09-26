@@ -365,12 +365,12 @@ What this means in practice:
    Undo is *Undo All*, which clears the whole loop stack rather than
    cancelling a single recording.
 
-**Record failsafe: a safety net for when nobody presses anything.** A tap
-on record over a playing loop starts a real recording at once. If that tap
-was meant to be the hold that stops the loop, or the record was triggered by
+**Record failsafe: an optional timeout for a forgotten stop.** A tap on
+record over a playing loop starts a real recording at once. If that tap was
+meant to be the hold that stops the loop, or the record was triggered by
 accident -- a bumped pedal, say -- and nobody notices, the recording runs on
-forever, with the loop you had gone underneath it. SooperLooper can time
-this out: if a recording that cut off a playing loop runs past
+forever, with the loop you had gone underneath it. This fork adds a timeout
+for that case: if a recording that cut off a playing loop runs longer than
 ``record_failsafe_seconds``, it is cancelled just as the long press would
 have done, and the previous take comes back, muted. It never fires for a
 first recording into an empty loop, or for one started from Mute or Pause.
