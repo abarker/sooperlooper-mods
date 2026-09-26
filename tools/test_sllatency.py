@@ -263,7 +263,7 @@ def stereo_input_test(port, client, il, ol):
     for line in out.splitlines():
         if "Round trip:" in line:
             rt = float(line.split("Round trip:")[1].split()[0])
-    ok = ("Using fakemic_loud:out." in out and rt is not None
+    ok = ("Using fakemic_loud:out as the mic input." in out and rt is not None
           and abs(rt - (1230 + PERIOD)) <= 0.5)
     print("%s stereo loop, no --in: used the louder mic (round trip %s, "
           "expected %d)" % ("PASS" if ok else "FAIL", rt, 1230 + PERIOD))
@@ -522,6 +522,23 @@ def suggest_tests():
         ok = got == want
         fails += not ok
         print("%s output suggestion: %s" % ("PASS" if ok else "FAIL", got))
+    # Checking SooperLooper: suggest the outputs its loop is heard through,
+    # followed through a DAW bus (this rig, 2026-09-26) or wired directly.
+    rig2 = {"system:playback_1": ["ardour:Master/audio_out 1"],
+            "system:playback_2": ["ardour:Master/audio_out 2"],
+            "system:playback_3": ["ardour:SL_vol_mon/audio_out 1"],
+            "system:playback_4": ["ardour:SL_vol_mon/audio_out 2"]}
+    dests = ["ardour:SL_vol_mon/audio_in 1", "ardour:sooperlooper1/audio_in 1",
+             "ardour:SL_vol_mon/audio_in 2", "ardour:sooperlooper2/audio_in 1"]
+    direct = {"system:playback_1": ["ardour:Master/audio_out 1"],
+              "system:playback_2": ["sooperlooper:loop0_out_1"]}
+    for feeds, d, want in ((rig2, dests, ["system:playback_3", "system:playback_4"]),
+                           (direct, ["system:playback_2"], ["system:playback_2"]),
+                           (rig2, ["ardour:elsewhere/audio_in 1"], [])):
+        got = sllatency.sl_heard_outputs(feeds, d)
+        ok = got == want
+        fails += not ok
+        print("%s outputs SooperLooper is heard through: %s" % ("PASS" if ok else "FAIL", got))
     return fails
 
 

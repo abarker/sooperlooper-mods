@@ -37,7 +37,8 @@ except ImportError:
 
 # ---------------------------------------------------------------- messages
 
-WIDTH = max(60, min(100, shutil.get_terminal_size((80, 24)).columns - 1))
+# Narrow enough to read comfortably even in a wide terminal.
+WIDTH = max(60, min(76, shutil.get_terminal_size((80, 24)).columns - 1))
 
 
 def say(msg=""):
@@ -449,6 +450,19 @@ def default_input(client, sl_client):
     return caps[0] if caps else None
 
 
+def _connected(client, prefix):
+    """Every port the ports named prefix* are connected to, in order."""
+    found = []
+    for port in client.get_ports(prefix, is_audio=True):
+        try:
+            for c in client.get_all_connections(port):
+                if c.name not in found:
+                    found.append(c.name)
+        except jack.JackError:
+            pass
+    return found
+
+
 def input_candidates(client, sl_client, any_port=False):
     """Every capture port feeding SooperLooper's loop 0 (else its main
     inputs), in port order: a stereo loop is usually fed from two, and
@@ -520,7 +534,7 @@ class SLRun:
             return
         auto = l0.get("autoset_latency")
         explain("""
-            SooperLooper's current latency settings (loop 0): input %s, output
+            SooperLooper's current latency settings (loop 1): input %s, output
             %s, trigger %s samples, %s.
         """ % (_n(l0.get("input_latency")), _n(l0.get("output_latency")),
                _n(l0.get("trigger_latency")),
@@ -608,11 +622,30 @@ def suggest_outputs(feeds):
     return sorted(busy, key=names.index) if busy else names[:2]
 
 
-def choose_outputs(client, interactive):
+def sl_heard_outputs(feeds, sl_dests):
+    """The physical outputs SooperLooper's loop is heard through: those its
+    output feeds directly, or through a DAW bus -- a destination named
+    ".../audio_in N" (Ardour's naming) counts as reaching whatever that
+    bus's ".../audio_out" ports feed."""
+    reach = set(sl_dests)
+    for d in sl_dests:
+        if "/audio_in" in d:
+            reach.add(d.split("/audio_in")[0] + "/audio_out")
+    def heard(feeders):
+        return any(f in reach or f.rsplit(" ", 1)[0] in reach for f in feeders)
+    return [n for n in feeds if n in reach or heard(feeds[n])]
+
+
+def choose_outputs(client, interactive, sl_dests=()):
     feeds = output_feeds(client)
     names = list(feeds)
-    guess = suggest_outputs(feeds)
-    say("   Physical outputs, and what feeds each (* = suggested for the click):")
+    sl_heard = sl_heard_outputs(feeds, sl_dests) if sl_dests else []
+    guess = sl_heard or suggest_outputs(feeds)
+    if sl_heard:
+        say("   Physical outputs, and what feeds each (* = the ones SooperLooper's "
+            "loop 1 is heard through):")
+    else:
+        say("   Physical outputs, and what feeds each (* = suggested for the click):")
     print()
     for i, n in enumerate(names, 1):
         say("   %s %d  %s" % ("*" if n in guess else " ", i, n))
@@ -624,10 +657,14 @@ def choose_outputs(client, interactive):
         return guess
     print()
     explain("""
-        Press Enter to play the click on the * outputs, or type the numbers
-        of the outputs your headphones hear (for example: 3 4).
-    """)
+        The click is played on these outputs and picked up by the mic, so
+        choose outputs the headphones or speaker by the mic play%s.  Press
+        Enter for the * outputs, or type numbers (for example: 3 4).
+    """ % (" -- to check SooperLooper, the ones it is heard through"
+           if sl_dests else ""))
+    print()
     ans = input("   Outputs: ").strip()
+    print()
     picked = [names[int(t) - 1] for t in ans.replace(",", " ").split()
               if t.isdigit() and 1 <= int(t) <= len(names)]
     return picked or guess
@@ -783,7 +820,7 @@ def quick_report(args, interactive, sl_ports, sr):
     jack_in, jack_out = sl_paths(sl_ports)
     if not jack_in or not jack_out:
         explain("""
-            SooperLooper's loop 0 input or output is not connected to anything
+            SooperLooper's loop 1 input or output is not connected to anything
             JACK can follow to the hardware, so there are no reported
             latencies to use.
         """)
@@ -880,15 +917,15 @@ def main():
                     "check SooperLooper's latency compensation.",
         epilog="""how to use:
   Start JACK and SooperLooper (with its usual session), hold the headphones
-  against the mic SooperLooper records from -- or connect a cable from an
-  output to that input -- and run sllatency.  It asks which outputs your
-  headphones hear, plays a click for about 15 s, records it with a
+  against the mic SooperLooper records from (or the mic right against a
+  speaker, or a cable from an output to that input) and run sllatency.  It
+  asks which outputs the headphones or speaker play, plays a click for about 15 s, records it with a
   temporary SooperLooper loop (removed afterwards, settings restored), and
-  then plays it for a few beats into wherever loop 0's output goes, to
+  then plays it for a few beats into wherever loop 1's output goes, to
   measure the path you hear SooperLooper through (DAW buses, plugins).  It
   reports whether JACK's and SooperLooper's latency settings are right and
   offers to apply and save new SooperLooper values.  Best run right after
-  starting SooperLooper, with loop 0 silent; don't touch the pedals or
+  starting SooperLooper, with loop 1 silent; don't touch the pedals or
   record in a DAW during the run.
 
   For a quick starting point with no mic and no clicks, --reported suggests
@@ -907,7 +944,7 @@ examples:
                          "ask, suggesting the outputs a DAW's master feeds.")
     ap.add_argument("--in", dest="inp", metavar="PORT",
                     help="JACK port the click comes back on.  Default: the "
-                         "capture port feeding SooperLooper's loop 0 -- if "
+                         "capture port feeding SooperLooper's loop 1 -- if "
                          "several do (a stereo loop), whichever hears a few "
                          "test clicks best -- else the first physical capture "
                          "port.")
@@ -969,7 +1006,11 @@ examples:
     if args.reported:
         probe.close()
         return quick_report(args, interactive, sl_ports, sr)
-    outs = args.out or choose_outputs(probe, interactive)
+    sl_dests = []
+    if not args.no_sl:
+        sl_dests = _connected(probe, "%s:loop0_out_" % args.sl_client) or \
+            _connected(probe, "%s:common_out_" % args.sl_client)
+    outs = args.out or choose_outputs(probe, interactive, sl_dests)
     candidates = ([] if args.inp else
                   input_candidates(probe, args.sl_client, args.as_hardware))
     inp = args.inp or (candidates[0] if candidates
@@ -1009,30 +1050,34 @@ examples:
     if sl_run and sl_run.loops and not args.no_monitor_check:
         state = sl_run.sl.get("state", loop=0)
         if state is not None and state not in SILENT_STATES:
-            monitor_note = ("Loop 0 is making sound, so the path SooperLooper is "
+            monitor_note = ("Loop 1 is making sound, so the path SooperLooper is "
                             "heard through is not measured; mute or clear it and "
                             "run again to include that.")
         else:
             probe_targets = loop0_destinations(
                 args.sl_client, bool(sl_run.loop0_common.get("use_common_outs")))
             if not probe_targets:
-                monitor_note = ("Loop 0's output is not connected to anything, so "
+                monitor_note = ("Loop 1's output is not connected to anything, so "
                                 "there is no path to measure after SooperLooper.")
 
     print()
     say("   Click out:   %s" % ", ".join(outs))
     if len(candidates) > 1:
-        say("   Returns on:  %s -- whichever hears the click best, found with a "
-            "few clicks first" % " or ".join(candidates))
+        say("   Mic input:   %s (SooperLooper's loop 1 records from these) -- "
+            "whichever hears the click best, found with a few clicks first"
+            % " or ".join(candidates))
     else:
-        say("   Returns on:  %s" % inp)
+        say("   Mic input:   %s" % inp)
     print()
     if hardware:
         explain("""
             Put the headphones fed by those outputs on or right next to the mic
-            on that input -- balancing them on the mic works -- or connect a cable
-            from one of the outputs to the input.  Don't wear them: the click
-            level is %.2f of full scale.
+            -- balancing them on the mic works -- or hold the mic right against
+            a speaker playing them, or connect a cable from one of the outputs
+            to the input.  With a speaker, keep the mic within a few
+            centimetres: sound takes about 3 ms per metre through the air, and
+            that would be counted as latency.  Don't wear the headphones: the
+            click level is %.2f of full scale.
         """ % args.level)
     else:
         explain("""
@@ -1052,7 +1097,7 @@ examples:
             print()
             explain("""
                 Then, for a few beats, the click is played into the ports loop
-                0's output feeds -- %s -- to measure the path you hear
+                1's output feeds -- %s -- to measure the path you hear
                 SooperLooper through.  Don't record in your DAW during the run.
             """ % ", ".join(probe_targets))
         print()
@@ -1062,13 +1107,19 @@ examples:
         input("   Press Enter when ready... ")
 
     if len(candidates) > 1:
-        heading("Choosing the input")
+        heading("Finding the mic input")
+        explain("""
+            SooperLooper's loop 1 records from %s.  A few clicks on %s, to
+            find which of those inputs hears them:
+        """ % (" and ".join(candidates), " and ".join(outs)))
+        print()
         inp, heard, n = strongest_input(outs, candidates, sr, args.bpm,
                                         args.level, args.max_latency)
         for p in candidates:
             say("   %-24s %d of %d clicks back, peak %.3f" % (p, heard[p][0], n,
                                                               heard[p][1]))
-        say("   Using %s." % inp)
+        print()
+        say("   Using %s as the mic input." % inp)
         lat_in = lat_ins[inp]
 
     period = 60.0 * sr / args.bpm
@@ -1197,7 +1248,7 @@ examples:
     if beats is None or abs(beats - round(beats)) > 0.01:
         say("   The loop is %s beats long, not a whole number, so it was not "
             "recorded in sync and cannot be measured.  Check that SooperLooper's "
-            "sync works (loop 0 quantize, sync source)."
+            "sync works (loop 1 quantize, sync source)."
             % ("?" if beats is None else "%.3f" % beats))
         return 1
     offs = measure_loop_offset(recs[1], starts, click, sr, period)
