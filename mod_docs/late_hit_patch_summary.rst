@@ -1,18 +1,20 @@
 SooperLooper Late-Hit Recording Modification Summary
 ====================================================
 
-| **Base version:** SooperLooper 1.7.9
-| **Modified files:** ``src/plugin.cc``, ``src/plugin.hpp``, ``src/engine.cpp``,
-| ``src/engine.hpp``, ``src/looper.cpp``, ``src/looper.hpp``, ``src/audio_driver.hpp``,
-| ``src/jack_audio_driver.hpp``, ``src/jack_audio_driver.cpp``, ``src/event.hpp``,
-| ``src/command_map.cpp``, and some test files in ``src/test_plugin``.
-| **New files** (not modifications, so not listed above) are documented in
-| their own sections: ``src/big_state_display/`` in `New Tool: slbigstate`_,
-| new test files in `Test Suite`_.
-| **All new code sections** are bracketed with ``albBegin`` / ``albEnd`` markers.
-| In ``plugin.cc`` and ``plugin.hpp`` the markers are ``//====== albBegin`` /
-| ``//====== albEnd``; in all other files they are ``//------ albBegin`` /
-| ``//------ albEnd``. Search for ``albBegin`` to locate every changed block.
+This fork of SooperLooper 1.7.9 makes looping to a beat more forgiving and
+more precise:
+
+- a Record start or stop, Mute or Unmute, or Multiply-end press that lands a
+  moment after the beat counts as on time, instead of waiting a whole cycle;
+- loops stay on a JACK drum machine's beat through tempo changes;
+- SooperLooper takes commands and sends MIDI clock over JACK MIDI directly;
+- two safety features cover a recording started by mistake or left running;
+- a separate large-text display, ``slbigstate``, shows loop state from
+  across the room.
+
+This document describes each change and how to configure it.  How each is
+implemented, and where the changes are in the source, is in the appendix
+and glossaries at the end.
 
 .. contents:: Table of Contents
    :local:
@@ -55,12 +57,12 @@ SooperLooper Late-Hit Recording Modification Summary
 
 .. tip:: **Quick Start**
 
-   The late-hit correction is active immediately after compiling — no session file
-   changes are required. The compile-time defaults (100 ms cap; fraction cap disabled at 100.0) are
-   used whenever the session file does not contain the late-hit keys.  Setting
-   ``late_hit_max_quant_unit_fraction`` to a value like 0.5 caps the window at
-   half the current quantize cycle (useful at faster tempos where the ms cap
-   would otherwise allow a press that is more than half a cycle late).
+   The late-hit correction works as soon as the fork is built, with no
+   session file changes.  Without the late-hit keys in the session file it
+   uses the built-in defaults: a 100 ms window, with the cycle-fraction cap
+   off (100.0).  Setting ``late_hit_max_quant_unit_fraction`` to, say, 0.5
+   also caps the window at half a quantize cycle, which matters at fast
+   tempos, where 100 ms can be more than half a cycle.
 
    To change the values:
 
@@ -73,11 +75,10 @@ SooperLooper Late-Hit Recording Modification Summary
 
           late_hit_max_quant_unit_fraction="0.5" late_hit_window_ms="100"
 
-      A complete ``<Globals>`` element looks like this, taken from a real
-      session file (your other values will differ). This one also carries
-      ``record_failsafe_seconds`` and ``mute_late_hit_ms`` -- the two other
-      globals covered later in this document -- which this two-key walkthrough
-      does not require you to add yourself::
+      A complete ``<Globals>`` element from a real session file looks like
+      this (your other values will differ).  It also has
+      ``record_failsafe_seconds`` and ``mute_late_hit_ms``, two further
+      settings described later, which you do not need to add here::
 
           <Globals tempo="170" eighth_per_cycle="2" common_dry="0" common_wet="1"
            input_gain="1" sync_source="-1" auto_disable_latency="1"
@@ -90,212 +91,180 @@ SooperLooper Late-Hit Recording Modification Summary
 
           sooperlooper --load-session yourfile.slsess
 
-   These values (and two related ones, ``record_failsafe_seconds`` and
-   ``mute_late_hit_ms``) can also be read and changed live over OSC instead
-   of editing the session file -- see `OSC Control`_.
+   All four settings can also be read and changed while SooperLooper runs,
+   over OSC, instead of editing the session file -- see `OSC Control`_.
 
 
 What This Patch Adds at a Glance
 ---------------------------------
 
-A concise inventory of all significant capabilities added to SooperLooper
-1.7.9, grouped by area.
+Everything this fork adds to SooperLooper 1.7.9, grouped by area.  Each
+item links to its full description.
 
 .. rubric:: Late-Hit Timing Corrections
 
-- **Late-hit Record start correction.** A Record press arriving within the
-  configurable window after a sync boundary immediately creates the loop buffer,
-  backfills *T* samples from the input ring buffer, and enters ``STATE_RECORD``
-  directly — as if the button had been pressed on time.
+- **Late Record start.** A Record press that lands just after a sync
+  boundary starts the loop at that boundary, as if pressed on time, instead
+  of waiting a whole cycle.  The audio played in the moment between the
+  boundary and the press is kept.  See `Late Record Start`_.
 
-- **Late-hit Record stop correction.** A Stop press within the window trims *T*
-  samples from the loop length, advances ``dCurrPos`` to compensate for the
-  late entry into ``STATE_PLAY``, and enters ``STATE_PLAY`` directly.
+- **Late Record stop.** A press to end a recording that lands just after a
+  boundary ends the loop at that boundary, so the loop is not a cycle too
+  long.  See `Late Record Stop`_.
 
-- **Late-hit Multiply end correction.** The same window logic applied to Multiply
-  end; guarded by the ``LATE_HIT_MULTIPLY_CORRECTION`` compile flag (disable with
-  value 0 if regressions appear).
+- **Late Multiply end.** The same correction for ending a Multiply.  It can
+  be switched off at build time with the ``LATE_HIT_MULTIPLY_CORRECTION``
+  flag, if it ever causes problems.
 
-- **Late-hit mute/unmute correction.** A ``MUTE``/``MUTE_ON``/``MUTE_OFF``
-  press arriving within a separate, plain-ms window after a sync boundary
-  is treated as on-time in either direction (entering mute or unmuting),
-  instead of waiting for the next boundary. On by default (100 ms,
-  matching the Record late-hit window).
+- **Late Mute and Unmute.** With mute-quantize on, a Mute or Unmute press
+  just after the boundary acts at that boundary instead of the next one.
+  On by default, with its own 100 ms window.  See `New Feature: mute/unmute
+  late-hit correction`_.
 
-- **Pause-from-Mute correction.** With mute-quantize on, a Pause press
-  while Muted now resolves to Paused once its wait-for-sync boundary
-  arrives -- matching the immediate (non-quantized) behavior already used
-  elsewhere in the engine. Stock SooperLooper 1.7.9 resolves this to
-  Playing instead. Guarded by the ``PAUSE_FROM_MUTE_FIX`` compile flag
-  (default on).  See `Quantized Pause from Muted Now Resolves to Paused`_
-  in the appendix.
+- **Pause from Mute fix.** With mute-quantize on, pressing Pause while Muted
+  now ends up Paused, as it already does without quantize; stock 1.7.9 ends
+  up Playing.  Controlled by the ``PAUSE_FROM_MUTE_FIX`` build flag (on).
+  See `Quantized Pause from Muted Now Resolves to Paused`_ in the appendix.
 
-- **Configurable two-cap window.** The correction fires only within
-  ``min(g_late_hit_window_ms, g_late_hit_max_quant_unit_fraction × cycle_samples)``,
-  hard-clamped to the input ring buffer depth.  Both values are saved in and loaded
-  from the session file ``<Globals>`` node.
+- **Adjustable window.** How late a press can be and still count as on
+  time is set in milliseconds, optionally also capped at a fraction of the
+  quantize cycle, and stored in the session file.  See `Record Late-Hit
+  Window Size`_.
 
-- **Late-hit correction robustness.** A slave channel in internal sync mode
-  always uses the stock timing path (``bLateHitBypassed``), preventing L/R
-  divergence from independently computed *T* values. Changing the sync
-  source resets the correction's tracked state
-  (``Looper::reset_late_hit_state()`` clears ``bSyncPulseReceived``,
-  ``lGlobalSamplesSinceSync``, and ``lLastSyncPeriodSamples``) so stale
-  period data from the old source can't affect the first presses on the
-  new one.
+- **Robust in stereo and across sync-source changes.** The channels of a
+  multi-channel loop stay in step when a correction fires, and changing the
+  sync source cannot leave stale timing from the old source behind.  See
+  `Late-Hit Correction Robustness`_ in the appendix.
 
 .. rubric:: New Commands and Safety Features
 
-- **New command** ``cancel_record_mute``.  Cancels a record that is in progress
-  or still pending on a sync boundary, keeps the previous take, and is a no-op
-  in every other state.  Lets one button, firing eagerly on the first press,
-  carry ``record``, play, and then end play (go to mute) in sequence --
-  without a latency penalty at any step.  See
-  `New Command: cancel_record_mute`_.
+- **New command** ``cancel_record_mute``.  Cancels a recording that has
+  started, or one still waiting for the beat, and brings back the previous
+  take; does nothing otherwise.  This lets one switch, firing at once on
+  every press, carry record, play, and "stop instead" -- with no added
+  latency at any step.  See `New Command: cancel_record_mute`_.
 
-- **Record failsafe.**  If a record that interrupted an actively playing,
-  unmuted loop is left running in ``STATE_RECORD`` for longer than
-  ``record_failsafe_seconds`` (default **0**, i.e. off), the engine
-  automatically fires the same ``cancel_record_mute`` branch, as if its
-  second trigger had arrived on its own.  Covers "nobody pressed anything
-  at all" for that case, which ``cancel_record_mute`` cannot, since it still
-  requires a press.  Does **not** apply to a first/fresh recording of an
-  empty loop, or one started from mute or pause.  See
+- **Record failsafe.**  If a recording that cut off a playing loop is left
+  running longer than ``record_failsafe_seconds``, it is cancelled
+  automatically and the previous take comes back, muted -- for when nobody
+  presses anything at all.  Off by default.  It never touches a first
+  recording into an empty loop, or one started from Mute or Pause.  See
   `New Feature: record failsafe`_.
 
-- **Four globals, one persistence path.** ``late_hit_window_ms``,
-  ``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds``, and
-  ``mute_late_hit_ms`` are all written and read in the ``<Globals>`` node of
-  the ``.slsess`` session file, and all readable/settable live over OSC
-  ``/get``/``/set``, in addition to the session file.  See `Record Late-Hit
-  Window Size`_ and `OSC Control`_ below.
+- **Four settings, one place.** ``late_hit_window_ms``,
+  ``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds`` and
+  ``mute_late_hit_ms`` are all saved in the session file's ``<Globals>``
+  line, and can be read and set live over OSC.  See `Record Late-Hit
+  Window Size`_ and `OSC Control`_.
 
-.. rubric:: JACK MIDI I/O
+.. rubric:: JACK MIDI and JACK Sync
 
-- **Direct JACK MIDI input port** (``sooperlooper:midi_in``).  Receives MIDI
-  commands with sub-buffer sample-accurate timestamps, bypassing the ALSA /
-  ``a2jmidid`` path.
+- **JACK MIDI input port** (``sooperlooper:midi_in``).  Takes MIDI commands
+  directly from JACK, with no ALSA bridge or ``a2jmidid``, and acts on each
+  at its exact sample within the audio buffer.  See `JACK MIDI Ports`_.
 
-- **Sub-buffer TriggerLatency correction for JACK MIDI events.**  The sample
-  offset of each inbound JACK MIDI event (``jack_ev.time``) is stored as
-  ``_pending_event_offset``; the following ``run()`` call zeros ``TriggerLatency``
-  for that segment so no additional latency compensation is applied to an event
-  that is already placed at its exact physical sample.
+- **JACK MIDI output port** (``sooperlooper:midi_out``).  Sends 24-ppqn MIDI
+  clock, and MIDI Start/Stop on JACK transport start and stop, for driving
+  external hardware.  See `JACK MIDI Ports`_.
 
-- **Direct JACK MIDI output port** (``sooperlooper:midi_out``).  Generates
-  24-ppqn MIDI clock via a phase accumulator for sample-accurate tick placement,
-  and sends MIDI Start / Stop on JACK Transport transitions.  Replaces the need
-  for ``a2jmidid`` when driving external hardware from SooperLooper.
+- **Sync that follows tempo changes** (``ALB_JACK_BEAT_TRACKING``, on by
+  default).  With a JACK timebase master such as Hydrogen, sync stays on
+  the master's beat when the tempo changes while the transport is rolling;
+  stock drifts off by up to half a beat until the next relocate.  See
+  `JackSync Beat Tracking`_.
 
-- **JACK BBT position fields** (``ALB_BBT_SYNC``, compiled out by default).
-  The timebase master's bar/beat/tick position can be read into
-  ``TransportInfo``, but the pulse-placement arithmetic built on it reduces
-  to the stock frame-based grid, so it does not change where sync pulses
-  fall (see `JACK BBT Position Fields`_).
+- **JACK bar/beat fields** (``ALB_BBT_SYNC``, compiled out).  Earlier code
+  that reads the master's bar/beat/tick position; it never changed where
+  pulses fall, so it is off.  See `JACK BBT Position Fields`_ in the
+  appendix.
 
-- **JackSync beat tracking** (``ALB_JACK_BEAT_TRACKING``, on by default).  JackSync pulses follow a beat count carried through
-  tempo changes, so they stay on the timebase master's beat when the tempo
-  changes while the transport is rolling (see `JackSync Beat Tracking`_).
+.. rubric:: Realtime-Safety Fixes
 
-.. rubric:: RT-Safety Fixes
+- **Fewer xruns on transport locates** (``ALB_RT_SAFE_COND_SIGNAL``).
+  Three thread wake-up calls that could stall the audio thread are removed
+  from it; the main loop wakes on its own timer instead.
 
-- **RT-safety: suppressed** ``pthread_cond_signal`` **from RT callback**
-  (``ALB_RT_SAFE_COND_SIGNAL``).  Three calls in ``generate_sync()`` that
-  can cause priority inversion and xruns are suppressed; the main event loop's
-  existing ``timedwait`` handles wakeup instead.
-
-- **RT-safety: gated tempo update** (``ALB_TEMPO_ONLY_WHEN_ROLLING``).
-  The JACK Transport tempo path in ``generate_sync()`` is skipped unless
-  transport is actually rolling, preventing spurious non-RT-safe ``set_tempo()``
-  calls during locate transitions.
+- **No tempo updates while locating** (``ALB_TEMPO_ONLY_WHEN_ROLLING``).
+  SooperLooper takes the JACK transport tempo only while the transport is
+  rolling, avoiding a burst of tempo changes, which are not realtime-safe,
+  during a locate.
 
 .. rubric:: Tools
 
-- ``slbigstate``: **a standalone at-a-distance state display.**  A
-  separate program, installed alongside ``sooperlooper``/``slgui``, that
-  shows one loop's current state in large, colored text over OSC --
-  readable from across a room, unlike ``slgui``'s own small indicators.
+- ``slbigstate``: **a large-text loop state display.**  A separate
+  program, installed alongside ``sooperlooper`` and ``slgui``, that shows
+  each loop's state in large, colored text, readable from across a room.
   See `New Tool: slbigstate`_.
 
 The Late-Hit Sync Problem
 ---------------------------
 
-With sync mode enabled, SooperLooper corrects *early* button presses by waiting
-for the next sync boundary before acting.  It does nothing for *late* presses —
-a Record or Stop hit that arrives slightly after a sync boundary causes the
-loop to start one full quantization unit late — the press is treated as
-belonging to the *next* boundary, not the one just passed — and the loop length
-is inflated by that same unit. This is a persistent source of timing errors in
-live performance.
+With sync on, SooperLooper already handles an *early* press: it waits for
+the next sync boundary and acts there.  It does nothing for a *late* one.  A
+Record or Stop press that lands just after a boundary is taken as belonging
+to the next boundary, a whole cycle away: the loop starts a cycle late, or
+ends up a cycle too long.  In live playing, where a press is often a hair
+behind the beat, this is a steady source of timing errors.
 
 What the Patch Does
 -------------------
 
-When the per-loop **Sync checkbox is on** and a **sync source is selected and producing
-pulses**, a Record or Stop press that arrives within a configurable window after a sync
-boundary is corrected back to that boundary instead of waiting for the next one. Quantize
-mode is not required. The default window is 100 ms; see `Record Late-Hit Window Size`_ below.
+A Record or Stop press that lands within a short window after a sync
+boundary is treated as if it had arrived exactly at that boundary.  This
+needs sync to be active, which means two things together:
 
-"Sync active" means both conditions together: the Sync checkbox controls whether
-operations wait for boundaries at all (``fSyncMode > 0``); the sync source selection
-determines what signal arrives on the sync input and therefore when
-``lGlobalSamplesSinceSync`` resets. With no source, T grows without bound and the window
-never fires regardless of the checkbox.
+- the loop's **Sync** checkbox is on, so its operations wait for
+  boundaries at all; and
+- a **sync source** is selected and producing pulses.  With no pulses
+  there is no boundary to measure lateness from, and the correction never
+  fires, whatever the checkbox says.
+
+Quantize does not need to be on.  The window is 100 ms by default; see
+`Record Late-Hit Window Size`_.
 
 Late Record Start
 ~~~~~~~~~~~~~~~~~
 
-The press would normally go to ``STATE_TRIG_START`` and wait for the next boundary,
-producing a loop that starts one full cycle late. Instead:
-
-1. The loop buffer is created immediately via ``pushNewLoopChunk()``.
-2. The *T* samples of audio that elapsed since the boundary are copied ("backfilled")
-   from the continuous input ring buffer into the start of the loop buffer at positions
-   ``[0 .. T)``.
-3. The record position ``dCurrPos`` is set to *T*, so live recording continues from
-   position *T* onward, seamlessly after the backfilled audio.
-4. The engine enters ``STATE_RECORD`` directly rather than ``STATE_TRIG_START``.
-
-The result: the loop content starts at exactly the sync boundary as if the button had been
-pressed on time.  Late starts are perfectly corrected.
+Normally a late Record press waits for the next boundary, and the loop
+starts a whole cycle late.  With the patch, the loop starts at the
+boundary just passed.  The audio played between that boundary and the
+press is not lost: SooperLooper keeps a continuous history of its input,
+and copies that stretch into the start of the loop, so recording carries on
+seamlessly from there.  The result is a loop that starts exactly on the
+boundary, as if the button had been pressed on time.
 
 Late Record Stop
 ~~~~~~~~~~~~~~~~
 
-The press would normally go to ``STATE_TRIG_STOP`` and wait for the next boundary,
-producing a loop that is *T* samples too long and whose tail drifts on every repeat.
-Instead:
+Normally a late press to end a recording waits for the next boundary, and
+the loop comes out a whole cycle too long.  With the patch, the loop is
+trimmed to end at the boundary just passed, and playback starts at once
+from where it would be had the press been on time, so the loop is in time
+from the start.
 
-1. The loop length is trimmed by *T* samples: ``lLoopLength = dCurrPos − T``.
-2. The play position ``dCurrPos`` is set to ``lLoopLength + lOutputLatency +
-   lInputLatency + T`` — the same formula as the normal ``STATE_TRIG_STOP`` path, plus
-   *T* to compensate for having entered ``STATE_PLAY`` *T* samples late in real time.
-3. The engine enters ``STATE_PLAY`` directly.
+That is why, with the corrections in place, an accurate stop matters more
+than an accurate start.  The beginning of the loop's *first* repeat -- the
+moment between the boundary and the late press -- has already gone by and
+is not heard; later repeats play in full.  In a DAW recording, a first
+repeat cut short this way can be repaired by copying one of the full
+repeats over it.
 
-Note that with the late-hit corrections, stop-hit accuracy is more important
-than start-hit accuracy.  This is because a late stop results in an audible
-delay in the start of the first loop (which is corrected on later loop
-repetitions).  In a DAW, a performance with a late-stop error can be repaired
-by carefully copying one of the correct loop plays to the first loop play.
+Both Late
+~~~~~~~~~
 
-After the first natural wrap, ``dCurrPos`` lands at ``lOutputLatency + lInputLatency`` —
-identical to a normal on-time loop. No rewind or special first-play handling is needed.
+The two corrections are independent and combine correctly: a late start
+with an on-time stop, an on-time start with a late stop, or both late,
+all work the same way.
 
-Both Late (start and stop)
-~~~~~~~~~~~~~~~~~~~~~~~~~~
+On-Time Presses, and Sync Off
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The two corrections are applied independently in sequence and compose correctly. An on-
-time stop after a late start, or a late stop after an on-time start, each works the same
-way.
+When a press is on time, when sync is off, or when no sync pulse has
+arrived recently enough, the patch changes nothing: SooperLooper behaves
+exactly as the unpatched version.
 
-On-Time Presses and Disabled Modes
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-All new code paths are gated by ``withinWindow`` / ``stopWithinWindow`` /
-``multStopInWindow``. These flags are false when the press is on time, when sync is off
-(``fSyncMode == 0``), or when no sync pulse has arrived recently (T exceeds the window).
-The engine behaves identically to the unpatched version in all these cases. Quantize mode
-is no longer a condition.
+How the start and stop corrections work inside the engine is in
+`Late-Hit Record Start and Stop: Implementation`_ in the appendix.
 
 New Command: ``cancel_record_mute``
 ------------------------------------
@@ -355,186 +324,115 @@ command tells these cases apart, and what it changes internally, is in
 New Feature: record failsafe
 -----------------------------------
 
-If a record is left running in ``STATE_RECORD`` for longer than
-``record_failsafe_seconds``, the engine treats it exactly as if
-``cancel_record_mute``'s second trigger had just arrived: discard the take,
-restore the previous loop, end muted.  **Not a new command** -- it is a
-second, automatic way to reach the same ``CANCEL_RECORD_MUTE`` branch
-described above, so it inherits that command's guard table and
-fade-residue fix unchanged.
+If a recording is left running longer than ``record_failsafe_seconds``,
+SooperLooper cancels it exactly as ``cancel_record_mute`` would: the take is
+discarded, the previous take comes back, and the loop ends muted.
 
-Motivation: ``cancel_record_mute`` still requires a second command trigger,
-after the eager ``record`` -- a long hold or a double tap, whichever gesture
-the pedal is set up to send it as.  It does nothing if a record is simply
-left running because attention went elsewhere entirely, with no second
-trigger at all, not even a fumbled one.  The record state itself has no
-automatic exit.
+``cancel_record_mute`` still needs a second gesture -- a long hold or a
+double tap -- after the eager ``record``.  If attention simply goes
+elsewhere and nothing is pressed at all, a recording otherwise runs
+forever: recording has no automatic end.
 
-**Scope: only fires for a record that interrupted an
-actively playing, unmuted loop.** It does *not* fire for a first/fresh
-recording of an empty loop, and does not fire for a record started from
-``STATE_MUTE`` or ``STATE_PAUSED``. Precisely: ``bRecordEnteredFromActivePlay``
-(a field on ``SooperLooperI``) is set once, at the moment ``RECORD`` is
-pressed, to ``(state == STATE_PLAY || state == STATE_ONESHOT)`` -- true only
-when an actively playing, audible loop existed and was unmuted at that
-instant. Rationale: the case actually worth an automatic safety net is the
-eager-single/second-trigger ambiguity ``cancel_record_mute`` itself is built
-around -- a tap fires a real ``record`` immediately, and only a second
-trigger (long hold or double tap) retracts it, so a performer who meant to
-send that second trigger (or who gets distracted before resolving it
-either way) can silently leave an
-*existing, audible* take replaced by whatever's being recorded over it. A
-first/fresh recording from an empty loop has no equivalent "meant to mute
-instead" story and no prior take at stake, so it is left to run
-indefinitely, same as before this feature existed.
+**It only fires for a recording that cut off a playing loop** -- one started
+while the loop was playing and audible.  It never fires for a first
+recording into an empty loop, or for one started from Mute or Pause.  The
+case worth a safety net is the one ``cancel_record_mute`` is built around:
+a tap fires a real ``record`` at once, and only a second gesture takes it
+back, so a player who meant to send that gesture, or got distracted before
+deciding, can silently leave a playing take replaced by whatever is being
+recorded over it.  A first recording into an empty loop has no take at
+stake, so it runs as long as it likes, as before.
 
-**Known trade-off:** if the performer genuinely did mean to start a brand
-new take right after ending a loop's playback -- not an accidental eager
-single -- that new take's available record time is now bounded by
-``record_failsafe_seconds``, the same constraint the feature applies to
-every other take entering from an active, unmuted loop.  The engine cannot
-tell "meant to record" from "meant to trigger mute instead" apart at the
-moment the press lands, only from what happens afterward.
+**Trade-off:** if you really did mean to start a new take right after
+ending a loop's playback, that take can now last at most
+``record_failsafe_seconds``, like any other recording started over a
+playing loop.  SooperLooper cannot tell "meant to record" from "meant to
+stop instead" when the press lands, only from what happens afterwards.
 
-Implementation: a sample counter, ``lRecordFailsafeSamples`` (a field on
-``SooperLooperI``), accumulates ``SampleCount`` once per buffer while
-``state == STATE_RECORD`` **and** ``bRecordEnteredFromActivePlay`` is true,
-and resets to 0 the instant state is anything else -- so it measures
-unbroken time in that one state, only for a take that qualifies, and never
-leaks across separate takes. A flag, ``bRecordFailsafeFired``, is true when
-that counter exceeds ``g_record_failsafe_seconds * fSampleRate`` and is ORed into
-the existing ``lMultiCtrl == MULTI_CANCEL_RECORD_MUTE`` branch condition in
-``plugin.cc`` -- zero new state-transition logic. Deliberately **not**
-gated on ``STATE_TRIG_STOP``: that state is a brief, self-resolving wait
-for the next quantize boundary (at most one loop cycle), unlike
-``STATE_RECORD``, which has no automatic exit at all.
+**Off by default.**  Because it can discard a whole take with no press at
+all, it is opt-in, unlike the late-hit corrections.  To turn it on, set
+``record_failsafe_seconds`` to a positive number of seconds, in the session
+file's ``<Globals>`` line or live over OSC (see `OSC Control`_).  Zero or
+a negative value turns it off.  Choose a value comfortably longer than your
+longest real take.
 
-**Default is off** (``RECORD_FAILSAFE_SECONDS_DEFAULT`` = ``0.0f``), unlike
-the late-hit window's default-on convention above. Reason: this feature can
-discard an entire take with *no press at all*, so it ships opt-in.
-Any value at or below zero disables it, matching the late-hit window's own
-"0 disables" convention. To enable it, set ``record_failsafe_seconds`` to a positive
-value (seconds) either in the session file's ``<Globals>`` node or live via
-OSC -- see `OSC Control`_ below, which now applies to this value too.
-
-Same non-LADSPA-port mechanism as ``g_late_hit_window_ms``, for the same
-reasons (see `Why Not a LADSPA Port`_ below): a plain ``extern`` global,
-saved/loaded as the ``record_failsafe_seconds`` property in the
-``<Globals>`` node by ``engine.cpp``'s ``save_session``/``load_session``.
-
-Files: ``plugin.hpp`` (``lRecordFailsafeSamples`` and
-``bRecordEnteredFromActivePlay`` fields), ``plugin.cc``
-(``RECORD_FAILSAFE_SECONDS_DEFAULT`` / ``g_record_failsafe_seconds``
-globals, the ``bRecordEnteredFromActivePlay`` set statement at the top of
-``MULTI_RECORD``, the counter-update statements, the
-``|| bRecordFailsafeFired`` addition), ``engine.cpp`` (``extern``
-declaration, XML load/save, OSC get/set, startup banner). No new
-``Event::command_t``, no ``command_map.cpp`` entry, and no pedal/MIDI
-mapping -- purely internal to the engine, invisible to any external MIDI
-mapping and the ``.slb`` bindings.
+How it is implemented is in `Record Failsafe Implementation`_ in the
+appendix.
 
 New Feature: mute/unmute late-hit correction
 -----------------------------------------------
 
-Extends the late-hit idea to ``MUTE``/``MUTE_ON``/``MUTE_OFF``: with
-mute-quantize on and sync/quantize active, a press arriving just after a
-sync boundary is treated as if it arrived exactly at that boundary,
-instead of waiting for the *next* one (up to a full quantize cycle
-later) -- in **both** directions, entering mute and leaving it (unmute).
+With mute-quantize on, a Mute or Unmute press normally waits for the next
+sync boundary -- up to a whole cycle muted when you meant to be playing, or
+playing when you meant to be muted.  With this correction, a press that
+lands just after a boundary acts as if it had arrived exactly at that
+boundary, in both directions.  It applies to ``mute``, ``mute_on`` and
+``mute_off``.  Nothing in the loop is recorded or trimmed; only *when* the
+mute takes effect changes, so the loop stays exactly in time.
 
-Unlike Record's correction, neither direction reconstructs buffer
-content: ``dCurrPos`` keeps advancing every buffer while muted (the
-loop's content is already sitting at the correct phase throughout), so
-this is a pure branch-selection decision -- immediate vs. wait -- not a
-backfill/trim operation.
+**Its own window.**  The setting is ``mute_late_hit_ms``, in
+milliseconds, default 100 -- on by default, matching the Record late-hit
+window.  It is a plain millisecond value, with no cycle-fraction cap
+like the Record window's.
+That cap exists to keep a late Record press unambiguously tied to one
+boundary before real audio is copied or trimmed; mute and unmute never
+touch the audio, so a generous value can only make mute-quantize act a
+little more eagerly at very fast tempos, never mis-correct anything.  It is
+independent of ``late_hit_window_ms`` and ``record_failsafe_seconds``.
 
-**Governed by its own window** — ``mute_late_hit_ms`` (milliseconds,
-default ``100.0`` -- **on**, matching ``late_hit_window_ms``'s own
-default exactly). Deliberately a plain millisecond value with
-no cycle-fraction cap, unlike ``late_hit_window_ms`` above: the
-fraction cap exists there to keep a late *Record* press unambiguously
-attributed to one boundary before backfilling/trimming real audio --
-mute/unmute never touches buffer content, so that concern does not
-apply, and an over-generous value only ever degrades gracefully
-(mute-quantize effectively bypassed at very fast tempos, never
-mis-corrected). A value of zero disables the feature entirely, matching the
-"0 disables" convention used throughout this patch. Independent of
-``late_hit_window_ms`` and ``record_failsafe_seconds`` -- can be
-turned on or off, or tuned, without affecting either. Defaults on
-because, unlike record failsafe (which can discard an entire take
-with no press at all), this feature can only ever turn a "wait for the
-next boundary" into "act now" -- never lose content -- the same
-default-on reasoning ``late_hit_window_ms`` itself already uses.
+It defaults on because, unlike the record failsafe, it can only turn "wait
+for the next boundary" into "act now", never lose anything -- the same
+reasoning as the Record late-hit window.
 
-To disable, or to change the window, set ``mute_late_hit_ms`` (``0`` for
-off, any other value for the window in milliseconds) either in the
-session file's ``<Globals>`` node or live via OSC -- see `OSC Control`_
-below, which now covers this value too.
+To change or disable it, set ``mute_late_hit_ms`` (``0`` for off, otherwise
+the window in milliseconds) in the session file's ``<Globals>`` line or
+live over OSC (see `OSC Control`_).
 
-Same non-LADSPA-port mechanism as the other three globals (see `Why Not
-a LADSPA Port`_ below): a plain ``extern`` global, saved/loaded as the
-``mute_late_hit_ms`` property in the ``<Globals>`` node by
-``engine.cpp``'s ``save_session``/``load_session``.
-
-Files: ``plugin.cc`` (``MUTE_LATE_HIT_MS_DEFAULT``/``g_mute_late_hit_ms``
-globals, the shared window check at the top of the ``MULTI_MUTE``/
-``MULTI_PAUSE`` case, one added disjunct in the unmute branch and one in
-the entering-mute branch), ``engine.cpp`` (``extern`` declaration, XML
-load/save, OSC get/set). No new ``Event::command_t``, no
-``command_map.cpp`` entry, and no pedal/MIDI remapping.
+How it is implemented is in `Mute/Unmute Late-Hit Implementation`_ in the
+appendix.
 
 Record Late-Hit Window Size
 ----------------------------
 
-Covers the Record late-hit window (``late_hit_window_ms``/
-``late_hit_max_quant_unit_fraction``) specifically. The mute/unmute
-window, ``mute_late_hit_ms`` (above), is a separate, single plain-ms
-value with no fraction cap -- see its own section for why.
+This section is about the Record window (``late_hit_window_ms`` and
+``late_hit_max_quant_unit_fraction``).  The mute/unmute window,
+``mute_late_hit_ms``, is a separate, single millisecond value; see
+`New Feature: mute/unmute late-hit correction`_.
 
-The window size has two independent limits; the smaller of the two applies.
+The window has two limits, and the smaller one applies.
 
-**Millisecond cap** — ``late_hit_window_ms`` (default 100 ms). This is an absolute
-ceiling on how late a press can be and still qualify for correction. Its value is saved in
-and loaded from the session file (``.slsess``) under the key ``late_hit_window_ms`` in
-the ``<Globals>`` node — the same node that holds ``tempo``, ``eighth_per_cycle``, and
-other engine-level settings. To change it, edit the session file in a text editor and
-restart the engine. If the key is absent (older session files), the compile-time default
-``LATE_HIT_WINDOW_MS`` (100 ms) is used.
+**Millisecond cap.**  The setting is ``late_hit_window_ms``, default
+100 ms: how late a press can be and still count as on time.
 
-**Fraction cap** — ``late_hit_max_quant_unit_fraction`` (default 100.0,
-which effectively disables the cap so the ms limit always governs).
-When set to a value less than 1.0, this limits the window to that fraction of
-one full quantize cycle at the current tempo and Eighths/Cycle setting, so the
-correction window scales automatically rather than being a fixed duration.
-For example, 0.25 caps the window at 25 % of one cycle regardless of tempo.
-At slow tempos the ms cap is usually the binding limit; the fraction cap
-becomes the effective limit at faster tempos or larger cycle sizes where the
-cycle period falls below ``late_hit_window_ms``. Its value is stored in the
-session file under the key ``late_hit_max_quant_unit_fraction`` in the
-``<Globals>`` node; if absent, the compile-time default
-``LATE_HIT_MAX_QUANT_UNIT_FRACTION`` (100.0) is used.
+**Cycle-fraction cap.**  The setting is
+``late_hit_max_quant_unit_fraction``, default 100.0, which in effect turns
+it off so the millisecond cap always governs.  Set below 1.0, it limits the
+window to that fraction of one quantize cycle at the current tempo and
+Eighths/Cycle setting, so the window scales with tempo.  For example, 0.25
+allows at most a quarter of a cycle at any tempo.  At slow tempos the
+millisecond cap usually governs; the fraction cap takes over at fast tempos
+or with short cycles.
 
-Both limits are evaluated each buffer by ``effectiveLateHitWindow()`` in
-``plugin.cc``, which returns the smaller value in samples. The ms cap is additionally clamped to
-``lInputBufSize − 1`` (32767 samples, approximately 682 ms at 48 kHz), ensuring the
-window never exceeds the depth of the input ring buffer regardless of what
-``late_hit_window_ms`` is set to. Setting the ms cap above this ceiling is silently
-clamped to it; one practical use is to set ``late_hit_window_ms`` to a large value
-so that the fraction cap alone governs the effective window at all normal playing
-tempos (set ``late_hit_max_quant_unit_fraction`` to the desired cycle fraction and
-leave the ms cap at something like 2000).
+Both are stored under those names in the session file's ``<Globals>`` line,
+the same line that holds ``tempo`` and ``eighth_per_cycle``.  Edit the file
+and restart SooperLooper, or change them live over OSC (see `OSC
+Control`_).  A session file without them uses the built-in defaults.
+
+The window can never be longer than about 682 ms at 48 kHz (32767 samples):
+that is how much input history SooperLooper keeps for a late start to copy
+from, and a larger ``late_hit_window_ms`` is silently limited to it.  One
+use of this: set ``late_hit_window_ms`` large (say 2000) and
+``late_hit_max_quant_unit_fraction`` to the cycle fraction you want, so the
+fraction alone governs at all normal tempos.
 
 OSC Control
 ~~~~~~~~~~~
 
-All four globals -- ``late_hit_window_ms``, ``late_hit_max_quant_unit_fraction``,
-``record_failsafe_seconds`` (see `New Feature: record failsafe`_ above),
-and ``mute_late_hit_ms`` (see `New Feature: mute/unmute late-hit
-correction`_ above) -- can all be read and changed live over OSC, in
-addition to editing the session file. They are reachable through the
-engine's existing generic global parameter mechanism -- the same
-``/set "sf"`` / ``/get "sss"`` methods already used for ``tempo``,
-``eighth_per_cycle``, ``smart_eighths``, and other ``<Globals>`` values:
+All four settings -- ``late_hit_window_ms``,
+``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds`` and
+``mute_late_hit_ms`` -- can be read and changed while SooperLooper runs,
+with the same global OSC ``/set`` and ``/get`` messages used for ``tempo``,
+``eighth_per_cycle`` and the other ``<Globals>`` values:
 
 .. code-block::
 
@@ -542,143 +440,88 @@ engine's existing generic global parameter mechanism -- the same
     /get  s:param  s:return_url  s:return_path  -- replies to return_path
                                                     with  i:-2  s:param  f:value
 
-For example, to read and then set the record failsafe over OSC from a
-client at ``osc.udp://127.0.0.1:9999/`` listening on ``/reply``::
+For example, to read and then set the record failsafe from a client at
+``osc.udp://127.0.0.1:9999/`` listening on ``/reply``::
 
     /get "record_failsafe_seconds" "osc.udp://127.0.0.1:9999/" "/reply"
     /set "record_failsafe_seconds" 45.0
 
-A negative value sent to ``/set`` for any of the four is silently ignored
-(the value is left unchanged) -- the same ``value >= 0.0f`` guard
-``load_session`` already applies to the session-file keys, needed because
-a negative float would otherwise reach an ``(unsigned long)`` cast in
-``plugin.cc``'s threshold checks.
+A negative value sent with ``/set`` is ignored, leaving the setting as it
+was.
 
-This is a smaller step than full OSC/GUI exposure: no ``command_map.cpp``
-``add_global_control`` registration and no LADSPA port were added for any
-of the four (see `Why Not a LADSPA Port`_ below), so none of them appear
-in ``slgui``, and OSC's ``/register_auto_update`` push-on-change mechanism
--- which keys a listener's registration off ``CommandMap::to_control_t()``
--- will not target them by name. Plain ``/set``/``/get`` are unaffected by
-that limitation.
+These settings do not appear in ``slgui``, and ``/register_auto_update``
+cannot watch them for changes, because they are plain settings rather than
+SooperLooper controls (see `Why Not a LADSPA Port`_ in the appendix).
+Plain ``/set`` and ``/get`` work normally.
 
-JACK MIDI Output and Improved Timing
---------------------------------------
+JACK MIDI and JACK Sync
+-----------------------
 
-Direct JACK MIDI Port
-~~~~~~~~~~~~~~~~~~~~~
+JACK MIDI Ports
+~~~~~~~~~~~~~~~
 
-A new direct JACK MIDI output port (``midi_out``) is registered in ``engine.cpp``. It
-generates 24-ppqn MIDI clock continuously when a tempo is known, and sends MIDI Start
-(``0xFA``) and MIDI Stop (``0xFC``) on JACK Transport transitions. This replaces the need
-for an ALSA-to-JACK MIDI bridge (``a2jmidid``) for driving external hardware from
-SooperLooper.
+SooperLooper gets two JACK MIDI ports:
 
-A corresponding JACK MIDI input port (``midi_in``) receives commands directly from
-JACK MIDI controllers, with a key advantage over ALSA MIDI described below.
+- ``sooperlooper:midi_in`` takes MIDI commands directly from JACK MIDI
+  controllers and programs, with no ALSA MIDI connection or ``a2jmidid``
+  needed.  Commands are bound in ``slgui`` as usual.
+- ``sooperlooper:midi_out`` sends 24-ppqn MIDI clock whenever a tempo is
+  known, each tick placed to the sample, and MIDI Start and Stop when the
+  JACK transport starts and stops -- for driving external hardware without
+  ``a2jmidid``.
 
-Sub-Buffer Timestamping and TriggerLatency
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**Commands act at their exact sample.**  A JACK MIDI command carries its
+position within the current audio buffer.  SooperLooper splits the buffer
+there, running the audio up to that point first, so the command takes
+effect at that exact sample.  Commands over OSC or ALSA MIDI carry no
+position and take effect at the start of a buffer, so JACK MIDI commands
+are timed more precisely.
 
-JACK MIDI events carry an exact sample offset within the current buffer
-(``jack_ev.time``). The engine uses this offset to split the processing buffer at the
-event boundary, running audio up to the event position before applying the command. This
-is the standard JACK buffer-splitting technique for sample-accurate event handling.
+**Trigger latency.**  SooperLooper's *trigger latency* setting is how late
+it takes a command to arrive after the press; it only affects where
+overdub, multiply, insert, replace and substitute start taking input.  The
+fork does not apply it to a JACK MIDI command placed within the buffer.
+OSC and ALSA MIDI commands, and a JACK MIDI command that falls on a
+buffer's first sample, get the full setting.
 
-For the late-hit patch specifically, a JACK MIDI Record press arriving at sample *N*
-within a buffer is processed with ``_pending_event_offset = N``. The ``run()``
-call that follows sees this non-zero offset and zeros ``TriggerLatency`` for that segment,
-because the event is already placed at the exact physical sample — no additional latency
-correction is needed. ALSA MIDI events, which carry no sub-buffer position, always have
-``_pending_event_offset = 0`` and use the full ``TriggerLatency`` correction unchanged.
-The result is that JACK MIDI controller presses are handled with higher timing accuracy
-than ALSA MIDI.
-
-
-JACK BBT Position Fields
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-When ``ALB_BBT_SYNC`` is defined (it is commented out by default),
-``JackAudioDriver::get_transport_info()`` fills five extra ``TransportInfo``
-fields when the timebase master sets the ``JackPositionBBT`` valid bit:
-``bar``, ``beat``, ``bar_start_tick``, ``ticks_per_beat`` and ``bbt_valid``
-(``tick`` is copied too).
-
-``generate_sync()`` has a branch that uses them:
-
-.. code-block::
-
-    bar_start_frame = bar_start_tick × (60 × SR / bpm) / ticks_per_beat
-    phase_shift     = bar_start_frame − fmod(bar_start_frame, _tempo_frames)
-    frame_in_cycle  = (framepos + offset) − phase_shift
-    thisval         = lrint(fmod(frame_in_cycle, _tempo_frames))
-
-``phase_shift`` is a whole number of cycles by construction, so
-``fmod(frame_in_cycle, _tempo_frames)`` always equals
-``fmod(framepos + offset, _tempo_frames)``: pulses fall exactly where the
-stock formula puts them, anchored to JACK frame 0.  The branch therefore does
-not re-anchor pulses to the master's bar, and makes no difference to
-Eighths/Cycle changes.  (Hydrogen in pattern mode also sends constant
-bar/beat/tick values, so there would be no position to anchor to in any
-case.)
-
-What the stock grid gets right and wrong with a master such as Hydrogen
-1.2: after a locate, the master recomputes its position from the frame, so
-the frame-based grid lines up with its beat again.  After a tempo change made
-while the transport is rolling, the master keeps its beat continuous but the
-frame-based grid jumps, leaving pulses off the beat by up to half a cycle
-until the next locate.  ``ALB_JACK_BEAT_TRACKING`` addresses that.
-
-``#define ALB_BBT_SYNC`` in ``audio_driver.hpp`` is commented out by
-default, which removes the fields and the branch; pulse placement is the
-same either way.  With ``ALB_JACK_BEAT_TRACKING`` defined the branch is not
-compiled at all, and defining ``ALB_BBT_SYNC`` only adds the BBT fields to
-the sync-pulse log.  The code is kept as a starting point for a correct BBT
-layer.
+How this is done inside the engine is in `JACK MIDI Input: Implementation`_
+in the appendix.
 
 JackSync Beat Tracking
 ~~~~~~~~~~~~~~~~~~~~~~
 
-When ``ALB_JACK_BEAT_TRACKING`` is defined in ``engine.hpp`` (the default;
-field-tested over a full live session with frequent tempo changes),
-``generate_sync()`` places JackSync pulses, and
-the GUI's beat indicator, from a running beat count instead of
-``fmod(framepos, _tempo_frames)``:
+With the sync source set to JACK and a timebase master such as Hydrogen,
+stock SooperLooper places its sync pulses on a fixed grid counted from
+JACK frame 0.  Hydrogen, like a DAW playing through a tempo change, keeps
+its beat continuous when the tempo changes while the transport is rolling.
+The stock grid does not, so the two drift apart -- by up to half a cycle --
+and stay apart until the next relocate, such as a stop and restart from the
+drum machine.  Loops then start and stop off the beat, which shows up as a
+loop landing an eighth note away from where it should.
 
-* each rolling cycle it advances by ``nframes × bpm / (60 × SR)``, using the
-  tempo JACK reports for that cycle, so a tempo change alters the rate but not
-  the position;
-* while stopped it does not advance, and a stop/start that resumes at the
-  same frame continues where it left off;
-* on a relocate it re-anchors to ``framepos × bpm / (60 × SR)``, which is where
-  a master that recomputes its position from the frame puts its beat.
+This fork counts beats as the music plays, at whatever tempo JACK reports
+at each moment, so the pulses stay on the master's beat through any number
+of tempo changes; on a relocate it lines up again with where the master
+puts its beat.  At a steady tempo it gives the same pulses as stock.  It
+also stops SooperLooper reading some of JACK's transport information from
+uninitialised memory, a stock bug.
 
-At constant tempo since the last relocate it gives the same pulses as the
-stock formula, to within one sample.
-
-It also changes how ``TransportInfo`` is read: the struct is
-value-initialised (stock reads some fields uninitialised), the
-tempo is taken from JACK only when the master publishes one, and the
-backwards-locate reset of the loops' relative-sync counters uses the
-tracker's record of the previous frame.
-
-The arithmetic lives in ``src/beat_tracker.hpp``; ``src/test_beat_tracker``
-has its unit tests and a JACK integration test.
+On by default (``ALB_JACK_BEAT_TRACKING``), and used through full live
+sessions with frequent tempo changes.  How it works is in `JackSync Beat
+Tracking: Implementation`_ in the appendix.
 
 New Tool: ``slbigstate``
 --------------------------
 
-A standalone, at-a-distance display of one or more loops' current state
-(Record / Playing / Overdub / Mute / ...) in large, high-contrast text
-with a per-state background color -- for visibility from across a room
-during a performance, where the normal ``slgui`` panel's small state
-indicators are too small to read. A separate program from ``slgui``, not
-a window inside it.
+A separate program that shows one or more loops' current state (Record,
+Playing, Overdub, Mute, ...) in large, high-contrast text on a background
+color for each state -- readable from across a room during a performance,
+where ``slgui``'s own state indicators are too small.  It is its own
+window, not part of ``slgui``.
 
-Built and installed the same way as ``sooperlooper``/``slgui`` -- it is
-part of the same ``configure``/``make``/``make install`` this patch
-already uses, landing in the same ``bindir`` (e.g. ``/usr/local/bin``)
-once installed. Source lives in ``src/big_state_display/``.
+It is built and installed with ``sooperlooper`` and ``slgui`` by the same
+``configure``/``make``/``make install``, into the same directory (e.g.
+``/usr/local/bin``).  The source is in ``src/big_state_display/``.
 
 Usage::
 
@@ -719,88 +562,50 @@ The window title includes which loop(s) are shown -- "SooperLooper
 State - Loop 0" for a single loop, "SooperLooper State - Loops 0,2,3"
 for a stack -- since more than one instance can be running at once.
 
-**Text size adjusts to fit.** The label font grows or shrinks to fill
-whatever labels are actually showing right now (BigStateWindow's own
-current one; every row's current one for a stack), recalculated
-whenever the window is resized or any row's state changes. Sizing is
-still one shared computation across every row of a stack at a given
-moment, so rows never disagree with each other on size -- it is just
-no longer padded out for hypothetical labels nothing on screen is
-currently showing (the longest possible one is "Substitute," which
-would otherwise leave a short label like "Off" using only a small
-fraction of the available space). The trade-off: the font can now
-change size when a row's own state changes to a longer or shorter
-word, where an earlier version held it perfectly still across every
-state change.
+**Text size adjusts to fit.**  The text grows or shrinks to fill the
+window with the labels showing right now, and is recalculated whenever the
+window is resized or a state changes.  All rows of a stack share one size,
+so they never disagree.  Sizing for the labels actually on screen, rather
+than the longest possible one ("Substitute"), lets a short label like "Off"
+fill the space; the trade-off is that the text size can change when a
+state changes to a longer or shorter word.
 
-**Multiple loops: one window, stacked, by default.** Running
-``slbigstate`` with no ``-l``/``-L`` at all shows *every* loop the
-engine currently has, one row per loop, stacked top to bottom in loop
-order, each row exactly the size a single-loop window would be (same
-``--size``/default) -- a single-loop rig therefore gets a window
-pixel-identical to the original single-loop-only display, with no
-flags needed. A thin black divider line separates adjacent rows, so
-two loops in the same state (both Playing, say) don't read as one
-undivided block. To show a specific subset, in a specific order, use
-``-L``, e.g. ``slbigstate -L 2,0-1`` shows loop 2, then loops 0 and 1,
-top to bottom in that order. To force the original single-loop-only
-window for exactly one loop (skipping the auto-detect), use
-``-l N`` instead -- both remain available; ``-l`` and ``-L`` cannot be
+**Multiple loops: one window, stacked.**  With no ``-l`` or ``-L``,
+``slbigstate`` shows every loop SooperLooper has, one row per loop,
+stacked in loop order, each row the size a single-loop window would be.
+With one loop, that is simply a single-loop window.  A thin black line
+separates the rows, so two loops in the same state don't read as one
+block.  To show a chosen set in a chosen order, use ``-L``: ``slbigstate
+-L 2,0-1`` shows loop 2, then loops 0 and 1.  To show exactly one loop and
+skip the automatic loop count, use ``-l N``.  ``-l`` and ``-L`` cannot be
 combined.
 
-**How it talks to the engine:** plain OSC, the same generic mechanism
-``tempo``/``smart_eighths``/etc. already use elsewhere in this patch.
-For each loop shown, it sends one ``/sl/<loop>/register_auto_update``
-request for that loop's ``state`` control; the engine then pushes an
-update whenever that value actually changes (not on a fixed schedule),
-and each loop's registration is refreshed defensively every 20 seconds
-so the display recovers on its own if the engine restarts *with the
-same loop count* -- N loops means N independent registrations sharing
-one process and one window, not N separate processes.
+**Following SooperLooper.**  It talks to SooperLooper over OSC, as a
+separate client, and works the same whether SooperLooper was started by
+``slgui`` or runs on its own.  For each loop shown it asks SooperLooper to
+send that loop's state whenever it changes, and renews the request every
+20 seconds, so the display recovers by itself if SooperLooper restarts.
 
-**If the loop count actually changes** -- a loop added or removed live
-from within a running engine (SooperLooper's own ``/loop_add``/
-``/loop_del``, e.g. from ``slgui`` itself), *or* the engine coming back
-from a restart with a different count already set from its own
-startup -- the *auto-detect* stack window (no ``-l``/``-L`` given, the
-default) notices and rebuilds itself within a few seconds, tearing
-down and rebuilding its rows to match, in either direction, without
-needing to be restarted itself. Covers both cases because it uses two
-mechanisms together: the engine's own config-changed push (immediate,
-for a live add/remove on an engine it is already watching) plus a
-periodic active re-check (catches a *new* engine instance that already
-had a different count from the moment it started, which a passive push
-alone cannot -- nothing "changes" for it to push if the count was
-already different before anyone was watching). An explicit ``-l``/
-``-L`` window deliberately does not do any of this -- you asked for a
-specific loop or set, so a count change elsewhere leaves it alone; if a
-loop *you explicitly chose* is itself removed, that row just freezes at
-its last known state, same as a plain engine restart with the same
-loop count but different content.
-When no ``-l``/``-L`` is given, one extra,
-one-shot exchange happens first, before any window opens: a plain
-``/ping`` to ask the engine how many loops it currently has (the same
-reply -- host, version, loop count -- ``slgui`` itself already reads
-for its own reconnect handling), so the display knows how many rows to
-build; a 2-second timeout with no reply falls back to showing loop 0
-alone rather than failing to start. No connection to ``libslcore.a`` or
-any of this patch's engine-side code either way -- it is an
-independent client of the engine's existing OSC interface, and works
-identically against a GUI-managed engine (started by ``slgui``) or a
-standalone headless ``sooperlooper``.
+Without ``-l`` or ``-L`` it also keeps the number of rows in step with
+SooperLooper's loop count, rebuilding within a few seconds when a loop is
+added or removed, or when SooperLooper restarts with a different number of
+loops.  At startup it first asks how many loops there are.  If
+SooperLooper is not answering yet -- for example because ``slbigstate`` was
+started first -- it shows loop 0, says so, and switches to the real loop
+count once SooperLooper answers.
 
-**Remembering its window position:** its own preferences file,
-``~/.sooperlooper/slbigstate_config.xml`` -- separate from ``slgui``'s
-own ``~/.sooperlooper/gui_config.xml`` (same directory, different file:
-only the *file* needs to be exclusive to avoid the two independent
-processes' writes colliding, not the whole directory). A stack of two
-or more loops uses a second file,
-``~/.sooperlooper/slbigstate_stack_config.xml``, so its remembered
-position doesn't collide with a single-loop instance's -- but showing
-exactly one loop, whether via ``-l`` or a ``-L``/auto-detect result
-that resolves to just one, always uses the original single-loop file,
-so a one-loop rig's remembered window position carries over exactly as
-it was before this feature existed.
+With ``-l`` or ``-L`` the rows are fixed: a count change elsewhere leaves
+them alone, and a row whose loop is removed stays at its last state.
+
+How it does this is in `slbigstate: Implementation`_ in the appendix.
+
+**Remembering its window position.**  It keeps its own file,
+``~/.sooperlooper/slbigstate_config.xml``, next to ``slgui``'s
+``gui_config.xml`` but separate from it, so the two programs never
+overwrite each other's settings.  A stack of two or more loops uses a
+second file, ``~/.sooperlooper/slbigstate_stack_config.xml``, so a stack
+and a single-loop window each remember their own position.  Showing
+exactly one loop, however chosen, always uses the single-loop file.
 
 
 Compile-Time Flags
@@ -924,12 +729,13 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING`` and
    * - ``ALB_SYNC_PULSE_LOG``
      - ``engine.hpp``
      - *(commented out)*
-     - Diagnostic for the open eighth-note off-beat sync investigation
-       (ROADMAP entry 8), in the same spirit as ``SYNCWDEBUG`` above --
-       a maintainer's debugging aid, not something a general build should
-       enable by default.  **When defined:** logs one line per actual
-       JackSync cycle-boundary pulse (frame, beat/tick/bpm, which formula
-       path fired) to ``$HOME/.sooperlooper/logs/sl_sync_pulse.log``
+     - A diagnostic log for investigating JackSync timing problems, in the
+       same spirit as ``SYNCWDEBUG`` above -- a maintainer's debugging aid,
+       not something a general build should enable by default.  **When
+       defined:** logs one line per JackSync cycle-boundary pulse (frame,
+       tempo, and bar/beat fields when available), plus a line for each
+       transport relocate and each tempo change, to
+       ``$HOME/.sooperlooper/logs/sl_sync_pulse.log``
        (created if needed, falling back to ``/tmp`` only if ``$HOME`` is
        unset).  RT side only pushes a POD through a lock-free
        ``RingBuffer``, same pattern as ``_sync_queue``; the actual file
@@ -946,6 +752,299 @@ Appendix: Minor Fixes and Implementation Details
 Smaller corrections, design notes, and implementation-level detail that
 don't carry the same weight as the main narrative above -- collected here
 so they don't crowd the sections a first-time reader actually needs.
+
+Where the Changes Are in the Source
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+| **Base version:** SooperLooper 1.7.9
+| **Modified files:** ``src/plugin.cc``, ``src/plugin.hpp``, ``src/engine.cpp``,
+| ``src/engine.hpp``, ``src/looper.cpp``, ``src/looper.hpp``, ``src/audio_driver.hpp``,
+| ``src/jack_audio_driver.hpp``, ``src/jack_audio_driver.cpp``, ``src/event.hpp``,
+| ``src/command_map.cpp``, and some test files in ``src/test_plugin``.
+| **New files** (not modifications, so not listed above) are documented in
+| their own sections: ``src/big_state_display/`` in `New Tool: slbigstate`_,
+| ``src/beat_tracker.hpp`` in `JackSync Beat Tracking`_, new test files in
+| `Test Suite`_.
+| **All new code sections** are bracketed with ``albBegin`` / ``albEnd`` markers.
+| In ``plugin.cc`` and ``plugin.hpp`` the markers are ``//====== albBegin`` /
+| ``//====== albEnd``; in all other files they are ``//------ albBegin`` /
+| ``//------ albEnd``. Search for ``albBegin`` to locate every changed block.
+
+Late-Hit Record Start and Stop: Implementation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+"Sync active" means both conditions together: the Sync checkbox controls
+whether operations wait for boundaries at all (``fSyncMode > 0``); the sync
+source selection determines what signal arrives on the sync input and
+therefore when ``lGlobalSamplesSinceSync`` resets.  With no source, *T*
+(the samples since the last boundary) grows without bound and the window
+never fires regardless of the checkbox.
+
+**Late start.**  The press would normally go to ``STATE_TRIG_START`` and
+wait for the next boundary.  Instead:
+
+1. The loop buffer is created immediately via ``pushNewLoopChunk()``.
+2. The *T* samples of audio that elapsed since the boundary are copied
+   ("backfilled") from the continuous input ring buffer into the start of
+   the loop buffer at positions ``[0 .. T)``.
+3. The record position ``dCurrPos`` is set to *T*, so live recording
+   continues from position *T* onward, seamlessly after the backfilled audio.
+4. The engine enters ``STATE_RECORD`` directly rather than
+   ``STATE_TRIG_START``.
+
+**Late stop.**  The press would normally go to ``STATE_TRIG_STOP`` and wait
+for the next boundary, producing a loop that is *T* samples too long and
+whose tail drifts on every repeat.  Instead:
+
+1. The loop length is trimmed by *T* samples: ``lLoopLength = dCurrPos − T``.
+2. The play position ``dCurrPos`` is set to ``lLoopLength + lOutputLatency +
+   lInputLatency + T`` -- the same formula as the normal ``STATE_TRIG_STOP``
+   path, plus *T* to compensate for having entered ``STATE_PLAY`` *T*
+   samples late in real time.
+3. The engine enters ``STATE_PLAY`` directly.
+
+After the first natural wrap, ``dCurrPos`` lands at ``lOutputLatency +
+lInputLatency`` -- identical to a normal on-time loop.  No rewind or special
+first-play handling is needed.
+
+**Gating.**  All new code paths are gated by ``withinWindow`` /
+``stopWithinWindow`` / ``multStopInWindow``.  These flags are false when the
+press is on time, when sync is off (``fSyncMode == 0``), or when no sync
+pulse has arrived recently (*T* exceeds the window), and the engine then
+behaves identically to the unpatched version.  Quantize mode is not a
+condition.
+
+Record Failsafe Implementation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Not a new command: a second, automatic way to reach the same
+``CANCEL_RECORD_MUTE`` branch, so it inherits that command's guard table and
+fade-residue fix unchanged.
+
+Which recordings qualify: ``bRecordEnteredFromActivePlay``
+(a field on ``SooperLooperI``) is set once, at the moment ``RECORD`` is
+pressed, to ``(state == STATE_PLAY || state == STATE_ONESHOT)`` -- true only
+when an actively playing, audible loop existed and was unmuted at that instant.
+
+Implementation: a sample counter, ``lRecordFailsafeSamples`` (a field on
+``SooperLooperI``), accumulates ``SampleCount`` once per buffer while
+``state == STATE_RECORD`` **and** ``bRecordEnteredFromActivePlay`` is true,
+and resets to 0 the instant state is anything else -- so it measures
+unbroken time in that one state, only for a take that qualifies, and never
+leaks across separate takes. A flag, ``bRecordFailsafeFired``, is true when
+that counter exceeds ``g_record_failsafe_seconds * fSampleRate`` and is ORed into
+the existing ``lMultiCtrl == MULTI_CANCEL_RECORD_MUTE`` branch condition in
+``plugin.cc`` -- zero new state-transition logic. Deliberately **not**
+gated on ``STATE_TRIG_STOP``: that state is a brief, self-resolving wait
+for the next quantize boundary (at most one loop cycle), unlike
+``STATE_RECORD``, which has no automatic exit at all.
+
+The default is ``RECORD_FAILSAFE_SECONDS_DEFAULT`` = ``0.0f`` (off); any
+value at or below zero disables it, matching the late-hit window's own
+"0 disables" convention.
+
+Same non-LADSPA-port mechanism as ``g_late_hit_window_ms``, for the same
+reasons (see `Why Not a LADSPA Port`_ below): a plain ``extern`` global,
+saved/loaded as the ``record_failsafe_seconds`` property in the
+``<Globals>`` node by ``engine.cpp``'s ``save_session``/``load_session``.
+
+Files: ``plugin.hpp`` (``lRecordFailsafeSamples`` and
+``bRecordEnteredFromActivePlay`` fields), ``plugin.cc``
+(``RECORD_FAILSAFE_SECONDS_DEFAULT`` / ``g_record_failsafe_seconds``
+globals, the ``bRecordEnteredFromActivePlay`` set statement at the top of
+``MULTI_RECORD``, the counter-update statements, the
+``|| bRecordFailsafeFired`` addition), ``engine.cpp`` (``extern``
+declaration, XML load/save, OSC get/set, startup banner). No new
+``Event::command_t``, no ``command_map.cpp`` entry, and no pedal/MIDI
+mapping -- purely internal to the engine, invisible to any external MIDI
+mapping and the ``.slb`` bindings.
+
+Mute/Unmute Late-Hit Implementation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+It covers the ``MUTE``, ``MUTE_ON`` and ``MUTE_OFF`` commands.
+
+Unlike Record's correction, neither direction reconstructs buffer
+content: ``dCurrPos`` keeps advancing every buffer while muted (the
+loop's content is already sitting at the correct phase throughout), so
+this is a pure branch-selection decision -- immediate vs. wait -- not a
+backfill/trim operation.
+
+Same non-LADSPA-port mechanism as the other three globals (see `Why Not
+a LADSPA Port`_ below): a plain ``extern`` global, saved/loaded as the
+``mute_late_hit_ms`` property in the ``<Globals>`` node by
+``engine.cpp``'s ``save_session``/``load_session``.
+
+Files: ``plugin.cc`` (``MUTE_LATE_HIT_MS_DEFAULT``/``g_mute_late_hit_ms``
+globals, the shared window check at the top of the ``MULTI_MUTE``/
+``MULTI_PAUSE`` case, one added disjunct in the unmute branch and one in
+the entering-mute branch), ``engine.cpp`` (``extern`` declaration, XML
+load/save, OSC get/set). No new ``Event::command_t``, no
+``command_map.cpp`` entry, and no pedal/MIDI remapping.
+
+Record Late-Hit Window: Implementation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Both limits are evaluated each buffer by ``effectiveLateHitWindow()`` in
+``plugin.cc``, which returns the smaller value in samples:
+``min(g_late_hit_window_ms, g_late_hit_max_quant_unit_fraction × cycle_samples)``.  The ms cap is
+additionally clamped to ``lInputBufSize − 1`` (32767 samples, approximately
+682 ms at 48 kHz), ensuring the window never exceeds the depth of the input
+ring buffer regardless of what ``late_hit_window_ms`` is set to.  If a key
+is absent from the session file, the compile-time defaults
+``LATE_HIT_WINDOW_MS`` (100 ms) and ``LATE_HIT_MAX_QUANT_UNIT_FRACTION``
+(100.0) are used.
+
+JACK MIDI Input: Implementation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``midi_out`` port is registered in ``engine.cpp``; it generates the
+clock with a phase accumulator for sample-accurate tick placement, and
+sends MIDI Start (``0xFA``) and Stop (``0xFC``).
+
+JACK MIDI events carry an exact sample offset within the current buffer
+(``jack_ev.time``). The engine uses this offset to split the processing buffer at the
+event boundary, running audio up to the event position before applying the command. This
+is the standard JACK buffer-splitting technique for sample-accurate event handling.
+
+A JACK MIDI command arriving at sample *N* within a buffer is processed with
+``_pending_event_offset = N``.  The ``run()`` call that follows sees this non-zero
+offset and zeros ``TriggerLatency`` for that segment, on the reasoning that the
+event is already placed at its exact sample.  ALSA MIDI and OSC events, which carry
+no sub-buffer position, always have ``_pending_event_offset = 0`` and keep the full
+``TriggerLatency``; so does a JACK MIDI event at offset 0.  ``TriggerLatency`` is
+read only where overdub, multiply and insert (and replace and substitute, through
+overdub) start taking input (``lFramesUntilInput = input_latency −
+trigger_latency``); plain record does not use it.
+
+JackSync Beat Tracking: Implementation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When ``ALB_JACK_BEAT_TRACKING`` is defined in ``engine.hpp`` (the default;
+field-tested over a full live session with frequent tempo changes),
+``generate_sync()`` places JackSync pulses, and
+the GUI's beat indicator, from a running beat count instead of
+``fmod(framepos, _tempo_frames)``:
+
+* each rolling cycle it advances by ``nframes × bpm / (60 × SR)``, using the
+  tempo JACK reports for that cycle, so a tempo change alters the rate but not
+  the position;
+* while stopped it does not advance, and a stop/start that resumes at the
+  same frame continues where it left off;
+* on a relocate it re-anchors to ``framepos × bpm / (60 × SR)``, which is where
+  a master that recomputes its position from the frame puts its beat.
+
+At constant tempo since the last relocate it gives the same pulses as the
+stock formula, to within one sample.
+
+It also changes how ``TransportInfo`` is read: the struct is
+value-initialised (stock reads some fields uninitialised), the
+tempo is taken from JACK only when the master publishes one, and the
+backwards-locate reset of the loops' relative-sync counters uses the
+tracker's record of the previous frame.
+
+The arithmetic lives in ``src/beat_tracker.hpp``; ``src/test_beat_tracker``
+has its unit tests and a JACK integration test.
+
+JACK BBT Position Fields
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+When ``ALB_BBT_SYNC`` is defined (it is commented out by default),
+``JackAudioDriver::get_transport_info()`` fills five extra ``TransportInfo``
+fields when the timebase master sets the ``JackPositionBBT`` valid bit:
+``bar``, ``beat``, ``bar_start_tick``, ``ticks_per_beat`` and ``bbt_valid``
+(``tick`` is copied too).
+
+``generate_sync()`` has a branch that uses them:
+
+.. code-block::
+
+    bar_start_frame = bar_start_tick × (60 × SR / bpm) / ticks_per_beat
+    phase_shift     = bar_start_frame − fmod(bar_start_frame, _tempo_frames)
+    frame_in_cycle  = (framepos + offset) − phase_shift
+    thisval         = lrint(fmod(frame_in_cycle, _tempo_frames))
+
+``phase_shift`` is a whole number of cycles by construction, so
+``fmod(frame_in_cycle, _tempo_frames)`` always equals
+``fmod(framepos + offset, _tempo_frames)``: pulses fall exactly where the
+stock formula puts them, anchored to JACK frame 0.  The branch therefore does
+not re-anchor pulses to the master's bar, and makes no difference to
+Eighths/Cycle changes.  (Hydrogen in pattern mode also sends constant
+bar/beat/tick values, so there would be no position to anchor to in any
+case.)
+
+What the stock grid gets right and wrong with a master such as Hydrogen
+1.2: after a locate, the master recomputes its position from the frame, so
+the frame-based grid lines up with its beat again.  After a tempo change made
+while the transport is rolling, the master keeps its beat continuous but the
+frame-based grid jumps, leaving pulses off the beat by up to half a cycle
+until the next locate.  ``ALB_JACK_BEAT_TRACKING`` addresses that.
+
+``#define ALB_BBT_SYNC`` in ``audio_driver.hpp`` is commented out by
+default, which removes the fields and the branch; pulse placement is the
+same either way.  With ``ALB_JACK_BEAT_TRACKING`` defined the branch is not
+compiled at all, and defining ``ALB_BBT_SYNC`` only adds the BBT fields to
+the sync-pulse log.  The code is kept as a starting point for a correct BBT
+layer.
+
+slbigstate: Implementation
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**How it talks to the engine:** plain OSC, the same generic mechanism
+``tempo``/``smart_eighths``/etc. already use elsewhere in this patch.
+For each loop shown, it sends one ``/sl/<loop>/register_auto_update``
+request for that loop's ``state`` control; the engine then pushes an
+update whenever that value actually changes (not on a fixed schedule),
+and each loop's registration is refreshed defensively every 20 seconds
+so the display recovers on its own if the engine restarts *with the
+same loop count* -- N loops means N independent registrations sharing
+one process and one window, not N separate processes.
+
+**If the loop count actually changes** -- a loop added or removed live
+from within a running engine (SooperLooper's own ``/loop_add``/
+``/loop_del``, e.g. from ``slgui`` itself), *or* the engine coming back
+from a restart with a different count already set from its own
+startup -- the *auto-detect* stack window (no ``-l``/``-L`` given, the
+default) notices and rebuilds itself within a few seconds, tearing
+down and rebuilding its rows to match, in either direction, without
+needing to be restarted itself. Covers both cases because it uses two
+mechanisms together: the engine's own config-changed push (immediate,
+for a live add/remove on an engine it is already watching) plus a
+periodic active re-check (catches a *new* engine instance that already
+had a different count from the moment it started, which a passive push
+alone cannot -- nothing "changes" for it to push if the count was
+already different before anyone was watching). An explicit ``-l``/
+``-L`` window deliberately does not do any of this -- you asked for a
+specific loop or set, so a count change elsewhere leaves it alone; if a
+loop *you explicitly chose* is itself removed, that row just freezes at
+its last known state, same as a plain engine restart with the same
+loop count but different content.
+When no ``-l``/``-L`` is given, one extra,
+one-shot exchange happens first, before any window opens: a plain
+``/ping`` to ask the engine how many loops it currently has (the same
+reply -- host, version, loop count -- ``slgui`` itself already reads
+for its own reconnect handling), so the display knows how many rows to
+build; a 2-second timeout with no reply falls back to showing loop 0
+alone rather than failing to start. No connection to ``libslcore.a`` or
+any of this patch's engine-side code either way -- it is an
+independent client of the engine's existing OSC interface, and works
+identically against a GUI-managed engine (started by ``slgui``) or a
+standalone headless ``sooperlooper``.
+
+When the first ``/ping`` gets no answer within 2 seconds, the auto-detect
+window starts with loop 0 and prints a note to that effect; its periodic
+re-check then picks up the real count once the engine answers.
+
+Late-Hit Correction Robustness
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A slave channel in internal sync mode always uses the stock timing path
+(``bLateHitBypassed``), preventing L/R divergence from independently
+computed *T* values.  Changing the sync source resets the correction's
+tracked state (``Looper::reset_late_hit_state()`` clears
+``bSyncPulseReceived``, ``lGlobalSamplesSinceSync``, and
+``lLastSyncPeriodSamples``), so stale period data from the old source
+can't affect the first presses on the new one.
 
 ``cancel_record_mute`` Implementation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1092,6 +1191,15 @@ in the standalone build where both translation units share an address space. Whe
 the value stays at the compile-time default for the session, which is acceptable
 behaviour. If any of the four is ever promoted to a GUI control, the correct migration
 path is to add a proper LADSPA port and remove the global.
+
+For OSC this is a smaller step than full exposure: no ``command_map.cpp``
+``add_global_control`` registration was added for any of the four, so none
+appear in ``slgui``, and ``/register_auto_update`` -- which keys a
+listener's registration off ``CommandMap::to_control_t()`` -- will not
+target them by name.  A negative value sent to ``/set`` is ignored by the
+same ``value >= 0.0f`` guard ``load_session`` applies to the session-file
+keys, needed because a negative float would otherwise reach an
+``(unsigned long)`` cast in ``plugin.cc``'s threshold checks.
 
 Live-Performance Audit
 ~~~~~~~~~~~~~~~~~~~~~~~
