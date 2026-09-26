@@ -300,10 +300,11 @@ is no longer a condition.
 New Command: ``cancel_record_mute``
 ------------------------------------
 
-Cancels a record that is in progress or still pending, keeping the previous
-take.  Mutes only if audio was actually captured.  **No-op in every other
-state**, which is what makes it safe to overload onto a footswitch that also
-fires ``record``.
+Cancels a recording that has started, or one still waiting for the beat,
+and brings back the previous take.  It mutes the loop only if something was
+actually recorded; otherwise the previous take simply keeps playing.  In
+every other situation it does nothing, which is what makes it safe to put
+on the same footswitch as ``record``.
 
 Motivation: plain ``record`` already carries a loop from recording into
 play on its own, and that needs nothing new.  What ``cancel_record_mute``
@@ -323,49 +324,33 @@ keeps the new take.  It also costs a second pedal, and is one more control
 to reach for under performance pressure instead of an extension of the
 gesture already in progress.
 
-Internally the command discards the take just captured and restores the
-previous loop, muted.  That is implementation, not intent: the performer
-is not undoing a mistake but choosing silence over play, on the same pedal,
-in one motion.
-
-It lives in the engine because whatever maps the pedal's MIDI cannot see
-SooperLooper's state: it cannot tell a committed record from one still
-pending on a boundary, or whether the loop was already muted, so a
-retraction done there is unreliable.  The engine has ``state``,
-``waitingForSync``, ``wasMuted`` and ``headLoopChunk``, and acts in a
-single realtime dispatch.
-
-Behaviour by state at the moment the command arrives:
+What happens, by what the loop is doing when the command arrives:
 
 .. list-table::
    :header-rows: 1
-   :widths: 30 70
+   :widths: 30 38 32
 
-   * - State
-     - Action
-   * - ``STATE_RECORD``
-     - Discard the take, restore the previous loop, end **muted**.
-   * - ``STATE_TRIG_START``
-     - Cancel the pending record; the loop **keeps playing** (nothing was
-       captured).  Cancelled in place -- see the note below.
-   * - ``STATE_TRIG_STOP``
-     - **No-op.**  A quantized record *end* is waiting on its boundary; the
-       take is being kept.
-   * - everything else
-     - **No-op.**
+   * - The loop is ...
+     - What happens
+     - What you hear
+   * - recording (the press started a recording)
+     - The recording is discarded and the previous take restored.  If it
+       was the loop's first recording, the loop is empty again.
+     - Silence: the loop is muted.  Unmute to hear the previous take.
+   * - waiting for the beat to start a recording
+     - The queued recording is cancelled.
+     - The previous take keeps playing, uninterrupted.
+   * - waiting for the beat to end a recording
+     - Nothing.  The take is kept.
+     - The new take plays from the beat.
+   * - playing, muted, empty, or anything else
+     - Nothing.
+     - No change.
 
-.. important::
-
-   The two pending states must be distinguished, and the guard must key on
-   ``STATE_TRIG_START`` rather than ``waitingForSync`` -- that flag is also
-   set for deferred *mute* and *play* transitions.  A ``state ==
-   STATE_RECORD`` guard alone silently does nothing in the quantized case
-   the feature exists for; a loose "anything record-ish" guard destroys a
-   take in the case it is supposed to tolerate.
-
-Implementation details -- the ``lMultiCtrl`` remap, the files touched, and
-the enum-ordering hazard -- are in `cancel_record_mute Implementation`_
-in the appendix.
+The third row is the accident the design has to tolerate: pressing to end
+a recording and lingering on the pedal must not destroy the take.  How the
+command tells these cases apart, and what it changes internally, is in
+`cancel_record_mute Implementation`_ in the appendix.
 
 New Feature: record failsafe
 -----------------------------------
@@ -964,6 +949,44 @@ so they don't crowd the sections a first-time reader actually needs.
 
 ``cancel_record_mute`` Implementation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The situations in the user-facing table map to engine states:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - Situation
+     - Engine state
+   * - recording
+     - ``STATE_RECORD``
+   * - waiting for the beat to start a recording
+     - ``STATE_TRIG_START``
+   * - waiting for the beat to end a recording
+     - ``STATE_TRIG_STOP``
+   * - anything else
+     - any other state
+
+.. important::
+
+   The two pending states must be distinguished, and the guard must key on
+   ``STATE_TRIG_START`` rather than ``waitingForSync`` -- that flag is also
+   set for deferred *mute* and *play* transitions.  A ``state ==
+   STATE_RECORD`` guard alone silently does nothing in the quantized case
+   the feature exists for; a loose "anything record-ish" guard destroys a
+   take in the case it is supposed to tolerate.
+
+Internally the command discards the take just captured and restores the
+previous loop, muted.  That is implementation, not intent: the performer
+is not undoing a mistake but choosing silence over play, on the same pedal,
+in one motion.
+
+It lives in the engine because whatever maps the pedal's MIDI cannot see
+SooperLooper's state: it cannot tell a committed record from one still
+pending on a boundary, or whether the loop was already muted, so a
+retraction done there is unreliable.  The engine has ``state``,
+``waitingForSync``, ``wasMuted`` and ``headLoopChunk``, and acts in a
+single realtime dispatch.
 
 A state-based remap in ``plugin.cc`` (the same idiom as ``MULTI_MUTE_ON``),
 rewriting ``lMultiCtrl`` rather than adding a dispatch case:
