@@ -135,10 +135,16 @@ def build_output(sr, bpm, seconds, click, lead_in=0.5):
 class ClickRecorder:
     """Plays a prepared signal and records input ports, sample-aligned."""
 
-    def __init__(self, client_name, out_targets, in_sources):
+    def __init__(self, client_name, out_targets, in_sources, probe_targets=()):
         self.client = jack.Client(client_name, no_start_server=True)
         self.sr = self.client.samplerate
         self.out_port = self.client.outports.register("click")
+        # A second output for the monitoring-path check: it stands in for
+        # SooperLooper's loop 0 output, feeding the same destinations.
+        self.probe_targets = list(probe_targets)
+        self.probe_port = (self.client.outports.register("probe")
+                           if self.probe_targets else None)
+        self.probe_signal = None
         self.in_ports = [self.client.inports.register("in_%d" % i)
                          for i in range(len(in_sources))]
         self.out_targets = out_targets
@@ -158,19 +164,28 @@ class ClickRecorder:
         out = self.out_port.get_array()
         if self.signal is None or self.done.is_set():
             out.fill(0.0)
+            if self.probe_port is not None:
+                self.probe_port.get_array().fill(0.0)
             return
         a = self.pos
         b = min(a + frames, len(self.signal))
         n = b - a
         out[:n] = self.signal[a:b]
         out[n:] = 0.0
+        if self.probe_port is not None:
+            pout = self.probe_port.get_array()
+            if self.probe_signal is not None:
+                pout[:n] = self.probe_signal[a:b]
+                pout[n:] = 0.0
+            else:
+                pout.fill(0.0)
         for rec, port in zip(self.recs, self.in_ports):
             rec[a:b] = port.get_array()[:n]
         self.pos = b
         if b >= len(self.signal):
             self.done.set()
 
-    def run(self, signal, actions=(), extra_connections=()):
+    def run(self, signal, actions=(), extra_connections=(), probe_signal=None):
         """Play `signal`, recording the inputs.  `actions` is a list of
         (seconds after the start, callable) run from this thread while
         playing -- used to press SooperLooper's record button.
@@ -178,10 +193,13 @@ class ClickRecorder:
         for the run, e.g. the input into a temporary SooperLooper loop."""
         self.recs = [np.zeros(len(signal), dtype=np.float32) for _ in self.in_ports]
         self.pos = 0
+        self.probe_signal = probe_signal
         self.done.clear()
         with self.client:
             for t in self.out_targets:
                 self.client.connect(self.out_port, t)
+            for t in self.probe_targets:
+                self.client.connect(self.probe_port, t)
             for p, s in zip(self.in_ports, self.in_sources):
                 self.client.connect(s, p)
             for src, dst in extra_connections:
@@ -357,6 +375,34 @@ def measure_round_trip(rec, starts, click, sr, max_latency_ms):
         if o is not None:
             lags.append(o - (s + ref))
     return np.array(lags)
+
+
+def second_returns(rec, starts, lags, click, sr, max_latency_ms,
+                   min_gap_ms=2.0, min_ratio=0.3):
+    """For each click with a measured first return (start + lag), look for a
+    second, separate return at least `min_gap_ms` later that is at least
+    `min_ratio` as strong -- the same sound arriving by a second route.
+    Returns the second lags found (samples)."""
+    ref = _click_ref(click, sr)
+    env = _envelope(rec, sr)
+    gap = int(min_gap_ms / 1000.0 * sr)
+    maxlag = int(max_latency_ms / 1000.0 * sr)
+    found = []
+    for s, lag in zip(starts, lags):
+        o1 = s + ref + lag
+        lo1 = int(o1)
+        first_pk = env[lo1:lo1 + len(click) + gap].max() if lo1 < len(env) else 0.0
+        lo = lo1 + len(click) + gap
+        hi = int(s) + maxlag + len(click)
+        if hi <= lo or first_pk <= 0:
+            continue
+        seg = env[lo:hi]
+        if seg.max() < min_ratio * first_pk:
+            continue
+        o2 = onset(env, lo, hi)
+        if o2 is not None:
+            found.append(o2 - (s + ref))
+    return np.array(found)
 
 
 def measure_loop_offset(rec, starts, click, sr, period):
@@ -650,6 +696,145 @@ def split_total(total, base_in, base_out):
     return base_in + r // 2, base_out + (r - r // 2)
 
 
+# SooperLooper states in which loop 0 makes no sound (plugin.cc STATE_*):
+# off, muted, paused, off-muted.
+SILENT_STATES = (0.0, 10.0, 14.0, 20.0)
+
+
+def loop0_destinations(sl_client, include_common):
+    """The ports SooperLooper's loop 0 output feeds (and its main outputs,
+    when loop 0 uses them): where its sound goes on its way to be heard."""
+    c = jack.Client("sllatency_dest", no_start_server=True)
+    try:
+        pats = ["^%s:loop0_out_" % re.escape(sl_client)]
+        if include_common:
+            pats.append("^%s:common_out_" % re.escape(sl_client))
+        dests = []
+        for pat in pats:
+            for port in c.get_ports(pat, is_audio=True, is_output=True):
+                for d in c.get_all_connections(port):
+                    if d.name not in dests:
+                        dests.append(d.name)
+        return dests
+    finally:
+        c.close()
+
+
+def sl_paths(sl_ports):
+    """JACK's latency along the path SooperLooper's audio actually takes: an
+    unconnected port reports 0, so take the larger of the loop's own and the
+    common port."""
+    def path(a, b):
+        vals = [v for v in (sl_ports.get(a), sl_ports.get(b)) if v is not None]
+        return max(vals) if vals else None
+    return path("loop0_in_1", "common_in_1"), path("loop0_out_1", "common_out_1")
+
+
+def quick_report(args, interactive, sl_ports, sr):
+    """--reported: suggest values from reported latencies only."""
+    ms = lambda f: f * 1000.0 / sr
+    heading("Reported latencies (nothing measured)")
+    sl = SooperLooper(args.sl_host, args.sl_port)
+    if sl.ping() is None:
+        say("   SooperLooper did not answer on port %d." % args.sl_port)
+        return 1
+    sl_run = SLRun(sl, args.sl_client, args.bpm)
+    l0 = sl_run.loop0
+    if not l0:
+        say("   SooperLooper has no loops, so there is nothing to set.")
+        return 1
+    jack_in, jack_out = sl_paths(sl_ports)
+    if not jack_in or not jack_out:
+        explain("""
+            SooperLooper's loop 0 input or output is not connected to anything
+            JACK can follow to the hardware, so there are no reported
+            latencies to use.
+        """)
+        return 1
+    sl_run.describe()
+    print()
+    explain("""
+        JACK reports %d samples (%.2f ms) from the audio input to
+        SooperLooper's input, and %d (%.2f ms) from SooperLooper's output to
+        the speakers, including any delay a DAW reports for processing after
+        SooperLooper.  Nothing was measured: these are only as accurate as
+        QJackctl's latency settings and the DAW's reports.  Run without
+        --reported, with the headphones on the mic, to measure instead.
+    """ % (jack_in, ms(jack_in), jack_out, ms(jack_out)))
+    il, ol = int(l0["input_latency"]), int(l0["output_latency"])
+    print()
+    row = "   %-32s %7s %7s %7s"
+    say(row % ("SooperLooper latency (samples)", "input", "output", "total"))
+    say(row % ("current (%s)" % ("autoset" if l0.get("autoset_latency") else "manual"),
+               il, ol, il + ol))
+    say(row % ("suggested (reported)", jack_in, jack_out, jack_in + jack_out))
+    within = abs(ms((jack_in + jack_out) - (il + ol))) <= args.tolerance
+    if within:
+        print()
+        say("   Within %.1f ms of the current values." % args.tolerance)
+    return offer_apply_and_save(sl, args, interactive, il, ol, jack_in, jack_out,
+                                within, what="suggested")
+
+
+def offer_apply_and_save(sl, args, interactive, il, ol, new_in, new_out, within,
+                         what="measured best"):
+    """Ask (or follow --apply/--save) to apply new values to all loops and
+    save them in the session file."""
+    if (new_in, new_out) == (il, ol):
+        return 0
+    if interactive:
+        print()
+        apply_it = ask("Apply the %s values to SooperLooper now (all "
+                       "loops, autoset off)?" % what, default=not within)
+    else:
+        apply_it = args.apply
+    if not apply_it:
+        return 0
+    sl.set("autoset_latency", 0.0, loop=-1)
+    sl.set("input_latency", new_in, loop=-1)
+    sl.set("output_latency", new_out, loop=-1)
+    time.sleep(0.3)
+    got = (sl.get("input_latency", loop=0), sl.get("output_latency", loop=0))
+    if got != (float(new_in), float(new_out)):
+        say("   SooperLooper reports %s after applying -- not what was set." % (got,))
+        return 1
+    print()
+    say("   Applied: input_latency %d, output_latency %d on all loops." % (new_in, new_out))
+
+    print()
+    explain("""
+        These last until SooperLooper restarts.  To keep them, the tool can
+        change only the latency values in the session file SooperLooper loads
+        at startup (a backup copy is kept); the rest of the file stays exactly
+        as it is.
+    """)
+    path = args.session_file
+    if interactive:
+        if not ask("Save them in the session file?"):
+            return 0
+        if not path:
+            known = remembered_session_file()
+            ans = input("   Session file%s: " % (" [%s]" % known if known else "")).strip()
+            path = os.path.expanduser(ans) if ans else known
+        save_it = bool(path)
+    else:
+        path = path or remembered_session_file()
+        save_it = args.save and bool(path)
+        if args.save and not path:
+            say("   --save needs --session-file (or one remembered from an "
+                "earlier run).")
+    if save_it:
+        if not os.path.isfile(path):
+            say("   %s does not exist; nothing saved." % path)
+            return 1
+        remember_session_file(path)
+        backup, n = save_latency_to_session(path, new_in, new_out)
+        say("   Saved in %s (%d loop%s); the old file is %s."
+            % (path, n, "" if n == 1 else "s", backup))
+    return 0
+
+
+
 def main():
     ap = argparse.ArgumentParser(
         prog="sllatency",
@@ -661,14 +846,21 @@ def main():
   against the mic SooperLooper records from -- or connect a cable from an
   output to that input -- and run sllatency.  It asks which outputs your
   headphones hear, plays a click for about 15 s, records it with a
-  temporary SooperLooper loop (removed afterwards, settings restored), then
+  temporary SooperLooper loop (removed afterwards, settings restored), and
+  then plays it for a few beats into wherever loop 0's output goes, to
+  measure the path you hear SooperLooper through (DAW buses, plugins).  It
   reports whether JACK's and SooperLooper's latency settings are right and
   offers to apply and save new SooperLooper values.  Best run right after
-  starting SooperLooper; don't touch the pedals during the run.
+  starting SooperLooper, with loop 0 silent; don't touch the pedals or
+  record in a DAW during the run.
+
+  For a quick starting point with no mic and no clicks, --reported suggests
+  values from the latencies JACK (and a DAW) report instead.
 
 examples:
   sllatency                                   ask as it goes
   sllatency --session-file ~/sl/my.slsess     also offer to save there
+  sllatency --reported                        quick values, nothing measured
   sllatency --no-sl --in system:capture_2     round trip only
   sllatency --no-sl --out "ardour:BUS/audio_in 1" --in "ardour:BUS/audio_out 1"
                                               delay through a DAW bus (no mic)
@@ -699,6 +891,13 @@ examples:
                          "save new values in.  Remembered for later runs.")
     # Tests stand in for the audio interface with an ordinary JACK client.
     ap.add_argument("--as-hardware", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--reported", action="store_true",
+                    help="no clicks and no mic: suggest SooperLooper values from "
+                         "the latencies JACK (and a DAW) report -- a quick "
+                         "starting point, not a measurement")
+    ap.add_argument("--no-monitor-check", action="store_true",
+                    help="skip measuring the path SooperLooper's output is "
+                         "heard through; use the latency JACK reports for it")
     ap.add_argument("--no-sl", action="store_true",
                     help="measure the round trip only; leave SooperLooper alone")
     ap.add_argument("--yes", action="store_true",
@@ -716,6 +915,19 @@ examples:
     probe = jack.Client("sllatency_probe", no_start_server=True)
     sr = probe.samplerate
     blocksize = probe.blocksize
+    # SooperLooper's port latencies: loop 0's own ports and the common ones.
+    sl_ports = {}
+    for name, playback in (("loop0_in_1", False), ("loop0_out_1", True),
+                           ("common_in_1", False), ("common_out_1", True)):
+        try:
+            r = port_latency(probe.get_port_by_name(
+                "%s:%s" % (args.sl_client, name)), playback=playback)
+        except jack.JackError:
+            r = None
+        sl_ports[name] = r[1] if r else None
+    if args.reported:
+        probe.close()
+        return quick_report(args, interactive, sl_ports, sr)
     outs = args.out or choose_outputs(probe, interactive)
     inp = args.inp or default_input(probe, args.sl_client)
     if not outs or not inp:
@@ -730,16 +942,6 @@ examples:
         hardware = False
     lat_out = port_latency(probe.get_port_by_name(outs[0]), playback=True)
     lat_in = port_latency(probe.get_port_by_name(inp), playback=False)
-    # SooperLooper's port latencies: loop 0's own ports and the common ones.
-    sl_ports = {}
-    for name, playback in (("loop0_in_1", False), ("loop0_out_1", True),
-                           ("common_in_1", False), ("common_out_1", True)):
-        try:
-            r = port_latency(probe.get_port_by_name(
-                "%s:%s" % (args.sl_client, name)), playback=playback)
-        except jack.JackError:
-            r = None
-        sl_ports[name] = r[1] if r else None
     probe.close()
     js = jack_settings()
 
@@ -753,6 +955,23 @@ examples:
                 "trip only." % args.sl_port)
         else:
             sl_run = SLRun(sl, args.sl_client, args.bpm)
+
+    # The monitoring-path check: play the click into wherever loop 0's
+    # output goes, and time its return at the mic, to measure the delay
+    # after SooperLooper as actually heard.
+    probe_targets, monitor_note = [], None
+    if sl_run and sl_run.loops and not args.no_monitor_check:
+        state = sl_run.sl.get("state", loop=0)
+        if state is not None and state not in SILENT_STATES:
+            monitor_note = ("Loop 0 is making sound, so the path SooperLooper is "
+                            "heard through is not measured; mute or clear it and "
+                            "run again to include that.")
+        else:
+            probe_targets = loop0_destinations(
+                args.sl_client, bool(sl_run.loop0_common.get("use_common_outs")))
+            if not probe_targets:
+                monitor_note = ("Loop 0's output is not connected to anything, so "
+                                "there is no path to measure after SooperLooper.")
 
     print()
     say("   Click out:   %s" % ", ".join(outs))
@@ -777,8 +996,15 @@ examples:
             SooperLooper will also record a short loop of the click in a
             temporary loop, which is removed afterwards along with the tempo
             and sync changes.  Best run right after starting SooperLooper,
-            and do not touch the pedals during the run (about 15 s).
-        """)
+            and do not touch the pedals during the run (about %d s).
+        """ % (22 if probe_targets else 15))
+        if probe_targets:
+            print()
+            explain("""
+                Then, for a few beats, the click is played into the ports loop
+                0's output feeds -- %s -- to measure the path you hear
+                SooperLooper through.  Don't record in your DAW during the run.
+            """ % ", ".join(probe_targets))
         print()
         sl_run.describe()
     if interactive:
@@ -791,6 +1017,19 @@ examples:
     seconds = 1.0 + rec_secs + beat + 7.0     # record, close, then play ~7 s
     click = make_click(sr, args.level)
     signal, starts = build_output(sr, args.bpm, seconds, click)
+    probe_signal, probe_starts = None, []
+    if probe_targets:
+        # After the direct clicks: a short pause, then clicks on the probe
+        # output only, so the mic hears one route at a time.
+        p0 = len(signal) + int(0.3 * sr)
+        probe_starts = [p0 + int(round(k * period)) for k in range(8)]
+        total = (probe_starts[-1] + len(click)
+                 + int((args.max_latency / 1000.0 + 0.5) * sr))
+        signal = np.concatenate([signal, np.zeros(total - len(signal),
+                                                  dtype=np.float32)])
+        probe_signal = np.zeros(total, dtype=np.float32)
+        for st in probe_starts:
+            probe_signal[st:st + len(click)] = click
 
     heading("Measuring")
     explain("""
@@ -809,8 +1048,9 @@ examples:
                        (1.0 + rec_secs + 0.05, lambda: sl_run.sl.hit("record", sl_run.index))]
             print()
             explain("SooperLooper records four beats of it, then plays the loop back.")
-        rec = ClickRecorder("sllatency", outs, in_sources)
-        recs = rec.run(signal, actions=actions, extra_connections=extra)
+        rec = ClickRecorder("sllatency", outs, in_sources, probe_targets)
+        recs = rec.run(signal, actions=actions, extra_connections=extra,
+                       probe_signal=probe_signal)
         if sl_run:
             loop_len = sl_run.sl.get("loop_len", loop=sl_run.index)
     finally:
@@ -904,37 +1144,82 @@ examples:
         return 1
     e = float(np.median(offs))
     sp = float(np.percentile(offs, 75) - np.percentile(offs, 25))
-    # Latency added after SooperLooper (e.g. DAW plugins on its route):
-    # JACK's playback latency on SooperLooper's output minus the hardware
-    # output's.  Only meaningful when SooperLooper's output actually reaches
-    # the hardware, i.e. when it is not less than the hardware's own.
-    downstream = 0
-    unrouted = False
+    # Latency added after SooperLooper (e.g. DAW plugins on its route), as
+    # JACK reports it: the playback latency on SooperLooper's output minus
+    # the hardware output's.  Only meaningful when SooperLooper's output
+    # actually reaches the hardware through JACK.
+    reported_down = None
     outs_sl = [v for v in (sl_ports.get("loop0_out_1"), sl_ports.get("common_out_1"))
                if v is not None]
     sl_out = max(outs_sl) if outs_sl else None
-    if sl_out is not None and lat_out:
-        if sl_out >= lat_out[1]:
-            downstream = sl_out - lat_out[1]
-        else:
-            unrouted = True
-    heard = e + downstream
+    if sl_out is not None and lat_out and sl_out >= lat_out[1]:
+        reported_down = sl_out - lat_out[1]
+    # The same, measured: the click played into loop 0's destinations comes
+    # back at the mic later than the direct click by exactly that delay.
+    measured_down = None
+    second = None
+    if probe_targets:
+        found = []
+        for st in probe_starts:
+            lg = measure_round_trip(recs[0], [st], click, sr, args.max_latency)
+            if len(lg):
+                found.append((st, float(lg[0])))
+        if len(found) >= len(probe_starts) // 2:
+            measured_down = float(np.median([lg for _, lg in found])) - rt
+            sec = second_returns(recs[0], [st for st, _ in found],
+                                 [lg for _, lg in found], click, sr, args.max_latency)
+            if (len(sec) >= len(found) // 2
+                    and np.percentile(sec, 75) - np.percentile(sec, 25) < 0.001 * sr):
+                second = float(np.median(sec)) - rt
     say("   At SooperLooper's output the loop is %+.1f samples (%+.2f ms) from the "
         "live click (%d clicks, spread %.1f)." % (e, ms(e), len(offs), sp))
-    if downstream:
-        print()
+    print()
+    if measured_down is not None:
+        downstream = measured_down
+        rep_txt = ("" if reported_down is None else
+                   "  JACK reports %d samples for it%s." % (
+                       reported_down,
+                       "" if abs(reported_down - measured_down) < 2.0 else
+                       " -- %.0f samples %s" % (abs(reported_down - measured_down),
+                                               "short" if reported_down < measured_down
+                                               else "over")))
         explain("""
-            SooperLooper's output goes through more processing (e.g. DAW
-            plugins) before the speakers: JACK reports %d samples more latency
-            there than on %s -- %.2f ms added after SooperLooper.
-        """ % (downstream, outs[0], ms(downstream)))
-    if unrouted:
-        print()
-        explain("""
-            SooperLooper's output does not seem to reach the speakers through
-            JACK (its reported playback latency is below the hardware's), so
-            any processing after it cannot be included.
-        """)
+            After SooperLooper, measured through the path you hear it by: %.1f
+            samples (%.2f ms).%s
+        """ % (measured_down, ms(measured_down), rep_txt))
+        if second is not None:
+            print()
+            explain("""
+                A second copy of the click came back %.1f samples (%.2f ms)
+                after SooperLooper: its output is heard by two routes at
+                different delays, which smears or doubles the loop.  Check
+                that only one route reaches the headphones.
+            """ % (second, ms(second)))
+    else:
+        downstream = reported_down or 0
+        if probe_targets:
+            explain("""
+                Nothing came back from the path SooperLooper's output feeds: it
+                is not heard at this mic -- its monitoring is disconnected,
+                muted, turned down, or goes to other speakers.  Using the
+                latency JACK reports for it instead (%d samples).
+            """ % downstream)
+        elif monitor_note:
+            explain(monitor_note + "  Using the latency JACK reports for it "
+                    "instead (%d samples)." % downstream)
+        elif reported_down:
+            explain("""
+                SooperLooper's output goes through more processing (e.g. DAW
+                plugins) before the speakers: JACK reports %d samples more
+                latency there than on %s -- %.2f ms added after SooperLooper.
+            """ % (downstream, outs[0], ms(downstream)))
+        elif sl_out is not None and lat_out and sl_out < lat_out[1]:
+            explain("""
+                SooperLooper's output does not seem to reach the speakers through
+                JACK (its reported playback latency is below the hardware's), so
+                any processing after it cannot be included.
+            """)
+    heard = e + downstream
     print()
     say("   As heard, loops play %+.1f samples (%+.2f ms) %s."
         % (heard, ms(heard), "late" if heard > 0 else "early"))
@@ -1015,60 +1300,8 @@ examples:
             for buffer size %d only; measure again after changing it.
         """ % blocksize)
 
-    if (new_in, new_out) == (il, ol):
-        return 0
-    if interactive:
-        print()
-        apply_it = ask("Apply the measured best values to SooperLooper now (all "
-                       "loops, autoset off)?", default=not within)
-    else:
-        apply_it = args.apply
-    if not apply_it:
-        return 0
-    sl = sl_run.sl
-    sl.set("autoset_latency", 0.0, loop=-1)
-    sl.set("input_latency", new_in, loop=-1)
-    sl.set("output_latency", new_out, loop=-1)
-    time.sleep(0.3)
-    got = (sl.get("input_latency", loop=0), sl.get("output_latency", loop=0))
-    if got != (float(new_in), float(new_out)):
-        say("   SooperLooper reports %s after applying -- not what was set." % (got,))
-        return 1
-    print()
-    say("   Applied: input_latency %d, output_latency %d on all loops." % (new_in, new_out))
-
-    print()
-    explain("""
-        These last until SooperLooper restarts.  To keep them, the tool can
-        change only the latency values in the session file SooperLooper loads
-        at startup (a backup copy is kept); the rest of the file stays exactly
-        as it is.
-    """)
-    path = args.session_file
-    if interactive:
-        if not ask("Save them in the session file?"):
-            return 0
-        if not path:
-            known = remembered_session_file()
-            ans = input("   Session file%s: " % (" [%s]" % known if known else "")).strip()
-            path = os.path.expanduser(ans) if ans else known
-        save_it = bool(path)
-    else:
-        path = path or remembered_session_file()
-        save_it = args.save and bool(path)
-        if args.save and not path:
-            say("   --save needs --session-file (or one remembered from an "
-                "earlier run).")
-    if save_it:
-        if not os.path.isfile(path):
-            say("   %s does not exist; nothing saved." % path)
-            return 1
-        remember_session_file(path)
-        backup, n = save_latency_to_session(path, new_in, new_out)
-        say("   Saved in %s (%d loop%s); the old file is %s."
-            % (path, n, "" if n == 1 else "s", backup))
-    return 0
-
+    return offer_apply_and_save(sl_run.sl, args, interactive, il, ol,
+                                new_in, new_out, within)
 
 if __name__ == "__main__":
     sys.exit(main())

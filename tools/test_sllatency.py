@@ -40,8 +40,8 @@ SR = 48000
 class FakeHardware:
     """Delay (samples), optional one-pole low-pass, optional noise."""
 
-    def __init__(self, delay, lowpass_hz=None, noise=0.0):
-        self.c = jack.Client("fakehw", no_start_server=True)
+    def __init__(self, delay, lowpass_hz=None, noise=0.0, name="fakehw"):
+        self.c = jack.Client(name, no_start_server=True)
         self.i = self.c.inports.register("in")
         self.o = self.c.outports.register("out")
         self.buf = np.zeros(delay + 8192, dtype=np.float32)
@@ -167,6 +167,8 @@ def sl_tests(engine, session):
             if not ok:
                 print(report)
         fails += autoset_row_tests(sl, port, client)
+        fails += monitor_check_tests(sl, port, client)
+        fails += quick_mode_test(sl, port, client)
         # A rig using SooperLooper's main (common) ports: the mic feeds the
         # main input and the main output goes to the speakers.  The
         # temporary loop must not play out through them (the mic would hear
@@ -225,6 +227,112 @@ def chain_test(delay=32):
     if not ok:
         print(out)
     return 0 if ok else 1
+
+
+def _flat(text):
+    return " ".join(text.split())
+
+
+def monitor_check_tests(sl, port, client):
+    """The monitoring-path check.  A fake DAW bus with a known delay sits
+    between loop 0's output and the fake hardware, as Ardour's monitor bus
+    does on the rig; the tool must measure that delay through the mic path,
+    say when nothing comes back, and notice a second route."""
+    fails = 0
+    out1 = "%s:loop0_out_1" % client
+    buses = []
+    wired = []
+    c = jack.Client("monitor_check_test", no_start_server=True)
+    c.activate()
+    def bus(name, delay):
+        b = FakeHardware(delay, name=name)
+        b.c.activate()
+        buses.append(b)
+        c.connect(out1, "%s:in" % name)
+        wired.append((out1, "%s:in" % name))
+        return b
+    try:
+        # Heard through one bus: must measure its 32-sample delay.
+        bus("fakebus", 32)
+        _, _, report = run_tool(1230, port, client, wire=[("fakebus:out", "fakehw:in")])
+        flat = _flat(report)
+        got = None
+        if "path you hear it by:" in flat:
+            got = float(flat.split("path you hear it by:")[1].split()[0])
+        ok = got is not None and abs(got - 32) <= 1.0 and "second copy" not in flat
+        fails += not ok
+        print("%s monitoring path measured through a 32-sample bus: %s" %
+              ("PASS" if ok else "FAIL", got))
+        if not ok:
+            print(report)
+        # Not heard: the bus goes nowhere.
+        _, _, report = run_tool(1230, port, client)
+        ok = "Nothing came back from the path" in _flat(report)
+        fails += not ok
+        print("%s monitoring path not heard is reported" % ("PASS" if ok else "FAIL"))
+        if not ok:
+            print(report)
+        # Two routes: a second bus at 300 samples also reaches the hardware.
+        bus("fakebus2", 300)
+        _, _, report = run_tool(1230, port, client, wire=[("fakebus:out", "fakehw:in"),
+                                                          ("fakebus2:out", "fakehw:in")])
+        flat = _flat(report)
+        got2 = None
+        if "second copy of the click came back" in flat:
+            got2 = float(flat.split("second copy of the click came back")[1].split()[0])
+        ok = got2 is not None and abs(got2 - 300) <= 2.0
+        fails += not ok
+        print("%s second route reported: %s samples (expected 300)" %
+              ("PASS" if ok else "FAIL", got2))
+        if not ok:
+            print(report)
+    finally:
+        for src, dst in wired:
+            try:
+                c.disconnect(src, dst)
+            except jack.JackError:
+                pass
+        for b in buses:
+            b.c.deactivate()
+            b.c.close()
+        c.deactivate()
+        c.close()
+    return fails
+
+
+def quick_mode_test(sl, port, client):
+    """--reported: no clicks; suggests JACK's latencies for the path loop 0
+    is wired through (here the dummy server's own hardware ports)."""
+    wires = (("system:capture_1", "%s:loop0_in_1" % client),
+             ("%s:loop0_out_1" % client, "system:playback_1"))
+    before = {k: sl.get(k, loop=0) for k in ("use_common_ins", "use_common_outs")}
+    c = jack.Client("quick_mode_test", no_start_server=True)
+    c.activate()
+    try:
+        for src, dst in wires:
+            c.connect(src, dst)
+        cap = sllatency.port_latency(c.get_port_by_name("system:capture_1"), False)[1]
+        pb = sllatency.port_latency(c.get_port_by_name("system:playback_1"), True)[1]
+        _, _, report = run_tool(1230, port, client, extra=["--reported"])
+        row = [l for l in report.splitlines() if "suggested (reported)" in l]
+        got = tuple(int(v) for v in row[0].split("suggested (reported)")[1].split()[:2]) \
+            if row else None
+        ok = got == (cap, pb) and "Round trip:" not in report
+        print("%s quick mode suggests JACK's figures: %s (expected %s), no clicks played"
+              % ("PASS" if ok else "FAIL", got, (cap, pb)))
+        if not ok:
+            print(report)
+        return 0 if ok else 1
+    finally:
+        for src, dst in wires:
+            try:
+                c.disconnect(src, dst)
+            except jack.JackError:
+                pass
+        c.deactivate()
+        c.close()
+        for k, v in before.items():
+            sl.set(k, v, loop=0)
 
 
 def autoset_row_tests(sl, port, client):
