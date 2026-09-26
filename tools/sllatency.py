@@ -1097,9 +1097,14 @@ examples:
             print()
             explain("""
                 Then, for a few beats, the click is played into the ports loop
-                1's output feeds -- %s -- to measure the path you hear
-                SooperLooper through.  Don't record in your DAW during the run.
-            """ % ", ".join(probe_targets))
+                1's output feeds, to measure the path you hear SooperLooper
+                through:
+            """)
+            print()
+            for t in probe_targets:
+                say("       %s" % t)
+            print()
+            explain("Don't record in your DAW during the run.")
         print()
         sl_run.describe()
     if interactive:
