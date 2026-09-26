@@ -447,6 +447,41 @@ def default_input(client, sl_client):
     return caps[0] if caps else None
 
 
+def input_candidates(client, sl_client, any_port=False):
+    """Every capture port feeding SooperLooper's loop 0 (else its main
+    inputs), in port order: a stereo loop is usually fed from two, and
+    which one the headphones are nearest is not always known."""
+    for base in ("loop0_in_", "common_in_"):
+        found = []
+        for port in client.get_ports("%s:%s" % (sl_client, base), is_audio=True):
+            try:
+                conns = client.get_all_connections(port)
+            except jack.JackError:
+                continue
+            for c in conns:
+                if (c.is_physical or any_port) and c.name not in found:
+                    found.append(c.name)
+        if found:
+            return found
+    return []
+
+
+def strongest_input(outs, candidates, sr, bpm, level, max_latency_ms):
+    """Play a few clicks and record every candidate input; return the one
+    with the most clicks back, then the loudest, and each one's
+    (clicks back, peak level)."""
+    click = make_click(sr, level)
+    signal, starts = build_output(sr, bpm, 2.5, click)
+    rec = ClickRecorder("sllatency", outs, candidates)
+    recs = rec.run(signal)
+    heard = {}
+    for port, r in zip(candidates, recs):
+        lags = measure_round_trip(r, starts, click, sr, max_latency_ms)
+        heard[port] = (len(lags), float(np.abs(r).max()) if len(r) else 0.0)
+    best = max(candidates, key=lambda p: heard[p])
+    return best, heard, len(starts)
+
+
 class SLRun:
     """Reads SooperLooper's settings, sets up a temporary loop for the
     measurement, and restores everything afterwards."""
@@ -870,8 +905,10 @@ examples:
                          "ask, suggesting the outputs a DAW's master feeds.")
     ap.add_argument("--in", dest="inp", metavar="PORT",
                     help="JACK port the click comes back on.  Default: the "
-                         "capture port feeding SooperLooper's loop 0, else the "
-                         "first physical capture port.")
+                         "capture port feeding SooperLooper's loop 0 -- if "
+                         "several do (a stereo loop), whichever hears a few "
+                         "test clicks best -- else the first physical capture "
+                         "port.")
     ap.add_argument("--bpm", type=float, default=120.0, metavar="N",
                     help="click tempo (default 120)")
     ap.add_argument("--level", type=float, default=0.3, metavar="X",
@@ -929,7 +966,10 @@ examples:
         probe.close()
         return quick_report(args, interactive, sl_ports, sr)
     outs = args.out or choose_outputs(probe, interactive)
-    inp = args.inp or default_input(probe, args.sl_client)
+    candidates = ([] if args.inp else
+                  input_candidates(probe, args.sl_client, args.as_hardware))
+    inp = args.inp or (candidates[0] if candidates
+                       else default_input(probe, args.sl_client))
     if not outs or not inp:
         sys.exit("sllatency: could not find ports; give --out and --in")
     # Hardware ports mean a mic or cable loop through the audio interface.
@@ -941,7 +981,9 @@ examples:
     except jack.JackError:
         hardware = False
     lat_out = port_latency(probe.get_port_by_name(outs[0]), playback=True)
-    lat_in = port_latency(probe.get_port_by_name(inp), playback=False)
+    lat_ins = {p: port_latency(probe.get_port_by_name(p), playback=False)
+               for p in (candidates or [inp])}
+    lat_in = lat_ins[inp]
     probe.close()
     js = jack_settings()
 
@@ -975,7 +1017,11 @@ examples:
 
     print()
     say("   Click out:   %s" % ", ".join(outs))
-    say("   Returns on:  %s" % inp)
+    if len(candidates) > 1:
+        say("   Returns on:  %s -- whichever hears the click best, found with a "
+            "few clicks first" % " or ".join(candidates))
+    else:
+        say("   Returns on:  %s" % inp)
     print()
     if hardware:
         explain("""
@@ -1010,6 +1056,16 @@ examples:
     if interactive:
         print()
         input("   Press Enter when ready... ")
+
+    if len(candidates) > 1:
+        heading("Choosing the input")
+        inp, heard, n = strongest_input(outs, candidates, sr, args.bpm,
+                                        args.level, args.max_latency)
+        for p in candidates:
+            say("   %-24s %d of %d clicks back, peak %.3f" % (p, heard[p][0], n,
+                                                              heard[p][1]))
+        say("   Using %s." % inp)
+        lat_in = lat_ins[inp]
 
     period = 60.0 * sr / args.bpm
     beat = 60.0 / args.bpm

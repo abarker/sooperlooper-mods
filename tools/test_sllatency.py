@@ -40,7 +40,7 @@ SR = 48000
 class FakeHardware:
     """Delay (samples), optional one-pole low-pass, optional noise."""
 
-    def __init__(self, delay, lowpass_hz=None, noise=0.0, name="fakehw"):
+    def __init__(self, delay, lowpass_hz=None, noise=0.0, name="fakehw", gain=1.0):
         self.c = jack.Client(name, no_start_server=True)
         self.i = self.c.inports.register("in")
         self.o = self.c.outports.register("out")
@@ -50,6 +50,7 @@ class FakeHardware:
         self.a = None if not lowpass_hz else np.exp(-2 * np.pi * lowpass_hz / SR)
         self.y = 0.0
         self.noise = noise
+        self.gain = gain
         self.rng = np.random.default_rng(1)
         self.c.set_process_callback(self.process)
 
@@ -67,7 +68,7 @@ class FakeHardware:
         idx = (self.w + np.arange(frames)) % n
         self.buf[idx] = x
         ridx = (self.w - self.delay + np.arange(frames)) % n
-        out = self.buf[ridx].copy()
+        out = self.buf[ridx] * self.gain
         if self.noise:
             out += self.noise * self.rng.standard_normal(frames).astype(np.float32)
         self.o.get_array()[:] = out
@@ -185,6 +186,7 @@ def sl_tests(engine, session):
                                                 off, exp_off))
         if not ok:
             print(report)
+        fails += stereo_input_test(port, client, il, ol)
         fails += apply_save_tests(sl, port, client, tmp, session, il, ol)
         n = sl.ping()
         after = {g: sl.get(g) for g in ("sync_source", "tempo", "eighth_per_cycle")}
@@ -231,6 +233,42 @@ def chain_test(delay=32):
 
 def _flat(text):
     return " ".join(text.split())
+
+
+def stereo_input_test(port, client, il, ol):
+    """A stereo loop fed from two mics, no --in: the tool must try both and
+    use the one that hears the click best.  The quiet mic has a different
+    delay, so the round trip shows which one was used."""
+    import tempfile
+    quiet = FakeHardware(900, name="fakemic_quiet", gain=0.1)
+    loud = FakeHardware(1230, name="fakemic_loud")
+    for h in (quiet, loud):
+        h.c.activate()
+    quiet.c.connect("fakemic_quiet:out", "%s:loop0_in_1" % client)
+    loud.c.connect("fakemic_loud:out", "%s:loop0_in_2" % client)
+    cmd = [sys.executable, os.path.join(HERE, "sllatency.py"),
+           "--out", "fakemic_quiet:in", "--out", "fakemic_loud:in",
+           "--sl-port", str(port), "--sl-client", client,
+           "--as-hardware", "--yes", "--no-monitor-check"]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=90,
+                             env=dict(os.environ, HOME=tempfile.mkdtemp(
+                                 prefix="sllat_home_"))).stdout
+    finally:
+        for h in (quiet, loud):
+            h.c.deactivate()
+            h.c.close()
+    rt = None
+    for line in out.splitlines():
+        if "Round trip:" in line:
+            rt = float(line.split("Round trip:")[1].split()[0])
+    ok = ("Using fakemic_loud:out." in out and rt is not None
+          and abs(rt - (1230 + PERIOD)) <= 0.5)
+    print("%s stereo loop, no --in: used the louder mic (round trip %s, "
+          "expected %d)" % ("PASS" if ok else "FAIL", rt, 1230 + PERIOD))
+    if not ok:
+        print(out)
+    return 0 if ok else 1
 
 
 def monitor_check_tests(sl, port, client):
