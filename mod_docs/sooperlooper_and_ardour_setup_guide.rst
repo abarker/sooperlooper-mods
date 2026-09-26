@@ -250,11 +250,18 @@ either locked to the beat or free-running.
 
 **A pedal-gesture arrangement (example)**
 
-This is the specific footswitch arrangement currently in use. It centers on
-three looping buttons -- **record/play**, **mute_trigger**, and **overdub** --
-with the remapper adding long-press gestures on top. The four-button switch's
-fourth button toggles the Hydrogen drums on and off, and on a long press
-returns to the drum-control bank (patterns, tempo, and so on).
+This is the specific footswitch arrangement currently in use. The two main
+looping buttons are:
+
+* **record/play** -- records, plays, and on a long press stops, leaving the
+  loop muted (see *Long press on record* below);
+* **mute_trigger** -- stops the loop, muted, and pressed again restarts it
+  from the top. It has no gestures on it, so it fires the instant it is
+  pressed.
+
+A third button handles **overdub**. The four-button switch's fourth button
+toggles the Hydrogen drums on and off, and on a long press returns to the
+drum-control bank (patterns, tempo, and so on).
 
 Gestures normally cost latency. To tell a plain press from a long press, the
 remapper has to wait for the release: a quick release means a plain press, so
