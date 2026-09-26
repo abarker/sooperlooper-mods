@@ -48,7 +48,7 @@
 // The error is bounded by one buffer and does not accumulate, so it is
 // not compensated here.
 //
-// Following the master's own position (layer 3, ROADMAP entry 15; used
+// Following the master's own position (ROADMAP entry 15; used
 // only when engine.hpp defines ALB_JACK_BBT_TRACKING): when the timebase
 // master publishes a live bar/beat/tick position -- a DAW with a tempo
 // map, Hydrogen in song mode -- follow_master() keeps the count on it.
@@ -80,7 +80,8 @@ class BeatTracker
 		  _cycle_rate (0.0), _nframes (0), _sr (0.0),
 		  _active (false), _relocated (false), _backwards (false),
 		  _m_have (false), _m_last (0.0), _m_changes (0), _m_quiet (0.0),
-		  _followed (false) {}
+		  _followed (false), _snapped (false), _live (false),
+		  _live_changed (false), _follow_err (0.0) {}
 
 	// Call exactly once per audio cycle.  framepos is the transport frame
 	// at the start of the cycle, bpm the tempo reported for this cycle
@@ -92,6 +93,8 @@ class BeatTracker
 		_relocated = false;
 		_backwards = false;
 		_followed = false;
+		_snapped = false;
+		_live_changed = false;
 
 		if (!rolling) {
 			return;           // frozen; a resume at _next_frame continues
@@ -126,14 +129,36 @@ class BeatTracker
 		_b0 = _seg_beats + (double) (uint32_t) (framepos - _seg_frame) * _rate;
 		_b1 = _seg_beats + (double) (uint32_t) (framepos + nframes - _seg_frame) * _rate;
 		// The rate boundaries() uses.  Equal to _rate unless
-		// follow_master() nudges this cycle, so without layer 3 the
-		// pulses are exactly as before.
+		// follow_master() nudges this cycle, so unless the master is
+		// being followed (ALB_JACK_BBT_TRACKING) the pulses are exactly
+		// as before.
 		_cycle_rate = _rate;
 		_nframes = nframes;
 		_sr = sr;
 		_next_frame = framepos + nframes;
 		_have_next = true;
 		_active = true;
+	}
+
+	// The master's position in beats, from JACK's BBT fields.  Uses
+	// bar_start_tick (ticks from the song start to this bar) when the
+	// master fills it in, which stays right when bars differ in length:
+	// in Hydrogen's song mode a bar is a song column, as long as its
+	// longest pattern.  Otherwise every bar is taken to be beats_per_bar
+	// long.  The half tick centres the estimate, since JACK's tick is a
+	// whole number rounded down.  Returns -1 if the fields are unusable.
+	static double bbt_beats (int32_t bar, int32_t beat, int32_t tick,
+	                         double bar_start_tick, double beats_per_bar,
+	                         double ticks_per_beat)
+	{
+		if (!(ticks_per_beat > 0.0) || !(beats_per_bar > 0.0) || bar < 1 || beat < 1) {
+			return -1.0;
+		}
+		const double in_bar = (beat - 1) + (tick + 0.5) / ticks_per_beat;
+		if (bar > 1 && bar_start_tick > 0.0) {
+			return bar_start_tick / ticks_per_beat + in_bar;
+		}
+		return (bar - 1) * beats_per_bar + in_bar;
 	}
 
 	// Call after update(), in a cycle where the master publishes a
@@ -144,6 +169,8 @@ class BeatTracker
 	void follow_master (double master_beats)
 	{
 		_followed = false;
+		_snapped = false;
+		_live_changed = false;
 		if (!_active) {
 			return;
 		}
@@ -155,18 +182,23 @@ class BeatTracker
 		}
 		_m_last = master_beats;
 		_m_have = true;
-		if (_m_changes < 2 || _m_quiet > 0.5 * _sr) {
+		const bool live = !(_m_changes < 2 || _m_quiet > 0.5 * _sr);
+		_live_changed = (live != _live);
+		_live = live;
+		if (!live) {
 			return;               // constants (pattern mode) or gone quiet
 		}
 		const double SNAP  = 0.25;   // beats: beyond this, jump
 		const double NUDGE = 0.05;   // fraction of a small error taken per cycle
 		const double err = master_beats - _b0;
+		_follow_err = err;
 		if (_relocated || std::fabs (err) > SNAP) {
 			// Jump to the master's position (a relocate into a tempo map, or
 			// a jump in the master's own position).
 			_seg_beats += err;
 			_b0 += err;
 			_b1 += err;
+			_snapped = true;
 		} else {
 			// Nudge: add a little of the error to the end of this cycle, so
 			// the count stays continuous and never runs backwards.
@@ -182,8 +214,16 @@ class BeatTracker
 		_followed = true;
 	}
 
-	// True if follow_master() adjusted the count this cycle.
+	// True if follow_master() adjusted the count this cycle; snapped() if
+	// it jumped rather than nudged.  follow_error() is the master's
+	// position minus the count before the adjustment, in beats.
 	bool followed () const { return _followed; }
+	bool snapped () const { return _snapped; }
+	double follow_error () const { return _follow_err; }
+	// Whether the master's position is live (see follow_master()), and
+	// whether that changed this cycle -- for logging.
+	bool live () const { return _live; }
+	bool live_changed () const { return _live_changed; }
 
 	// True if this cycle advanced the position (rolling, tempo known).
 	bool active () const { return _active; }
@@ -262,6 +302,10 @@ class BeatTracker
 	int      _m_changes;      // times it has changed (capped)
 	double   _m_quiet;        // frames since it last changed
 	bool     _followed;
+	bool     _snapped;
+	bool     _live;
+	bool     _live_changed;
+	double   _follow_err;
 };
 
 } // namespace SooperLooper

@@ -138,6 +138,8 @@ typedef struct _jack_port jack_port_t;
 // earlier tempo changes.  Small differences are nudged away over a few
 // cycles; a relocate or a difference over a quarter beat snaps.  A master
 // whose position does not advance (Hydrogen in pattern mode) is ignored.
+// With ALB_SYNC_PULSE_LOG, adds "event=follow" lines to the pulse log
+// when following starts or stops and at every jump.
 // Needs ALB_JACK_BEAT_TRACKING, and ALB_BBT_SYNC (audio_driver.hpp) for
 // the BBT fields.  ROADMAP entries 13 and 15.
 //#define ALB_JACK_BBT_TRACKING
@@ -161,8 +163,8 @@ namespace SooperLooper {
 // callback and copy through a RingBuffer.  See ALB_SYNC_PULSE_LOG above.
 struct SyncPulseLogEvent
 {
-	enum Kind { Pulse = 0, Relocate = 1, TempoChange = 2 };
-	uint8_t   kind;          // which of the three record types this is
+	enum Kind { Pulse = 0, Relocate = 1, TempoChange = 2, Follow = 3 };
+	uint8_t   kind;          // which of the record types this is
 
 	nframes_t framepos;      // Pulse: info.framepos + offset, the absolute
 	                          // transport frame at which this pulse fired.
@@ -183,6 +185,11 @@ struct SyncPulseLogEvent
 	                          // simply rolled on from the previous cycle
 	double    prev_bpm;       // TempoChange: SooperLooper's _tempo just
 	                          // before this JACK tempo was applied
+	// Follow (ALB_JACK_BBT_TRACKING): what happened, and the master's
+	// position minus SooperLooper's count in beats (not for FollowStop).
+	enum FollowWhat { FollowSnap = 0, FollowStart = 1, FollowStop = 2 };
+	uint8_t   follow_what;
+	double    follow_err;
 };
 //------ albEnd ----------------------------------
 #endif // ALB_SYNC_PULSE_LOG

@@ -71,6 +71,8 @@ def sessions(records):
         if r["kind"] == "tempo":
             cur["tempos"].append((r["frame"], r["to"]))
             continue
+        if r["kind"] != "pulse":
+            continue                # e.g. event=follow lines
         pulse = r["frame"] + r["diff"]
         if last_frame is not None and r["frame"] < last_frame:
             if cur["pulses"]:

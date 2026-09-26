@@ -2067,6 +2067,21 @@ Engine::mainloop()
 					         "event=tempo frame=%u from=%.3f to=%.3f\n",
 					         pev.framepos, pev.prev_bpm, pev.bpm);
 				}
+				else if (pev.kind == SyncPulseLogEvent::Follow) {
+					// err: the master's position minus SooperLooper's
+					// count, in beats, just before the jump (or when
+					// following started).
+					static const char * what[] = { "snap", "start", "stop" };
+					if (pev.follow_what == SyncPulseLogEvent::FollowStop) {
+						fprintf (_sync_pulse_log_file,
+						         "event=follow what=stop frame=%u bpm=%.3f\n",
+						         pev.framepos, pev.bpm);
+					} else {
+						fprintf (_sync_pulse_log_file,
+						         "event=follow what=%s frame=%u bpm=%.3f err=%.4f\n",
+						         what[pev.follow_what], pev.framepos, pev.bpm, pev.follow_err);
+					}
+				}
 				else {
 					fprintf (_sync_pulse_log_file,
 					         "frame=%u this=%u diff=%u bpm=%.3f tempoframes=%.3f "
@@ -3151,12 +3166,29 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 
 #ifdef ALB_JACK_BBT_TRACKING
 				// Keep the count on the master's own bar/beat/tick
-				// (engine.hpp).  The half tick centres the estimate, since
-				// JACK's tick is rounded down to a whole tick.
-				if (info.bbt_valid && info.ticks_per_beat > 0.0 && info.beats_per_bar > 0.0f) {
-					const double master_beats = (info.bar - 1) * (double) info.beats_per_bar
-						+ (info.beat - 1) + (info.tick + 0.5) / info.ticks_per_beat;
-					_beat_tracker.follow_master (master_beats);
+				// (engine.hpp).
+				if (info.bbt_valid) {
+					const double master_beats = BeatTracker::bbt_beats (
+						info.bar, info.beat, info.tick, info.bar_start_tick,
+						info.beats_per_bar, info.ticks_per_beat);
+					if (master_beats >= 0.0) {
+						_beat_tracker.follow_master (master_beats);
+					}
+#ifdef ALB_SYNC_PULSE_LOG
+					// Log when following starts or stops, and every jump;
+					// not the per-cycle nudges.
+					if (_beat_tracker.live_changed() || _beat_tracker.snapped()) {
+						SyncPulseLogEvent fev = SyncPulseLogEvent();
+						fev.kind        = SyncPulseLogEvent::Follow;
+						fev.framepos    = info.framepos;
+						fev.bpm         = info.bpm;
+						fev.follow_what = _beat_tracker.snapped() ? SyncPulseLogEvent::FollowSnap
+							: (_beat_tracker.live() ? SyncPulseLogEvent::FollowStart
+							                        : SyncPulseLogEvent::FollowStop);
+						fev.follow_err  = _beat_tracker.follow_error();
+						sync_log_push (fev);
+					}
+#endif
 				}
 #endif
 

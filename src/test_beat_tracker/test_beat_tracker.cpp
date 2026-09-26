@@ -211,7 +211,7 @@ static void test_step_change ()
 	}
 }
 
-// ---- follow_master() (layer 3, ALB_JACK_BBT_TRACKING) ----
+// ---- follow_master(): following the master's position (ALB_JACK_BBT_TRACKING) ----
 
 // What a master publishes for a true position of `beats`: whole ticks,
 // plus the half tick the engine adds to centre the estimate.
@@ -263,7 +263,7 @@ static void test_follow_snaps_on_relocate ()
 	pos = 1000000;
 	bt.update (pos, nf, bpm, true, SR);
 	bt.follow_master (published (pos * rate + off, tpb));
-	CHECK (bt.relocated () && bt.followed (), "relocate not followed");
+	CHECK (bt.relocated () && bt.followed () && bt.snapped (), "relocate not followed by a jump");
 	CHECK (std::fabs (bt.start_beats () - (pos * rate + off)) < 1.0 / tpb,
 	       "not on the master after the relocate: %.6f vs %.6f",
 	       bt.start_beats (), pos * rate + off);
@@ -318,14 +318,17 @@ static void test_follow_quiet_master ()
 		bt.follow_master (published (pos * rate, 1920.0));
 		pos += nf;
 	}
-	CHECK (bt.followed (), "a live master was not followed");
+	CHECK (bt.followed () && bt.live (), "a live master was not followed");
 	const double frozen = published (pos * rate, 1920.0);
+	int stops = 0;
 	for (int c = 0; c < 200; ++c) {
 		bt.update (pos, nf, 120.0, true, SR);
 		bt.follow_master (frozen);
+		if (bt.live_changed ()) ++stops;
 		pos += nf;
 	}
-	CHECK (!bt.followed (), "a frozen master was still followed");
+	CHECK (!bt.followed () && !bt.live (), "a frozen master was still followed");
+	CHECK (stops == 1, "%d live->not-live transitions, expected 1", stops);
 }
 
 // Nothing is followed while stopped.
@@ -340,6 +343,78 @@ static void test_follow_not_when_stopped ()
 		ever = ever || bt.followed ();
 	}
 	CHECK (!ever, "followed while stopped");
+}
+
+// bbt_beats(): bar_start_tick when the master fills it in, otherwise
+// bars of beats_per_bar.
+static void test_bbt_beats_formula ()
+{
+	const double tpb = 48.0;
+	// No bar_start_tick (0): bar 3, beat 2, tick 24 of 4/4 bars.
+	double b = BeatTracker::bbt_beats (3, 2, 24, 0.0, 4.0, tpb);
+	CHECK (std::fabs (b - (8.0 + 1.0 + 24.5 / tpb)) < 1e-12, "fallback formula gave %.6f", b);
+	// Hydrogen song mode, columns of 4, 4 and 2 beats: bar 4 starts at
+	// beat 10, and its own beats_per_bar (4) says nothing about the
+	// earlier bars.
+	b = BeatTracker::bbt_beats (4, 1, 0, 10.0 * tpb, 4.0, tpb);
+	CHECK (std::fabs (b - (10.0 + 0.5 / tpb)) < 1e-12, "bar_start_tick formula gave %.6f", b);
+	// Bar 1: bar_start_tick is 0 either way.
+	b = BeatTracker::bbt_beats (1, 3, 0, 0.0, 4.0, tpb);
+	CHECK (std::fabs (b - (2.0 + 0.5 / tpb)) < 1e-12, "bar 1 gave %.6f", b);
+	CHECK (BeatTracker::bbt_beats (1, 1, 0, 0.0, 4.0, 0.0) < 0.0, "tpb 0 accepted");
+	CHECK (BeatTracker::bbt_beats (0, 1, 0, 0.0, 4.0, tpb) < 0.0, "bar 0 accepted");
+	CHECK (BeatTracker::bbt_beats (1, 1, 0, 0.0, 0.0, tpb) < 0.0, "0 beats per bar accepted");
+}
+
+// Hydrogen in song mode with song columns of different lengths (4, 4, 2,
+// 3, 4 beats, repeated): bar = column, beats_per_bar = that column's
+// length, bar_start_tick = ticks before it.  Followed without a jump.
+struct H2Song {
+	std::vector<double> starts;   // beat at which each column starts
+	std::vector<double> lens;
+	H2Song () {
+		const double L[] = { 4, 4, 2, 3, 4 };
+		double at = 0.0;
+		for (int r = 0; r < 20; ++r)
+			for (int i = 0; i < 5; ++i) { starts.push_back (at); lens.push_back (L[i]); at += L[i]; }
+	}
+	// Published position for a true position of `beats`.
+	double publish (double beats, double tpb) const {
+		size_t c = 0;
+		while (c + 1 < starts.size () && starts[c + 1] <= beats) ++c;
+		const double t = std::floor ((beats - starts[c]) * tpb);   // ticks into the column
+		const int beat = (int) std::floor (t / tpb) + 1;
+		const int tick = (int) (t - (beat - 1) * tpb);
+		return BeatTracker::bbt_beats ((int) c + 1, beat, tick, starts[c] * tpb, lens[c], tpb);
+	}
+};
+
+static void test_follow_song_mode_mixed_bars ()
+{
+	const uint32_t nf = 256;
+	const double bpm = 120.0, rate = bpm / (60.0 * SR), tpb = 48.0;
+	const H2Song song;
+	BeatTracker bt;
+	uint32_t pos = 0;
+	std::vector<double> p;
+	int snaps = 0;
+	double worst = 0.0;
+	for (int c = 0; c < 6000; ++c) {                 // ~64 beats, 20+ columns
+		bt.update (pos, nf, bpm, true, SR);
+		bt.follow_master (song.publish (pos * rate, tpb));
+		if (bt.snapped ()) ++snaps;
+		if (bt.live ()) worst = std::max (worst, std::fabs (bt.start_beats () - pos * rate));
+		uint32_t o[8];
+		int n = bt.boundaries (1.0, nf, o, 8);
+		for (int i = 0; i < n; ++i) p.push_back ((double) pos + o[i]);
+		pos += nf;
+	}
+	CHECK (snaps == 0, "%d jump(s) following a song with mixed bar lengths", snaps);
+	CHECK (worst < 0.02, "count up to %.4f beats off the song", worst);
+	int bad = 0;
+	for (size_t k = 1; k < p.size (); ++k)
+		if (std::fabs ((p[k] - p[k - 1]) * rate - 1.0) > 0.02) ++bad;
+	CHECK (bad == 0, "%d uneven beat pulse gap(s)", bad);
 }
 
 static int replay ()
@@ -371,6 +446,8 @@ int main (int argc, char ** argv)
 	test_follow_nudges_without_double ();
 	test_follow_quiet_master ();
 	test_follow_not_when_stopped ();
+	test_bbt_beats_formula ();
+	test_follow_song_mode_mixed_bars ();
 	if (g_fail) { fprintf (stderr, "%d check(s) failed\n", g_fail); return 1; }
 	printf ("all beat_tracker tests passed\n");
 	return 0;
