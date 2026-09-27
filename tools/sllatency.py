@@ -767,6 +767,77 @@ def save_latency_to_session(path, il, ol):
     return backup, n_in
 
 
+def jack_report(js, cap, play, rt, tolerance_ms, sr):
+    """JACK's part of the result: its reported latencies (split into
+    buffering and QJackctl's extra latencies when those can be read), the
+    measured round trip, and what to set if they disagree."""
+    ms = lambda f: f * 1000.0 / sr
+    reported = cap + play
+    diff = rt - reported
+    have = "in_extra" in js and "out_extra" in js
+    if have:
+        ei, eo = js["in_extra"], js["out_extra"]
+        row = "   %-26s %8s %8s %9s"
+        say("   JACK's current settings%s:" % (
+            " (period %s x %s)" % (js["period"], js["nperiods"])
+            if "period" in js and "nperiods" in js else ""))
+        print()
+        say(row % ("latency (samples)", "buffers", "extra", "reported"))
+        say(row % ("capture (input):", cap - ei, ei, cap))
+        say(row % ("playback (output):", play - eo, eo, play))
+        say(row % ("total:", reported - ei - eo, ei + eo, reported))
+        say(row % ("measured round trip:", "", "", "%.1f" % rt))
+    else:
+        row = "   %-26s %9s"
+        say(row % ("JACK latency (samples)", "reported"))
+        say(row % ("capture (input):", cap))
+        say(row % ("playback (output):", play))
+        say(row % ("total:", reported))
+        say(row % ("measured round trip:", "%.1f" % rt))
+    print()
+    if abs(ms(diff)) <= tolerance_ms:
+        say("   JACK: off by %+.1f samples (%+.2f ms), within %.1f ms -- nothing "
+            "to change." % (diff, ms(diff), tolerance_ms))
+        return
+    total = int(round(diff))
+    say("   JACK: off by %+.1f samples (%+.2f ms): its latency settings are %s."
+        % (diff, ms(diff), "too low" if diff > 0 else "too high"))
+    print()
+    if have:
+        new_i, new_o = ei + total // 2, eo + total - total // 2
+        explain("""
+            Set JACK's extra input and output latency to the new values below
+            -- they are the values to enter, not amounts to add -- then
+            restart JACK.
+        """)
+        print()
+        row = "   %-26s %8s %8s"
+        say(row % ("", "current", "new"))
+        say(row % ("extra input latency:", ei, new_i))
+        say(row % ("extra output latency:", eo, new_o))
+        print()
+        say("   Where to set them depends on how JACK is started:")
+        print()
+        print("       QJackctl:        Setup, Advanced tab, input and output latency")
+        print("       jackdbus:        jack_control dps input-latency %d" % new_i)
+        print("                        jack_control dps output-latency %d" % new_o)
+        print("       jackd command:   -I %d -O %d  (ALSA backend options)" % (new_i, new_o))
+        print()
+        explain("""
+            The buffers part of JACK's split is fixed by the period settings.
+            A loopback measures only the total, so the correction is shared
+            evenly between the two extra latencies.
+        """)
+    else:
+        explain("""
+            Change JACK's extra input + output latency by %+d samples in total,
+            shared between the two, then restart JACK.  They are the ALSA
+            backend's -I and -O options (in QJackctl: Setup, Advanced tab).
+            Their current values could not be read, because JACK is not
+            running through jackdbus.
+        """ % total)
+
+
 def split_total(total, base_in, base_out):
     """Split a total latency like base_in/base_out (JACK's own split),
     sharing the difference evenly; the two parts always sum to total."""
@@ -1213,39 +1284,8 @@ examples:
         """ % (blocksize, through, ms(through)))
         return 0
     if lat_out and lat_in:
-        reported = lat_out[1] + lat_in[1]
-        diff = rt - reported
-        extras = ""
-        if "in_extra" in js and "out_extra" in js:
-            extras = ("  JACK's settings: period %s x %s, extra input latency %d, "
-                      "extra output latency %d." % (js.get("period", "?"),
-                      js.get("nperiods", "?"), js["in_extra"], js["out_extra"]))
         print()
-        explain("""
-            JACK reports %d samples of playback latency on %s and %d of
-            capture latency on %s: %d in total.%s
-        """ % (lat_out[1], outs[0], lat_in[1], inp, reported, extras))
-        print()
-        if abs(ms(diff)) <= args.tolerance:
-            say("   JACK: off by %+.1f samples (%+.2f ms), within %.1f ms -- nothing "
-                "to change." % (diff, ms(diff), args.tolerance))
-        else:
-            total = int(round(diff))
-            say("   JACK: off by %+.1f samples (%+.2f ms): its latency settings are "
-                "%s." % (diff, ms(diff), "too low" if diff > 0 else "too high"))
-            if "in_extra" in js and "out_extra" in js:
-                explain("""
-                    In QJackctl, change extra input latency %d -> %d and extra
-                    output latency %d -> %d, then restart JACK.  (A loopback
-                    measures only the sum, so the split cannot be measured; an
-                    even split is the usual choice.)
-                """ % (js["in_extra"], js["in_extra"] + total // 2,
-                       js["out_extra"], js["out_extra"] + total - total // 2))
-            else:
-                explain("""
-                    Change QJackctl's extra input + output latency by %+d samples
-                    in total, then restart JACK.
-                """ % total)
+        jack_report(js, lat_in[1], lat_out[1], rt, args.tolerance, sr)
     else:
         say("   Could not read JACK's reported latencies for these ports.")
 

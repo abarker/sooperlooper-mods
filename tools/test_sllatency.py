@@ -224,7 +224,7 @@ def chain_test(delay=32):
     flat = " ".join(out.split())
     if "program itself is" in flat:
         got = float(flat.split("program itself is")[1].split()[0])
-    ok = got is not None and abs(got - delay) <= 0.5 and "QJackctl, change" not in flat
+    ok = got is not None and abs(got - delay) <= 0.5 and "restart JACK" not in flat
     print("%s chain through a JACK program: %s samples (expected %d), no QJackctl advice"
           % ("PASS" if ok else "FAIL", got, delay))
     if not ok:
@@ -500,6 +500,36 @@ def apply_save_tests(sl, port, client, tmp, session, il, ol):
     return fails
 
 
+def jack_report_tests():
+    """JACK's result section, with jackdbus-style settings (the test server
+    is plain jackd, which never reports them): absolute new values, the
+    correction shared evenly, the buffers part kept."""
+    import io, contextlib
+    js = {"period": 256, "nperiods": 3, "in_extra": 343, "out_extra": 343}
+    fails = 0
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        sllatency.jack_report(js, 599, 855, 1454 + 101.0, 1.0, SR)
+    text = out.getvalue()
+    new = [l.split() for l in text.splitlines() if l.strip().startswith("extra ")]
+    got = [(int(r[-2]), int(r[-1])) for r in new]
+    buffers = [l.split() for l in text.splitlines() if l.strip().startswith(("capture", "playback"))]
+    ok = (got == [(343, 393), (343, 394)] and "not amounts" in text
+          and [int(b[2]) for b in buffers] == [256, 512])
+    fails += not ok
+    print("%s JACK advice as absolute values, correction split evenly: %s" %
+          ("PASS" if ok else "FAIL", got))
+    if not ok:
+        print(text)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        sllatency.jack_report(js, 599, 855, 1458.0, 1.0, SR)
+    ok = "nothing to change" in out.getvalue() and "restart JACK" not in out.getvalue()
+    fails += not ok
+    print("%s JACK within tolerance: nothing to change" % ("PASS" if ok else "FAIL"))
+    return fails
+
+
 def suggest_tests():
     """Output suggestion, from JACK's routing (no server needed)."""
     rig = {  # this rig's routing, 2026-09-24
@@ -553,7 +583,7 @@ def main():
     jackd = subprocess.Popen(["jackd", "-n", SERVER, "-d", "dummy", "-r", str(SR),
                               "-p", str(PERIOD)],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    fails = suggest_tests()
+    fails = suggest_tests() + jack_report_tests()
     try:
         time.sleep(2.0)
         cases = [
