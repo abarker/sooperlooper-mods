@@ -644,6 +644,10 @@ def choose_outputs(client, interactive, sl_dests=()):
     if sl_heard:
         say("   Physical outputs, and what feeds each (* = the ones SooperLooper's "
             "loop 1 is heard through):")
+    elif sl_dests:
+        say("   Physical outputs, and what feeds each (* = suggested: where "
+            "SooperLooper's loop 1 is heard could not be traced through JACK, so "
+            "these are a guess -- what a DAW's master feeds, else the busiest):")
     else:
         say("   Physical outputs, and what feeds each (* = suggested for the click):")
     print()
