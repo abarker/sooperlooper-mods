@@ -717,10 +717,22 @@ values to every loop in the running SooperLooper, and whether to save them
 in the session file SooperLooper loads at startup.  Saving changes only the
 ``input_latency`` and ``output_latency`` values in that file (and sets
 ``auto_latency`` to ``no`` so they are used); everything else in the file
-stays as it was.  It asks for the file the first time, or takes
-``--session-file``, and remembers it in ``~/.sooperlooper/sllatency.conf``.
+stays as it was.
+
+It offers a file and says where it came from: the one given with
+``--session-file``; else the one the running SooperLooper was started with
+(its ``-L`` option, as ``slgui`` starts it with the session named in its
+own ``-L``); else the one saved to last time, remembered in
+``~/.sooperlooper/sllatency.conf`` for an engine started without one.
+Press Enter to save there, or type another file.  A session loaded later
+from ``slgui``'s menu is not detected; type its path.
+
 A backup is made first, next to the file, named after it with the date and
-time added: ``my_session.slsess.bak-YYYYMMDD-HHMMSS``.
+time added: ``my_session.slsess.bak-YYYYMMDD-HHMMSS``.  If the session file
+is a symlink, the file it points to is changed and backed up.  The changed
+file keeps the old one's permissions, and is written in full before it
+replaces the old one, so an interruption never leaves it half written.
+Copy the backup back to undo.
 
 **Without SooperLooper.**  ``--no-sl`` measures only the round trip and
 JACK's settings -- for calibrating JACK for any program, such as a DAW.  It

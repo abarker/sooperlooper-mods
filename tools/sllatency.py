@@ -759,6 +759,64 @@ def jack_settings():
 CONFIG = os.path.join(os.path.expanduser("~"), ".sooperlooper", "sllatency.conf")
 
 
+def session_from_cmdlines(procs, osc_port):
+    """From (cwd, argv) of running processes, the session file the
+    sooperlooper engine listening on osc_port was started with (its -L /
+    --load-session option), made absolute; None if there is none."""
+    for cwd, argv in procs:
+        if not argv or os.path.basename(argv[0]) != "sooperlooper":
+            continue
+        port, sess = 9951, None          # 9951: the engine's default port
+        i = 1
+        while i < len(argv):
+            a = argv[i]
+            nxt = argv[i + 1] if i + 1 < len(argv) else None
+            if a in ("-p", "--osc-port") and nxt is not None:
+                port, i = nxt, i + 2
+                continue
+            if a in ("-L", "--load-session") and nxt is not None:
+                sess, i = nxt, i + 2
+                continue
+            if a.startswith("--osc-port="):
+                port = a.split("=", 1)[1]
+            elif a.startswith("--load-session="):
+                sess = a.split("=", 1)[1]
+            elif a.startswith("-p") and len(a) > 2 and not a.startswith("--"):
+                port = a[2:]
+            elif a.startswith("-L") and len(a) > 2:
+                sess = a[2:]
+            i += 1
+        try:
+            port = int(port)
+        except ValueError:
+            continue
+        if port == osc_port and sess:
+            return os.path.normpath(os.path.join(cwd or "/", os.path.expanduser(sess)))
+    return None
+
+
+def running_session_file(osc_port):
+    """The session file the running SooperLooper engine was started with,
+    read from its command line (Linux /proc); None if not found -- another
+    OS, or an engine started without one (a session loaded later from
+    slgui's menu does not show here)."""
+    procs = []
+    try:
+        pids = [d for d in os.listdir("/proc") if d.isdigit()]
+    except OSError:
+        return None
+    for pid in pids:
+        try:
+            with open("/proc/%s/cmdline" % pid, "rb") as f:
+                argv = [a.decode(errors="replace") for a in f.read().split(b"\0") if a]
+            if not argv or os.path.basename(argv[0]) != "sooperlooper":
+                continue
+            procs.append((os.readlink("/proc/%s/cwd" % pid), argv))
+        except OSError:
+            continue
+    return session_from_cmdlines(procs, osc_port)
+
+
 def remembered_session_file():
     try:
         with open(CONFIG) as f:
@@ -784,7 +842,12 @@ def save_latency_to_session(path, il, ol):
     """Change only the latency values in a SooperLooper session file (and
     auto_latency to "no", so they are used), keeping a backup copy.
     Everything else in the file stays byte-for-byte as it was, unlike
-    SooperLooper's /save_session, which writes the whole live state."""
+    SooperLooper's /save_session, which writes the whole live state.  A
+    symlink is followed: the file it points to is changed, and backed up
+    next to itself.  The new file keeps the old one's permissions.
+    Returns (file changed, backup, loops); raises ValueError, before
+    changing anything, if the file has no latency values."""
+    path = os.path.realpath(path)
     with open(path) as f:
         text = f.read()
     text, n_in = re.subn(r'(<Control name="input_latency" value=")[^"]*(")',
@@ -793,14 +856,20 @@ def save_latency_to_session(path, il, ol):
                           r"\g<1>%d\g<2>" % ol, text)
     text, _ = re.subn(r'(\bauto_latency=")[^"]*(")', r"\g<1>no\g<2>", text)
     if not (n_in and n_out):
-        raise RuntimeError("no latency values found in %s" % path)
+        raise ValueError("no latency values found in %s" % path)
     backup = path + time.strftime(".bak-%Y%m%d-%H%M%S")
     shutil.copy2(path, backup)
     tmp = path + ".sllatency-tmp"
     with open(tmp, "w") as f:
         f.write(text)
+    shutil.copymode(path, tmp)
+    st = os.stat(path)
+    try:
+        os.chown(tmp, st.st_uid, st.st_gid)   # works for the owner's own group, or root
+    except OSError:
+        pass
     os.replace(tmp, path)
-    return backup, n_in
+    return path, backup, n_in
 
 
 def jack_report(js, cap, play, rt, tolerance_ms, sr):
@@ -993,29 +1062,49 @@ def offer_apply_and_save(sl, args, interactive, il, ol, new_in, new_out, within,
         at startup (a backup copy is kept); the rest of the file stays exactly
         as it is.
     """)
-    path = args.session_file
+    # Which file: --session-file, else the one the running SooperLooper
+    # was started with, else the one saved to last time.
+    path, source = args.session_file, "given with --session-file"
+    if not path:
+        path, source = running_session_file(args.sl_port), "SooperLooper was started with"
+    if not path:
+        path, source = remembered_session_file(), "saved to last time"
     if interactive:
         if not ask("Save them in the session file?"):
             return 0
+        if not args.session_file:
+            print()
+            if path:
+                say("   The session file %s:" % source)
+                say("      %s" % path)
+                ans = input("   Press Enter to save there, or type another file: ").strip()
+            else:
+                say("   Which session file does SooperLooper load at startup?")
+                ans = input("   Session file: ").strip()
+            if ans:
+                path = os.path.expanduser(ans)
         if not path:
-            known = remembered_session_file()
-            ans = input("   Session file%s: " % (" [%s]" % known if known else "")).strip()
-            path = os.path.expanduser(ans) if ans else known
-        save_it = bool(path)
-    else:
-        path = path or remembered_session_file()
-        save_it = args.save and bool(path)
-        if args.save and not path:
-            say("   --save needs --session-file (or one remembered from an "
-                "earlier run).")
-    if save_it:
-        if not os.path.isfile(path):
-            say("   %s does not exist; nothing saved." % path)
-            return 1
-        remember_session_file(path)
-        backup, n = save_latency_to_session(path, new_in, new_out)
-        say("   Saved in %s (%d loop%s); the old file is %s."
-            % (path, n, "" if n == 1 else "s", backup))
+            say("   No session file given; nothing saved.")
+            return 0
+    elif args.save and not path:
+        say("   --save needs --session-file: SooperLooper was not started with a "
+            "session file, and none was saved to before.")
+        return 1
+    if not (interactive or args.save):
+        return 0
+    if not os.path.isfile(path):
+        say("   %s does not exist; nothing saved." % path)
+        return 1
+    try:
+        real, backup, n = save_latency_to_session(path, new_in, new_out)
+    except ValueError:
+        say("   %s has no latency values to change (is it a SooperLooper session "
+            "file?); nothing saved." % path)
+        return 1
+    remember_session_file(path)
+    say("   Saved in %s%s (%d loop%s); the old file is %s."
+        % (path, "" if real == os.path.abspath(path) else " (the file it links to, %s)" % real,
+           n, "" if n == 1 else "s", backup))
     return 0
 
 

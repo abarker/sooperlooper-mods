@@ -500,6 +500,99 @@ def apply_save_tests(sl, port, client, tmp, session, il, ol):
     return fails
 
 
+def session_save_tests():
+    """Finding the session file and saving to it, without JACK or
+    SooperLooper: the running engine's -L option, symlinks, permissions, a
+    file with no latency values, and an empty answer."""
+    import tempfile, io, contextlib, types, builtins
+    fails = 0
+    def check(ok, msg):
+        nonlocal fails
+        fails += not ok
+        print("%s %s" % ("PASS" if ok else "FAIL", msg))
+    rig = ["sooperlooper", "-q", "-U", "osc.udp://127.0.0.1:11442/", "-p", "9951",
+           "-l", "1", "-c", "2", "-m", "/x/b.slb", "-L", "/home/u/sl/rig.slsess"]
+    S = sllatency.session_from_cmdlines
+    check(S([("/", rig)], 9951) == "/home/u/sl/rig.slsess", "engine's -L found on its port")
+    check(S([("/", rig)], 9952) is None, "engine on another port ignored")
+    check(S([("/home/u", ["/usr/local/bin/sooperlooper", "--load-session=sl/a.slsess"])], 9951)
+          == "/home/u/sl/a.slsess", "--load-session=, relative to the engine's directory, default port")
+    check(S([("/", ["sooperlooper", "-p9000", "-Lx.slsess"])], 9000) == "/x.slsess",
+          "joined -p/-L forms")
+    check(S([("/", ["sooperlooper", "-p", "9951"])], 9951) is None, "engine without -L: none")
+    check(S([("/", ["slgui", "-L", "/a.slsess"])], 9951) is None, "other programs ignored")
+
+    tmp = tempfile.mkdtemp(prefix="sllat_save_")
+    body = ('<Loop auto_latency="yes">\n'
+            '<Control name="input_latency" value="743"/>\n'
+            '<Control name="output_latency" value="743"/>\n</Loop>\n') * 2
+    target = os.path.join(tmp, "real.slsess")
+    with open(target, "w") as f:
+        f.write(body)
+    os.chmod(target, 0o640)
+    link = os.path.join(tmp, "link.slsess")
+    os.symlink(target, link)
+    real, backup, n = sllatency.save_latency_to_session(link, 608, 880)
+    text = open(target).read()
+    check(os.path.islink(link) and real == target and n == 2
+          and text.count('value="608"') == 2 and text.count('"880"') == 2
+          and 'auto_latency="yes"' not in text,
+          "symlink followed: the link stays a link, its target is changed")
+    check(os.path.dirname(backup) == tmp and open(backup).read() == body,
+          "backup next to the real file, holding the old contents")
+    check((os.stat(target).st_mode & 0o777) == 0o640, "permissions kept (0640)")
+
+    bad = os.path.join(tmp, "bad.slsess")
+    with open(bad, "w") as f:
+        f.write("<nothing/>\n")
+    before = set(os.listdir(tmp))
+    try:
+        sllatency.save_latency_to_session(bad, 1, 2)
+        raised = False
+    except ValueError:
+        raised = True
+    check(raised and set(os.listdir(tmp)) == before, "no latency values: error, nothing written")
+
+    # The dialog, with a stand-in SooperLooper and typed answers.
+    class FakeSL:
+        def __init__(self): self.v = {}
+        def set(self, k, v, loop=None): self.v[k] = float(v)
+        def get(self, k, loop=None): return self.v.get(k)
+    saved_conf = sllatency.CONFIG
+    sllatency.CONFIG = os.path.join(tmp, "sllatency.conf")
+    real_input = builtins.input
+    def run_dialog(answers, session_file=None):
+        feed = iter(answers)
+        builtins.input = lambda prompt="": (print(prompt), next(feed))[1]
+        args = types.SimpleNamespace(session_file=session_file, sl_port=1,
+                                     apply=False, save=False)
+        out = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out):
+                rc = sllatency.offer_apply_and_save(FakeSL(), args, True, 743, 743,
+                                                    608, 880, False)
+        finally:
+            builtins.input = real_input
+        return rc, " ".join(out.getvalue().split())
+    try:
+        rc, out = run_dialog(["y", "y", ""])
+        check("No session file given; nothing saved." in out, "empty answer: says nothing was saved")
+        rc, out = run_dialog(["y", "y", bad])
+        check(rc == 1 and "has no latency values to change" in out,
+              "not a session file: plain message, no traceback")
+        rc, out = run_dialog(["y", "y", target])
+        check(rc == 0 and "Saved in" in out and open(sllatency.CONFIG).read().strip().endswith(target),
+              "typed path saved to and remembered")
+        rc, out = run_dialog(["y", "y", ""])
+        check(rc == 0 and "saved to last time" in out and target in out and "Saved in" in out,
+              "next time: the remembered file offered, Enter accepts it")
+    finally:
+        sllatency.CONFIG = saved_conf
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+    return fails
+
+
 def buzz_tests():
     """A buzzing amp by the mic (sharp 120 Hz spikes, locked to the click
     rate as mains is) with a weak click return: the round trip must come
@@ -611,7 +704,7 @@ def main():
     jackd = subprocess.Popen(["jackd", "-n", SERVER, "-d", "dummy", "-r", str(SR),
                               "-p", str(PERIOD)],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    fails = suggest_tests() + jack_report_tests() + buzz_tests()
+    fails = suggest_tests() + jack_report_tests() + buzz_tests() + session_save_tests()
     try:
         time.sleep(2.0)
         cases = [
