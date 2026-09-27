@@ -421,7 +421,11 @@ What happens, by what the overdub press just before it did:
      - Nothing.
 
 It never removes a loop's first take -- the oldest layer in its undo
-history -- only what was added on top of it.  A ``redo`` brings back an
+history -- only what was added on top of it.  This is for safety in
+performance, not a technical limit: a hold on the overdub switch that
+lasts a moment too long should never wipe out the whole loop.  (Plain
+``undo`` would empty a loop that has only ever had one take.)  To silence
+the loop instead, mute it.  A ``redo`` brings back an
 overdub it undid, but never the new one the press had started.  Waiting
 for the beat only happens with SooperLooper's "overdub quantized" option
 on.
