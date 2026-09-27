@@ -147,17 +147,16 @@ item links to its full description.
 
 - **New command** ``cancel_record_mute``.  Cancels a recording that has
   started, or one still waiting for the beat, and brings back the previous
-  take; does nothing otherwise.  It is meant to be fired by a long or
-  double press after an eager-firing ``record``, so one switch can record,
-  play, and -- on a hold -- stop, leaving the loop muted, with no added
-  latency on the record itself; doing nothing in other states is what
-  makes that safe.  See `New Command:
+  take; does nothing otherwise.  It is meant for a switch that fires
+  ``record`` the moment it is pressed and sends this command when held or
+  double-tapped, so one switch can record, play, and -- on a hold -- stop,
+  leaving the loop muted, with no added latency on the record itself;
+  doing nothing in other states is what makes that safe.  See `New Command:
   cancel_record_mute`_.
 
 - **New command** ``cancel_overdub_undo``.  The same idea for an overdub
-  switch: its long or double press undoes as if the eager ``overdub`` its
-  press already fired had not happened -- usually taking back the last
-  overdub.  Never removes a loop's first take.  See `New Command:
+  switch: its hold or double tap undoes as if the ``overdub`` the press
+  already fired had not happened -- usually taking back the last overdub.  Never removes a loop's first take.  See `New Command:
   cancel_overdub_undo`_.
 
 - **Record failsafe.**  If a recording that cut off a playing loop is left
@@ -287,16 +286,31 @@ How the start and stop corrections work inside the engine is in
 Commands for a Switch's Long or Double Press
 --------------------------------------------
 
-A footswitch can fire its command the moment it is pressed -- an "eager
-single" in the remapper -- so the command's timing gets no added delay,
-and still have a second action on a long or double press.  But by the
-time the long or double press is recognised, the first command has
-already acted.  These two commands are made for that second action: each
-first reverses what its switch's command has just done, according to
-what that was, then does its own job, and does nothing where there is
-nothing to reverse.  Each belongs on the switch whose command it follows:
-``cancel_record_mute`` after ``record``, ``cancel_overdub_undo`` after
-``overdub``.
+Many footswitches and MIDI controllers can send a different message for a
+quick tap, a long hold, and a double tap -- set up in the device itself,
+or in software between it and SooperLooper.  Normally such a switch has to
+wait before sending anything: a tap is only known to be a tap once the
+hold time has passed, or once no second tap has followed.  That wait
+delays the tap's command, and for ``record`` or ``overdub``, where timing
+is the point, the delay costs more than the extra gesture is worth.
+
+The way around it is *eager firing*: the switch sends its main command the
+moment it is pressed, every time, and then sends a second message if the
+press turns out to be a hold or a double tap.  The main command gets no
+added delay.  The catch is that by the time the hold or double tap is
+recognised, the main command has already acted.  The two commands below
+are made to be that second message: each first reverses what its
+switch's main command has just done, according to what that was, then
+does its own job, and does nothing where there is nothing to reverse.
+Each belongs on the switch whose command it follows: ``cancel_record_mute``
+after ``record``, ``cancel_overdub_undo`` after ``overdub``.
+
+For this to work, the switch must send its main command on the press, not
+on the release, and only once per gesture -- not again on the second tap
+of a double tap.  The setup guide
+(``sooperlooper_and_ardour_setup_guide.rst``, section 1.2) shows one way
+to set this up, with a MIDI remapping program between the pedal and
+SooperLooper.
 
 New Command: ``cancel_record_mute``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

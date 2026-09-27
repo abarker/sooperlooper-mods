@@ -18,8 +18,9 @@ quantized Pause press while Muted resolved to Playing instead of Paused.
 carries a loop from recording into play on its own — that part needs
 nothing new.  What `cancel_record_mute` adds is a clean way to stop that
 play again without needing a second button.  An optional second trigger on the same switch does the
-stopping: a long hold or a quick double tap, always following the eager
-`record` that started it.  It always fires immediately and eagerly;
+stopping: a long hold or a quick double tap, always following the
+`record` the switch sent the moment it was pressed.  That `record` is
+always sent at once, on every press (the switch fires "eagerly");
 waiting to see whether a second trigger will follow would cost the very
 timing accuracy this patch exists to protect.  A separate button bound to
 `mute_trigger` would do the same job for a playing loop, but costs a
