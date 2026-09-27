@@ -54,6 +54,13 @@ def say(msg=""):
                         subsequent_indent=indent), flush=True)
 
 
+def say_field(label, value):
+    """A "label:  value" line whose wrapped lines line up under the value."""
+    head = "   %-13s" % label
+    print(textwrap.fill(value, WIDTH, initial_indent=head,
+                        subsequent_indent=" " * len(head)), flush=True)
+
+
 def explain(msg):
     """A short explanation, reflowed to the terminal width.  Blank lines in
     the text separate paragraphs."""
@@ -1138,13 +1145,13 @@ examples:
                                 "there is no path to measure after SooperLooper.")
 
     print()
-    say("   Click out:   %s" % ", ".join(outs))
+    say_field("Click out:", ", ".join(outs))
     if len(candidates) > 1:
-        say("   Mic input:   %s (SooperLooper's loop 1 records from these) -- "
-            "whichever hears the click best, found with a few clicks first"
-            % " or ".join(candidates))
+        say_field("Mic input:", "%s (SooperLooper's loop 1 records from these) "
+                  "-- whichever hears the click best, found with a few clicks "
+                  "first" % " or ".join(candidates))
     else:
-        say("   Mic input:   %s" % inp)
+        say_field("Mic input:", inp)
     print()
     if hardware:
         explain("""
