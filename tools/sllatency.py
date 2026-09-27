@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """sllatency -- measure audio round-trip latency, like jack_iodelay, and
-(in a later step) check SooperLooper's latency compensation.
+check SooperLooper's latency compensation.
 
 Plays its own click out of JACK output ports, records the click as it
-comes back on an input (headphones held on a mic, or a loopback cable),
-and compares the measured round trip with the latency JACK reports for
-those ports -- the values set as QJackctl's input/output latency.
+comes back on an input (headphones or a speaker by a mic, or a loopback
+cable), and compares the measured round trip with the latency JACK
+reports for those ports.  With SooperLooper running, it also records the
+click in a temporary loop and measures the path SooperLooper is heard
+through, and suggests (and can apply and save) its latency settings.
 
 Everything is timed inside one JACK client, so the click times are known
 to the sample and nothing depends on a DAW.  See mod_docs/ROADMAP.rst

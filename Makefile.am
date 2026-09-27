@@ -11,3 +11,17 @@
 EXTRA_DIST = autogen.sh configure OSC top_marker README_Windows.md windows
 SUBDIRS =  libs src
 
+#------ albBegin ----------------------------------
+# sllatency: the latency measurement tool (tools/sllatency.py), installed
+# as "sllatency" next to sooperlooper and slgui.  A Python 3 script; it
+# needs numpy and the Python jack module at run time, not to build.
+EXTRA_DIST += tools/sllatency.py tools/test_sllatency.py
+
+install-exec-local:
+	$(MKDIR_P) $(DESTDIR)$(bindir)
+	$(INSTALL_SCRIPT) $(srcdir)/tools/sllatency.py $(DESTDIR)$(bindir)/sllatency
+
+uninstall-local:
+	rm -f $(DESTDIR)$(bindir)/sllatency
+#------ albEnd ----------------------------------
+

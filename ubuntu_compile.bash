@@ -25,8 +25,11 @@ if $install_deps; then
    # Note libwxgtk3.0-gtk3-dev (the Ubuntu 22.04 wxWidgets package) is not
    # available on Ubuntu 24.04.  Use libwxgtk3.2-dev instead; see also:
    # https://askubuntu.com/questions/1522811/how-to-install-wxwidgets-on-ubuntu-24-04
+   # python3-numpy and python3-jack-client are needed only to run the
+   # sllatency tool, not to build.
    sudo apt install -y \
       build-essential git autoconf automake libtool pkg-config \
+      python3-numpy python3-jack-client \
       libjack-jackd2-dev libasound2-dev \
       libwxgtk3.2-dev \
       libsigc++-2.0-dev \

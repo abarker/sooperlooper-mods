@@ -13,7 +13,9 @@ more precise:
 - a new command cancels a recording just started, and an optional timeout
   cancels a recording left running over a playing loop;
 - a separate large-text display, ``slbigstate``, shows loop state from
-  across the room.
+  across the room;
+- a latency tool, ``sllatency``, measures JACK's and SooperLooper's latency
+  with a click and sets SooperLooper's to match.
 
 This document describes each change and how to configure it.  How each is
 implemented, and where the changes are in the source, is in the appendix
@@ -199,6 +201,10 @@ item links to its full description.
   program, installed alongside ``sooperlooper`` and ``slgui``, that shows
   each loop's state in large, colored text, readable from across a room.
   See `New Tool: slbigstate`_.
+- ``sllatency``: **a latency calibration tool.**  Measures the audio round
+  trip with a click and checks JACK's and SooperLooper's latency settings,
+  including the path SooperLooper is heard through.  See `New Tool:
+  sllatency`_.
 
 The Late-Hit Sync Problem
 ---------------------------
@@ -611,6 +617,165 @@ second file, ``~/.sooperlooper/slbigstate_stack_config.xml``, so a stack
 and a single-loop window each remember their own position.  Showing
 exactly one loop, however chosen, always uses the single-loop file.
 
+
+New Tool: ``sllatency``
+-------------------------
+
+A command-line tool that measures latency with a click, the way
+``jack_iodelay`` does, and goes on to check SooperLooper's own latency
+compensation.  It plays a short click out of JACK, records it as it comes
+back through a mic or a cable, and times the return to the sample.  From
+that it reports:
+
+- whether JACK's latency settings match the measured round trip, and if
+  not, the values to set;
+- where a loop recorded in SooperLooper lands relative to what was played,
+  as heard -- through whatever buses and plugins SooperLooper's output goes
+  through before the speakers or headphones;
+- the SooperLooper input and output latency that would make loops land on
+  time, which it offers to apply and to save in the session file.
+
+It is installed with ``sooperlooper`` and ``slgui`` by the same ``make
+install``, into the same directory, as ``sllatency``.  It is a Python 3
+script and needs ``numpy`` and the Python ``jack`` module (Ubuntu packages
+``python3-numpy`` and ``python3-jack-client``; or ``pip install numpy
+JACK-Client``).  The source is ``tools/sllatency.py``.
+
+**Running it.**  Start JACK and SooperLooper with the usual session, and
+the DAW if SooperLooper is monitored through one.  Leave loop 1 empty or
+muted.  Then run ``sllatency`` and follow the prompts:
+
+1. It lists the physical outputs and what feeds each, and asks which to
+   play the click on.  The suggested ones (marked ``*``) are the outputs
+   SooperLooper's loop 1 is heard through: connected directly, or through
+   a DAW bus named in Ardour's style (``BUS/audio_in N`` to
+   ``BUS/audio_out N``).  If that cannot be traced, it suggests what a
+   DAW's master bus feeds, and says the suggestion is a guess.
+2. Put the headphones fed by those outputs on or right next to the mic
+   loop 1 records from -- balancing them on the mic works -- or hold the
+   mic right against a speaker, or connect a cable from an output to that
+   input.  With a speaker, keep the mic within a few centimetres: sound
+   takes about 3 ms per metre, and that would be counted as latency.  With
+   a cable into a mic input, turn the input gain down first.
+3. Press Enter.  If loop 1 records from more than one input (a stereo
+   loop), a few clicks first find which input hears them best; that one is
+   used as the mic input.
+4. The measurement takes about 25 seconds: clicks for the round trip,
+   recorded meanwhile in a temporary SooperLooper loop, then a few clicks
+   played into the ports loop 1's output feeds, to measure the path
+   SooperLooper is heard through.  Don't touch the pedals or record in the
+   DAW meanwhile.  The temporary loop is removed afterwards, and the tempo,
+   sync and other settings it changed are restored.
+
+**The JACK result.**  A table shows JACK's reported capture and playback
+latency, each split into buffering (set by the period size and number of
+periods) and JACK's extra input and output latency (set in QJackctl's
+Setup, Advanced tab, or with ``jack_control``, or jackd's ``-I`` and
+``-O``), beside the measured round trip.  Within the tolerance (1 ms by
+default) there is nothing to change.  Otherwise it gives the new extra
+latencies to enter -- values to enter, not amounts to add -- with the
+correction shared evenly between input and output, and where to set them.
+The current extra latencies can be read only when JACK runs through
+jackdbus; otherwise it gives the total change.
+
+**The SooperLooper result.**  It reports how far the recorded loop lands
+from the live click at SooperLooper's output, the delay measured after
+SooperLooper (next to what JACK reports for that path, which a DAW can get
+wrong), and the sum of the two: where loops land as heard.  A table then
+compares, in samples:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Row
+     - Meaning
+   * - ``current (manual):``
+     - The loop's latency settings now (``autoset`` instead of ``manual``
+       when SooperLooper's automatic latency is on).
+   * - ``SooperLooper's autoset would use:``
+     - What SooperLooper's automatic setting would choose: the latency JACK
+       reports for its ports, following SooperLooper's own rule for which
+       ports it reads (the main ports when a loop uses them).
+   * - ``measured best:``
+     - The total that makes loops land on time as heard, split in JACK's
+       proportions (its reported input and output latency along the loop's
+       path) with the correction shared evenly.
+
+Only the total decides where loops play.  Input latency on its own decides
+where each recording starts, so a wrong split moves the recording's edges
+by the error.  A loopback measures only the total; the overdub test in the
+setup guide checks the split directly.
+
+**Applying and saving.**  It then asks whether to apply the measured-best
+values to every loop in the running SooperLooper, and whether to save them
+in the session file SooperLooper loads at startup.  Saving changes only the
+``input_latency`` and ``output_latency`` values in that file (and sets
+``auto_latency`` to ``no`` so they are used); everything else in the file
+stays as it was.  It asks for the file the first time, or takes
+``--session-file``, and remembers it in ``~/.sooperlooper/sllatency.conf``.
+A backup is made first, next to the file, named after it with the date and
+time added: ``my_session.slsess.bak-YYYYMMDD-HHMMSS``.
+
+**Without SooperLooper.**  ``--no-sl`` measures only the round trip and
+JACK's settings -- for calibrating JACK for any program, such as a DAW.  It
+does the same if SooperLooper is not running.  With ``--out`` and ``--in``
+set to a JACK program's input and output instead of hardware ports, it
+measures the delay through that program (for example a DAW bus and its
+plugins), with no mic.  To the program that is a feedback loop, which some
+programs react to -- Ardour lights its "No Align" warning and reports more
+latency afterwards -- so restart the program before relying on it again.
+
+**Quick values.**  ``--reported`` plays nothing and records nothing: it
+suggests SooperLooper values from the latencies JACK (and a DAW) report --
+a starting point, not a measurement.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Option
+     - Meaning
+   * - ``--out PORT``
+     - JACK port to play the click to (repeatable).  Default: ask.
+   * - ``--in PORT``
+     - JACK port the click comes back on.  Default: the capture port
+       feeding loop 1 (the one that hears the click best, if several), else
+       the first physical capture port.
+   * - ``--bpm N``
+     - Click tempo (default 120).
+   * - ``--level X``
+     - Click level, 0-1 (default 0.3, about -10 dB below full scale).
+   * - ``--max-latency MS``
+     - Largest round trip searched (default 250 ms).
+   * - ``--tolerance MS``
+     - Difference treated as nothing to fix (default 1 ms).
+   * - ``--sl-host``, ``--sl-port``, ``--sl-client``
+     - Where SooperLooper is: OSC host and port (default ``127.0.0.1``,
+       ``9951``) and JACK client name (default ``sooperlooper``).
+   * - ``--session-file FILE``
+     - The session file SooperLooper loads at startup, to save new values
+       in.  Remembered for later runs.
+   * - ``--reported``
+     - Quick values from JACK's reports; no clicks.
+   * - ``--no-monitor-check``
+     - Skip measuring the path SooperLooper is heard through; use the
+       latency JACK reports for it.
+   * - ``--no-sl``
+     - Measure the round trip only; leave SooperLooper alone.
+   * - ``--yes``
+     - No questions: use the suggested outputs; apply or save only with
+       ``--apply`` / ``--save``.
+   * - ``--apply``, ``--save``
+     - With ``--yes``: apply the measured-best values; with ``--save`` too,
+       also save them in the session file.
+
+**Limits.**  It measures loop 1 and applies the result to every loop, so
+it assumes all loops are recorded and monitored the same way.  The click
+must come back on the same audio interface it was played from; two
+separately clocked devices drift against each other.  It tests a
+quantized recording, not the timing of a live pedal press (trigger
+latency).
 
 Compile-Time Flags
 ------------------

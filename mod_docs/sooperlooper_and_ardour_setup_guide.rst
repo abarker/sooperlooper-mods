@@ -473,7 +473,22 @@ different latencies:
 2.3 Measuring round-trip latency
 ----------------------------------
 
-There are two complementary approaches:
+The easiest is this fork's ``sllatency`` tool; the other two are manual.
+
+**The sllatency tool:** installed with SooperLooper (``make install``).
+Start JACK, SooperLooper and Ardour as usual, leave loop 1 empty or muted,
+and run ``sllatency`` in a terminal.  It asks which outputs to play a click
+on -- suggesting the ones SooperLooper is heard through -- and then asks
+you to balance the headphones on the mic loop 1 records from (or hold the
+mic right against a speaker, or connect a cable from an output to that
+input).  In about half a minute it measures the round trip, checks JACK's
+latency settings, and checks where SooperLooper's loops land as you hear
+them, including any delay from the Ardour bus they are monitored through.
+It shows the values to set, and offers to apply them to SooperLooper and
+save them in its session file (keeping a backup).  It needs the Python
+packages ``numpy`` and ``jack`` (on Ubuntu, ``python3-numpy`` and
+``python3-jack-client``).  Use ``sllatency --no-sl`` to check JACK alone,
+for example for Ardour without SooperLooper.
 
 **jack_iodelay:** connect one of the interface's outputs back to one of its
 inputs with a cable and run ``jack_iodelay``; it measures the total round
@@ -495,8 +510,8 @@ should line up, or simply use the very start of the recording.
    in Ardour after recording. This brings peaks to a consistent level and makes
    waveform features much easier to compare visually.
 
-Both methods give the same number; the drum-beat method also checks the real
-signal chain end to end.
+All three give the same round trip; ``sllatency`` and the drum-beat method
+also check the real signal chain end to end.
 
 2.4 Setting the QJackctl hardware latency
 -------------------------------------------
@@ -512,6 +527,10 @@ QJackctl's **Setup -> Advanced -> Latency I/O** has two fields:
 JACK does not know these hardware delays by itself. It already counts its
 own buffering (set by the frames/period and periods/buffer settings), so
 leave that out when working out what to enter here.
+
+**Using sllatency:** leave the fields as they are and run it.  It shows
+JACK's current values beside the measured round trip and, if they
+disagree, the new values to enter in these two fields.
 
 **Using jack_iodelay:** set both fields to zero first, then connect a patch
 cable from an output back to an input and run ``jack_iodelay``. It measures
@@ -582,8 +601,9 @@ moves the newly-recorded material to the **left** (earlier in time);
 
 .. note::
 
-   Setting these values by hand, as measured in section 2.7, is recommended
-   over SooperLooper's automatic option (the autoset toggle in slgui's
+   Setting these values from a measurement -- with ``sllatency`` (section
+   2.3), or by hand as in section 2.7 -- is recommended over
+   SooperLooper's automatic option (the autoset toggle in slgui's
    **Preferences -> Latency**):
 
    * Autoset reads the latency of SooperLooper's **main** inputs and
@@ -611,6 +631,10 @@ moves the newly-recorded material to the **left** (earlier in time);
 
 2.7 The monitor-feedback calibration method
 --------------------------------------------
+
+The ``sllatency`` tool (section 2.3) makes this measurement automatically.
+The method below is the manual way to do it, and shows what is being
+measured.
 
 In normal performance the signal path is:
 
@@ -723,6 +747,13 @@ loop** -- record, then play -- where the loop lines up depends only on their
 *sum*. The input latency alone also decides where a recording starts: set too
 low, the recording picks up a little sound from before the start; set too
 high, it cuts off the start.
+
+The ``sllatency`` tool measures only the total, since a loopback cannot
+tell input from output.  It splits the total in the same proportions as the
+input and output latency JACK reports for SooperLooper's ports -- JACK's
+own buffering is uneven, one period on the way in and two on the way out --
+which is a better-founded starting point than an even split.  The overdub
+test below checks the split directly.
 
 **Overdubs** are different. An overdub plays the existing loop back *while*
 recording new material on top, so playback delay and capture delay act on two

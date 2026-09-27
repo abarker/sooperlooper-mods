@@ -49,6 +49,12 @@ driving external hardware.
 state in large, high-contrast text — readable from across a room, unlike
 slgui's own small indicators.
 
+**`sllatency`.**  A latency calibration tool.  It plays a click, times it
+coming back through a mic (or a cable), and checks JACK's latency settings
+and SooperLooper's own input and output latency, including the delay of
+whatever the loops are monitored through.  It then offers to apply and
+save corrected SooperLooper values.
+
 For full details see the documentation in [`mod_docs/`](mod_docs/):
 
 - [`late_hit_patch_summary.rst`](mod_docs/late_hit_patch_summary.rst) —
