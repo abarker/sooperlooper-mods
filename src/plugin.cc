@@ -266,6 +266,24 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
+// CANCEL_RECORD_REDO_FIX: after cancel_record_mute (or the record
+// failsafe) discards a record in progress, redo must not bring the
+// discarded fragment back.  Undo keeps each chunk's `next` so redo can
+// restore it (popHeadLoop: "leave the next where is is for redo"), and
+// after undoing a lone first take tailLoopChunk still points at it
+// ("redo from nothing").  So without this, a redo after the cancel
+// restores the few hundred ms recorded before the long press, replacing
+// the take -- silently if muted.  There is nothing legitimate to redo
+// there: the eager record already reused the chunk slot redo would have
+// used.  The fix unlinks the discarded chunk just before the undo runs;
+// the undo itself steps back through the chunk's `prev`, which is left
+// alone.  The pending-record cancel creates no chunk and is untouched.
+// Regression tests: cancelThenRedo in testdef_cancel_record_mute.py.
+// ROADMAP.rst entry 1.  Set to 0 for the previous behaviour exactly.
+#define CANCEL_RECORD_REDO_FIX 1
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
 // SYNC_MODE_LATE_HIT_RESET_FIX: compile-time safety switch for a
 // fork-introduced bug (NOT stock -- the vulnerable field and its
 // gating pattern were both added by this fork's own late-hit
@@ -2564,6 +2582,23 @@ runSooperLooper(LADSPA_Handle Instance,
 		  pLS->fLoopSrcFadeDelta = -1.0f / xfadeSamples;
 		  pLS->fFeedFadeDelta    =  1.0f / xfadeSamples;
 		  pLS->fFeedSrcFadeDelta =  1.0f / xfadeSamples;
+
+#if CANCEL_RECORD_REDO_FIX
+		  // Unlink the chunk about to be discarded, so a later redo cannot
+		  // restore it (see CANCEL_RECORD_REDO_FIX near the top).  Done
+		  // before the undo, which finds the previous take through
+		  // dead->prev and never reads prev->next.
+		  {
+			  LoopChunk *dead = pLS->headLoopChunk;
+			  if (dead) {
+				  if (dead->prev && dead->prev->next == dead) {
+					  dead->prev->next = NULL;
+				  } else if (!dead->prev && pLS->tailLoopChunk == dead) {
+					  pLS->tailLoopChunk = NULL;
+				  }
+			  }
+		  }
+#endif
 
 		  lMultiCtrl = MULTI_UNDO;
 	  }

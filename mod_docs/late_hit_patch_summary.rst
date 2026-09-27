@@ -329,6 +329,12 @@ What happens, by what the loop is doing when the command arrives:
      - Nothing.
      - No change.
 
+A ``redo`` after a cancel does nothing.  The cancelled recording cannot
+be redone, and neither can anything undone before it: starting that
+recording already cleared redo, as starting any new recording does.  (A
+cancel of a recording still waiting for the beat started nothing, so redo
+still works as before it.)
+
 The hold usually lands after the recording has started, so the loop stops.
 It can land while the record is still waiting for the beat -- mostly when
 record was pressed early in a long cycle -- and then the loop keeps playing.
@@ -882,6 +888,15 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING`` and
        behaviour.  Unlike the other flags/globals here, this is a bug
        fix with an escape hatch, not a tunable parameter -- no
        session-file or OSC equivalent.
+   * - ``CANCEL_RECORD_REDO_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a ``redo`` after ``cancel_record_mute`` (or the
+       record failsafe) has cancelled a recording does nothing.  Set to 0
+       for the earlier behaviour, in which such a redo brought back the
+       cancelled fragment -- the part recorded before the cancel --
+       replacing the take.  A bug fix with an escape hatch, not a tunable
+       parameter.
    * - ``SYNCWDEBUG``
      - ``plugin.cc``
      - *(commented out)*

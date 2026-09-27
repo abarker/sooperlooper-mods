@@ -416,3 +416,109 @@ class cancelRecordMuteQuantized(_AudioHelpers,
         self.pulse()                              # boundary: take completes
         self.waitBuffers(10)
         self.assertState("Playing")
+
+
+class cancelThenRedo(_AudioHelpers, testdef_simple_state.simpleStateTest):
+    """Redo after a cancel.  The eager record that the cancel discards has
+    already taken the chunk slot a redo would have used, so after a cancel
+    there is nothing legitimate to redo -- and redo must not bring back the
+    discarded fragment (undo keeps each chunk's `next` for redo).  The
+    pending-record cancel creates no chunk, so it must leave redo alone, and
+    ordinary undo/redo must be unchanged.  ROADMAP.rst entry 1."""
+
+    def setUp(self):
+        testdef_simple_state.simpleStateTest.setUp(self)
+        self.initAudio()
+
+    def syncOn(self):
+        self.looper.sync_inject_value   = 0.0
+        self.looper.sync_inject_enabled = True
+        self.looper.set_port(test_engine.Sync, 1.0)
+        self.waitBuffers(3)
+
+    def testRedoAfterCancelOverExistingTakeKeepsTake(self):
+        self.recordTake(TAKE_LEVEL)
+        self.looper.input_inject_value = NOISE_LEVEL
+        self.engine.request("RECORD")            # the eager record
+        self.waitBuffers(10)
+        self.assertState("Recording")
+        self.engine.request(CMD)
+        self.waitBuffers(5)
+        self.assertState("Muted")
+        self.engine.request("REDO")
+        self.waitBuffers(10)
+        self.engine.request("MUTE_OFF")
+        self.waitBuffers(10)
+        mn, mx = self.outputRange()
+        self.assertAlmostEqual(
+            mn, TAKE_LEVEL, places=3,
+            msg="after cancel + redo the loop plays %.4f..%.4f; expected the "
+                "take at %.2f.  %.2f means redo brought back the cancelled "
+                "fragment." % (mn, mx, TAKE_LEVEL, NOISE_LEVEL))
+        self.assertAlmostEqual(mx, TAKE_LEVEL, places=3)
+
+    def testRedoAfterCancelledFirstTakeStaysOff(self):
+        self.looper.input_inject_value = NOISE_LEVEL
+        self.engine.request("RECORD")            # first take, eager
+        self.waitBuffers(10)
+        self.engine.request(CMD)
+        self.waitBuffers(10)                     # UNDO_ALL fade completes
+        self.assertState("OffMuted")
+        self.engine.request("REDO")
+        self.waitBuffers(10)
+        self.assertState("OffMuted",
+                         "redo after cancelling the first take brought back "
+                         "the cancelled fragment")
+
+    def testRedoAfterPendingCancelStillRestoresUndoneLayer(self):
+        # Guard against cutting too much: a pending cancel creates no chunk,
+        # so a layer undone before it must still be redo-able.
+        self.recordTake(TAKE_LEVEL)
+        overdub = 0.2
+        self.looper.input_inject_value = overdub
+        self.engine.request("OVERDUB")
+        self.waitBuffers(60)
+        self.engine.request("OVERDUB")
+        self.waitBuffers(10)
+        od_min, od_max = self.outputRange(60)
+        self.engine.request("UNDO")              # back to the bare take
+        self.waitBuffers(10)
+        mn, mx = self.outputRange(60)
+        self.assertAlmostEqual(mn, TAKE_LEVEL, places=3)
+
+        self.syncOn()
+        self.engine.request("RECORD")
+        self.waitBuffers(2)
+        self.assertState("WaitStart")
+        self.engine.request(CMD)
+        self.waitBuffers(5)
+        self.assertState("Playing")
+        self.engine.request("REDO")
+        self.waitBuffers(10)
+        mn, mx = self.outputRange()
+        self.assertAlmostEqual(
+            mn, od_min, places=2,
+            msg="redo after a pending cancel should restore the undone "
+                "overdub (%.3f..%.3f); got %.3f..%.3f" % (od_min, od_max, mn, mx))
+        self.assertAlmostEqual(mx, od_max, places=2)
+
+    def testPlainUndoRedoUnchanged(self):
+        # Ordinary undo then redo of a completed take still works.
+        self.recordTake(TAKE_LEVEL)
+        second = -0.3
+        self.looper.input_inject_value = second
+        self.engine.request("RECORD")
+        self.waitBuffers(30)
+        self.engine.request("RECORD")
+        self.waitBuffers(10)
+        self.assertState("Playing")
+        self.engine.request("UNDO")
+        self.waitBuffers(10)
+        mn, mx = self.outputRange(60)
+        self.assertAlmostEqual(mn, TAKE_LEVEL, places=3)
+        self.engine.request("REDO")
+        self.waitBuffers(10)
+        mn, mx = self.outputRange()
+        self.assertAlmostEqual(mn, second, places=3,
+                               msg="redo should restore the second take")
+        self.assertAlmostEqual(mx, second, places=3)
