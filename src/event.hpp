@@ -152,6 +152,10 @@ namespace SooperLooper {
 		    // but not the literals, silently remapping those commands to
 		    // each other with no compile error.
 		    CANCEL_RECORD_MUTE,
+		    // The overdub button's companion: undo, as if the eager
+		    // overdub press just before had not happened.  Same append-only
+		    // rule as above.  Design: mod_docs/ROADMAP.rst entry 19.
+		    CANCEL_OVERDUB_UNDO,
 		    //------ albEnd ----------------------------------
 		    LAST_COMMAND
 	    } Command;

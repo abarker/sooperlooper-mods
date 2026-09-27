@@ -647,6 +647,7 @@ static inline unsigned long effectiveLateHitWindow(const SooperLooperI *pLS,
 // first 24 Event::command_t values by hand, and CANCEL_RECORD_MUTE is
 // appended at the end of that enum where its ordinal is not fixed.
 #define MULTI_CANCEL_RECORD_MUTE Event::CANCEL_RECORD_MUTE
+#define MULTI_CANCEL_OVERDUB_UNDO Event::CANCEL_OVERDUB_UNDO
 
 // Guard the hand-maintained correspondence above.  The MULTI_UNDO..
 // MULTI_PAUSE_OFF literals (0-23) must stay aligned with the first 24
@@ -965,6 +966,29 @@ static void undoLoop(SooperLooperI *pLS, bool forceClear)
 }
 
 
+//------ albBegin ----------------------------------
+// CANCEL_OVERDUB_UNDO: throw away, at once, the overdub layer an eager
+// overdub press has just started, making the layer under it current at the
+// same position.  Input writing stops immediately rather than fading: the
+// discarded layer does not matter, and the layer under it -- which becomes
+// current, and may later be undone and redone -- must not take any input.
+// The switch is not heard in practice: the overdub writes behind the play
+// position (by the latency), so at the play position both layers hold the
+// same audio.  The layer is unlinked, so a later redo cannot restore it.
+// The caller sets the resulting state and play fade.
+static void discardEagerOverdubLayer(SooperLooperI *pLS)
+{
+	pLS->fLoopFadeAtten    = 0.0f;  pLS->fLoopFadeDelta    = 0.0f;
+	pLS->fFeedFadeAtten    = 1.0f;  pLS->fFeedFadeDelta    = 0.0f;
+	pLS->fLoopSrcFadeAtten = 0.0f;  pLS->fLoopSrcFadeDelta = 0.0f;
+	pLS->fFeedSrcFadeAtten = 1.0f;  pLS->fFeedSrcFadeDelta = 0.0f;
+	undoLoop(pLS, false);
+	if (pLS->headLoopChunk) {
+		pLS->headLoopChunk->next = NULL;
+	}
+}
+//------ albEnd ----------------------------------
+
 static void redoLoop(SooperLooperI *pLS)
 {
    LoopChunk *loop = NULL;
@@ -1153,6 +1177,7 @@ activateSooperLooper(LADSPA_Handle Instance) {
   //cerr << "Activate: " << pLS << endl;
 	 
   pLS->lLastMultiCtrl = -1;
+  pLS->lLastOverdubFrom = -1;   // alb: CANCEL_OVERDUB_UNDO bookkeeping
 
   //====== albBegin ==================================================================================
   // Activation banner: always logged to confirm experimental build is active.
@@ -2639,6 +2664,100 @@ runSooperLooper(LADSPA_Handle Instance,
 	  }
   }
   //====== albEnd ====================================================================================
+  //====== albBegin ==================================================================================
+  // CANCEL_OVERDUB_UNDO -- the overdub button's long/double-press companion:
+  // undo, as if the eager overdub press just before it had not happened.
+  // Acts only when the command immediately before it was an overdub press
+  // (lLastOverdubFrom, set at the start of every dispatch below), and never
+  // removes a loop's first take -- only layers on top of it.  A layer the
+  // eager press started is discarded and unlinked (no redo); a real
+  // overdub that gets undone stays redo-able, as with plain undo.  Design,
+  // and the state-by-state trace: mod_docs/ROADMAP.rst entry 19.
+  else if (lMultiCtrl == MULTI_CANCEL_OVERDUB_UNDO) {
+	  const long from = pLS->lLastOverdubFrom;
+	  LoopChunk *head = pLS->headLoopChunk;
+	  pLS->lLastOverdubFrom = -1;
+	  lMultiCtrl = -1;                       // no-op unless a case applies
+
+	  if (from == STATE_OVERDUB) {
+		  // The eager press was a stop.
+		  if (pLS->state == STATE_OVERDUB && pLS->waitingForSync
+		      && pLS->nextState == STATE_PLAY) {
+			  // Stop still queued: cancel it.  The undo then discards
+			  // the running overdub's layer, as plain undo does while
+			  // overdubbing.
+			  pLS->waitingForSync = 0;
+			  pLS->nextState = -1;
+			  lMultiCtrl = MULTI_UNDO;
+		  }
+		  else if (pLS->state == STATE_PLAY && head && head->prev) {
+			  // Stopped at once: undo removes the layer just committed.
+			  lMultiCtrl = MULTI_UNDO;
+		  }
+	  }
+	  else if (from == STATE_PLAY) {
+		  // The eager press was a start, from playing.
+		  if (pLS->state == STATE_OVERDUB && !pLS->waitingForSync
+		      && head && head->prev) {
+			  discardEagerOverdubLayer(pLS);
+			  pLS->state = STATE_PLAY;
+			  pLS->wasMuted = false;
+			  if (pLS->headLoopChunk && pLS->headLoopChunk->prev) {
+				  lMultiCtrl = MULTI_UNDO;   // and undo the layer under it
+			  }
+		  }
+		  else if (pLS->state == STATE_PLAY && pLS->waitingForSync
+			   && pLS->nextState == STATE_OVERDUB) {
+			  // Start still queued: drop it, then undo the last layer.
+			  pLS->waitingForSync = 0;
+			  pLS->nextState = -1;
+			  if (head && head->prev) {
+				  lMultiCtrl = MULTI_UNDO;
+			  }
+		  }
+	  }
+	  else if (from == STATE_MUTE) {
+		  // The eager press was a start, from muted (the overdub made the
+		  // loop audible).  Handled here rather than through MULTI_UNDO,
+		  // whose muted branch only holds the play level: back to muted
+		  // needs an explicit fade-out.
+		  if (pLS->state == STATE_OVERDUB && !pLS->waitingForSync
+		      && head && head->prev) {
+			  discardEagerOverdubLayer(pLS);
+			  if (pLS->headLoopChunk && pLS->headLoopChunk->prev) {
+				  undoLoop(pLS, false);      // the layer under it; redo-able
+			  }
+			  pLS->state = STATE_MUTE;
+			  pLS->wasMuted = true;
+			  pLS->fPlayFadeDelta = -1.0f / xfadeSamples;
+		  }
+		  else if (pLS->state == STATE_MUTE && pLS->waitingForSync
+			   && pLS->nextState == STATE_OVERDUB) {
+			  pLS->waitingForSync = 0;
+			  pLS->nextState = -1;
+			  if (head && head->prev) {
+				  lMultiCtrl = MULTI_UNDO;   // silent: already muted
+			  }
+		  }
+	  }
+	  else if (from == STATE_RECORD || from == STATE_TRIG_STOP) {
+		  // The eager press ended a record into an overdub: drop the
+		  // overdub, keep the take.
+		  if (pLS->state == STATE_OVERDUB && !pLS->waitingForSync
+		      && head && head->prev) {
+			  discardEagerOverdubLayer(pLS);
+			  pLS->state = STATE_PLAY;
+			  pLS->wasMuted = false;
+		  }
+		  else if (pLS->state == STATE_TRIG_STOP && pLS->waitingForSync
+			   && pLS->nextState == STATE_OVERDUB) {
+			  pLS->nextState = STATE_PLAY;   // the record ends as usual
+		  }
+	  }
+	  // Anything else -- another origin, or the state has moved on in a
+	  // way these cases do not cover -- is left alone.
+  }
+  //====== albEnd ====================================================================================
   else if (lMultiCtrl == MULTI_RECORD_OR_OVERDUB) {
 	  if (!pLS->headLoopChunk || pLS->state == STATE_OFF || pLS->state == STATE_OFF_MUTE || pLS->state == STATE_RECORD 
 	      || pLS->state == STATE_TRIG_START || pLS->state == STATE_TRIG_STOP 
@@ -2804,6 +2923,15 @@ runSooperLooper(LADSPA_Handle Instance,
   
   if (lMultiCtrl >= 0 && lMultiCtrl <= 127)
   {
+	  //------ albBegin ----------------------------------
+	  // CANCEL_OVERDUB_UNDO bookkeeping: remember whether this command is
+	  // an overdub press, and the state it found (before the dispatch below
+	  // changes it).  Any other command clears it, so cancel_overdub_undo
+	  // only ever acts on an overdub press immediately before it.  Placed
+	  // after the remaps above, so record_or_overdub resolving to an
+	  // overdub counts too.
+	  pLS->lLastOverdubFrom = (lMultiCtrl == MULTI_OVERDUB) ? pLS->state : -1;
+	  //------ albEnd ----------------------------------
           DBG(fprintf(stderr, "Multictrl val is %ld\n", lMultiCtrl));
 
      //lMultiCtrl = lMultiCtrl;

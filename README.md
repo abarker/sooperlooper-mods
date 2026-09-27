@@ -14,7 +14,7 @@ a fraction of the current quantize cycle, and is configurable via the
 session file or live over OSC. Also fixes a stock 1.7.9 bug where a
 quantized Pause press while Muted resolved to Playing instead of Paused.
 
-**`cancel_record_mute` and record failsafe.**  Plain `record` already
+**`cancel_record_mute`, `cancel_overdub_undo` and record failsafe.**  Plain `record` already
 carries a loop from recording into play on its own — that part needs
 nothing new.  What `cancel_record_mute` adds is a clean way to stop that
 play again without needing a second button.  An optional second trigger on the same switch does the
@@ -31,7 +31,9 @@ isn't undoing a mistake, they're choosing to stop play in favor of
 silence, on the same pedal.  A companion setting, record failsafe (off by
 default), covers the
 case where that second trigger never comes at all — a record simply left
-running too long, with no press of any kind.
+running too long, with no press of any kind.  `cancel_overdub_undo` does
+the same job for an overdub switch: its long press undoes the last overdub,
+even though the press has already started a new one.
 
 **JACK sync through tempo changes.**  With a JACK timebase master such
 as Hydrogen, stock SooperLooper's sync pulses drift off the master's beat

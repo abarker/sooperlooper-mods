@@ -10,8 +10,10 @@ more precise:
   through tempo changes;
 - SooperLooper can take commands, and send MIDI clock, over JACK MIDI
   directly;
-- a new command cancels a recording just started, and an optional timeout
-  cancels a recording left running over a playing loop;
+- two new commands for a switch's long or double press: one cancels a
+  recording just started, the other undoes the last overdub even though
+  the press has already started a new one; and an optional timeout cancels
+  a recording left running over a playing loop;
 - a separate large-text display, ``slbigstate``, shows loop state from
   across the room;
 - a latency tool, ``sllatency``, measures JACK's and SooperLooper's latency
@@ -151,6 +153,11 @@ item links to its full description.
   latency on the record itself; doing nothing in other states is what
   makes that safe.  See `New Command:
   cancel_record_mute`_.
+
+- **New command** ``cancel_overdub_undo``.  The same idea for an overdub
+  switch: its long or double press undoes the last overdub, as if the
+  eager ``overdub`` its press already fired had not happened.  Never
+  removes a loop's first take.  See `New Command: cancel_overdub_undo`_.
 
 - **Record failsafe.**  If a recording that cut off a playing loop is left
   running longer than ``record_failsafe_seconds``, it is cancelled
@@ -342,6 +349,50 @@ The third row is the accident the design has to tolerate: pressing to end a
 recording and lingering on the pedal must not destroy the take.  How the
 command tells these cases apart, and what it changes internally, is in
 `cancel_record_mute Implementation`_ in the appendix.
+
+New Command: ``cancel_overdub_undo``
+------------------------------------
+
+Undo on the overdub switch.  Every press of that switch fires ``overdub``
+at once, so overdubs start with no added delay; a long press (or double
+press) then fires ``cancel_overdub_undo``, which undoes as if that overdub
+press had not happened.  Plain ``undo`` in that position would act on
+whatever the press had just done -- usually undoing only the new, empty
+overdub the press started.
+
+What happens, by what the overdub press just before it did:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - The overdub press ...
+     - What happens
+   * - started an overdub on a playing loop
+     - That new overdub is thrown away, and the overdub before it is
+       undone.  If there is no earlier overdub -- only the loop's first
+       take -- just the new overdub is thrown away.
+   * - started an overdub on a muted loop
+     - The same, and the loop goes back to muted.
+   * - was waiting for the beat to start an overdub
+     - The waiting overdub is cancelled, and the last overdub undone.
+   * - stopped the overdub in progress (at once, or waiting for the beat)
+     - That overdub is undone.
+   * - ended a recording into an overdub
+     - The overdub is dropped; the recording is kept and plays.
+   * - anything else, or another command came after the overdub press
+     - Nothing.
+
+It never removes a loop's first take, only the overdubs on top of it.
+``redo`` brings back an overdub it undid, but never the new one the press
+had started.  Waiting for the beat only happens with SooperLooper's
+"overdub quantized" option on.
+
+A long press is the safer gesture for it: a quick double tap on an overdub
+switch can be meant -- to overdub a short phrase and stop -- and would then
+undo instead.  Bind it to the switch's long (or double) press output in
+SooperLooper's MIDI bindings, like any command.  How it works inside the
+engine is in `cancel_overdub_undo Implementation`_ in the appendix.
 
 New Feature: record failsafe
 -----------------------------------
@@ -1299,6 +1350,39 @@ remap branch).
    the enum but not the literals, silently remapping commands **with no
    compile error**.  Six ``static_assert``\ s now guard this.
 
+
+``cancel_overdub_undo`` Implementation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The command is a remap in ``run()``, next to ``cancel_record_mute``'s.
+Each command dispatch records whether it is an overdub press, and the
+state it found the loop in (``lLastOverdubFrom``; any other command resets
+it), so ``cancel_overdub_undo`` knows what the press just before it did.
+From there:
+
+- *A stop* (it found the loop overdubbing): a stop still waiting for the
+  beat is cancelled and the command becomes an ordinary ``undo``, which
+  discards the running overdub; a stop that happened at once becomes an
+  ordinary ``undo`` of the layer just committed.
+- *A start from playing*: the new overdub layer is discarded at once
+  (``discardEagerOverdubLayer()``), then an ordinary ``undo`` removes the
+  layer below it, if that is not the first take.  A start still waiting
+  for the beat is cancelled, then the same ``undo``.
+- *A start from muted*: as above, but the undo is done directly and the
+  loop fades back to muted, because ``undo``'s own muted branch only holds
+  the play level, which the overdub had raised.
+- *A record ended into an overdub*: the overdub layer is discarded and the
+  loop plays the take; if the change was still waiting for the beat, the
+  record simply ends there as usual.
+
+Discarding the new layer is instant rather than crossfaded.  It is not
+heard: the overdub writes behind the play position, by the latency, so at
+the play position the discarded layer and the one below it hold the same
+audio.  Input writing stops at once, so the layer below -- which may later
+be undone and redone -- takes none of it; and the discarded layer is
+unlinked from the undo history, so ``redo`` cannot bring it back.  Tests:
+``testdef_cancel_overdub_undo.py``, one per case above, each checking the
+loop's audio, including after ``redo``.
 
 Quantized Pause from Muted Now Resolves to Paused
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

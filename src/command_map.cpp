@@ -65,6 +65,7 @@ CommandMap::CommandMap()
 	// (/sl/N/hit "cancel_record_mute"), .slb MIDI binding files, and the
 	// reverse enum->string map; they all read this table.
 	_str_cmd_map["cancel_record_mute"]  = Event::CANCEL_RECORD_MUTE;
+	_str_cmd_map["cancel_overdub_undo"]  = Event::CANCEL_OVERDUB_UNDO;
 	//------ albEnd ----------------------------------
 	_str_cmd_map["pause"]  = Event::PAUSE;
 	_str_cmd_map["pause_on"]  = Event::PAUSE_ON;

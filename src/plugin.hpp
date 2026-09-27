@@ -216,6 +216,14 @@ typedef struct {
 	
 	long lLastMultiCtrl;
 
+	//------ albBegin ----------------------------------
+	// CANCEL_OVERDUB_UNDO: the state the most recent command found the
+	// loop in, if that command was an overdub press; -1 if the most recent
+	// command was anything else.  Set at the start of every command
+	// dispatch in run(), read (and cleared) by cancel_overdub_undo.
+	long lLastOverdubFrom;
+	//------ albEnd ----------------------------------
+
 	// initial location of params
 	LADSPA_Data fQuantizeMode;
 	LADSPA_Data fRoundMode;    
