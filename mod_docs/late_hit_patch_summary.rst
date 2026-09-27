@@ -292,7 +292,7 @@ or in software between it and SooperLooper.  Normally such a switch has to
 wait before sending anything: a tap is only known to be a tap once the
 hold time has passed, or once no second tap has followed.  That wait
 delays the tap's command, and for ``record`` or ``overdub``, where timing
-is the point, the delay costs more than the extra gesture is worth.
+is the point, the delay can cost more than the extra gesture is worth.
 
 The way around it is *eager firing*: the switch sends its main command the
 moment it is pressed, every time, and then sends a second message if the
@@ -412,18 +412,24 @@ What happens, by what the overdub press just before it did:
      - That overdub is undone.
    * - ended a recording into an overdub
      - The overdub is dropped; the recording is kept and plays.
-   * - anything else, or another command came after the overdub press
+   * - found the loop multiplying, inserting, replacing, substituting,
+       in delay, paused, empty, or waiting to start a recording
+     - Nothing.  If the press itself started an overdub from there, that
+       overdub keeps going.
+   * - (no overdub press came just before: the command arrived on its
+       own, or another command came in between)
      - Nothing.
 
 It never removes a loop's first take -- the oldest layer in its undo
-history -- only what was added on top of it.
-``redo`` brings back an overdub it undid, but never the new one the press
-had started.  Waiting for the beat only happens with SooperLooper's
-"overdub quantized" option on.
+history -- only what was added on top of it.  A ``redo`` brings back an
+overdub it undid, but never the new one the press had started.  Waiting
+for the beat only happens with SooperLooper's "overdub quantized" option
+on.
 
-A long press is the safer gesture for it: a quick double tap on an overdub
-switch can be meant -- to overdub a short phrase and stop -- and would then
-undo instead.  Bind it to the switch's long (or double) press output in
+A long press is the safer gesture for it.  Two quick taps on an overdub
+switch are sometimes meant as two taps -- to overdub a short phrase and
+stop -- and with this command on the double tap, they would undo
+instead.  Bind it to the switch's long (or double) press output in
 SooperLooper's MIDI bindings, like any command.  How it works inside the
 engine is in `cancel_overdub_undo Implementation`_ in the appendix.
 
