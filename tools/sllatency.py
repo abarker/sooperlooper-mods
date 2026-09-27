@@ -621,6 +621,17 @@ class SLRun:
         sl.set("eighth_per_cycle", 2.0)
         sl.set("tempo", self.bpm)
         sl.set("sync_source", -3.0)          # SooperLooper's internal tempo
+        # Wait until SooperLooper reports all of it: a record pressed before
+        # the sync settings take effect is not quantized, and the loop then
+        # cannot be measured.
+        want = [(("sync_source", None), -3.0), (("tempo", None), float(self.bpm)),
+                (("eighth_per_cycle", None), 2.0), (("sync", i), 1.0),
+                (("quantize", i), 1.0)]
+        deadline = time.time() + 3.0
+        while time.time() < deadline:
+            if all(sl.get(k, loop=l) == v for (k, l), v in want):
+                break
+            time.sleep(0.1)
         time.sleep(0.3)
 
     def restore(self):
@@ -728,13 +739,19 @@ def ask(question, default=False):
 
 # ------------------------------------------------------- JACK's settings
 
-def jack_settings():
-    """JACK's buffer settings and QJackctl's extra latencies:
+def jack_settings(blocksize):
+    """JACK's buffer settings and extra latencies:
     {period, nperiods, in_extra, out_extra}.  Read through jackdbus's own
-    interface (``jack_control dp``) -- only when jackdbus is the server
-    running, checked by asking D-Bus whether the name is owned, which
-    starts nothing.  Empty when not available (plain jackd, PipeWire's
-    JACK, another OS); the report then speaks in totals."""
+    interface (``jack_control dp``) -- only when jackdbus is running a
+    server and it is the one this tool is connected to: jackdbus can be
+    registered on D-Bus, holding saved settings, while JACK was started
+    some other way.  Checks, none of which starts anything: the D-Bus name
+    is owned, ``jack_control status`` says started, no other server was
+    asked for by name, and jackdbus's period matches this server's.  Empty
+    otherwise (plain jackd, PipeWire's JACK, another OS); the report then
+    speaks in totals."""
+    if os.environ.get("JACK_DEFAULT_SERVER", "default") != "default":
+        return {}
     try:
         owned = subprocess.run(
             ["dbus-send", "--session", "--print-reply",
@@ -742,6 +759,10 @@ def jack_settings():
              "org.freedesktop.DBus.NameHasOwner", "string:org.jackaudio.service"],
             capture_output=True, text=True, timeout=5).stdout
         if "boolean true" not in owned:
+            return {}
+        status = subprocess.run(["jack_control", "status"], capture_output=True,
+                                text=True, timeout=5).stdout
+        if "started" not in status.split():
             return {}
         txt = subprocess.run(["jack_control", "dp"], capture_output=True,
                              text=True, timeout=5).stdout
@@ -755,6 +776,8 @@ def jack_settings():
         m = re.search(r":(\d+)\)\s*$", line)
         if k and m:
             out[k] = int(m.group(1))
+    if out.get("period") != blocksize:
+        return {}
     return out
 
 
@@ -1218,7 +1241,7 @@ examples:
                for p in (candidates or [inp])}
     lat_in = lat_ins[inp]
     probe.close()
-    js = jack_settings()
+    js = jack_settings(blocksize)
 
     sl_run = None
     if not args.no_sl and not hardware:

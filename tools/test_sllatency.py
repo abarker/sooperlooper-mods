@@ -489,7 +489,9 @@ def apply_save_tests(sl, port, client, tmp, session, il, ol):
                                answers="\ny\ny\n%s\n" % path2)
     got2 = (sl.get("input_latency", loop=0), sl.get("output_latency", loop=0))
     saved_ok2, n2 = _check_saved(path2, orig2, int(got2[0]), int(got2[1]))
-    ok2 = got2 == got and saved_ok2 and "Save them in a session file?" in report
+    # Two separate measurements: allow them to differ by a sample.
+    ok2 = (got2[0] is not None and abs((got2[0] + got2[1]) - (got[0] + got[1])) <= 1
+           and saved_ok2 and "Save them in a session file?" in report)
     fails += not ok2
     print("%s interactive apply and save (asked for the file path): live %s, "
           "file changed in %d line(s)" % ("PASS" if ok2 else "FAIL", got2, n2))
@@ -633,6 +635,51 @@ def buzz_tests():
     return fails
 
 
+def jackdbus_settings_tests():
+    """jackdbus's settings are used only when it is running the server this
+    tool is connected to (a registered but stopped jackdbus keeps its saved
+    settings, which once showed in a run on another server)."""
+    import types
+    fails = 0
+    dp = ("--- get driver parameters\n"
+          "              period: Frames per period (uint:set:1024:256)\n"
+          "            nperiods: Number of periods (uint:set:2:3)\n"
+          "       input-latency: Extra input latency (frames) (uint:set:0:343)\n"
+          "      output-latency: Extra output latency (frames) (uint:set:0:343)\n")
+    real_run = sllatency.subprocess.run
+    saved_env = os.environ.get("JACK_DEFAULT_SERVER")
+    def fake(status):
+        def run(cmd, **kw):
+            out = {"dbus-send": "   boolean true", "status": "--- status\n" + status,
+                   "dp": dp}[cmd[0] if cmd[0] == "dbus-send" else cmd[1]]
+            return types.SimpleNamespace(stdout=out)
+        return run
+    cases = [("stopped", "stoped", 256, None, {}),
+             ("started, other period", "started", 1024, None, {}),
+             ("started, other server named", "started", 256, "sltest", {}),
+             ("started, same period", "started", 256, None,
+              {"period": 256, "nperiods": 3, "in_extra": 343, "out_extra": 343})]
+    try:
+        for name, status, bs, server, want in cases:
+            sllatency.subprocess.run = fake(status)
+            if server:
+                os.environ["JACK_DEFAULT_SERVER"] = server
+            else:
+                os.environ.pop("JACK_DEFAULT_SERVER", None)
+            got = sllatency.jack_settings(bs)
+            ok = got == want
+            fails += not ok
+            print("%s jackdbus settings, %s: %s" % ("PASS" if ok else "FAIL", name,
+                                                   "used" if got else "ignored"))
+    finally:
+        sllatency.subprocess.run = real_run
+        if saved_env is None:
+            os.environ.pop("JACK_DEFAULT_SERVER", None)
+        else:
+            os.environ["JACK_DEFAULT_SERVER"] = saved_env
+    return fails
+
+
 def jack_report_tests():
     """JACK's result section, with jackdbus-style settings (the test server
     is plain jackd, which never reports them): absolute new values, the
@@ -716,7 +763,8 @@ def main():
     jackd = subprocess.Popen(["jackd", "-n", SERVER, "-d", "dummy", "-r", str(SR),
                               "-p", str(PERIOD)],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    fails = suggest_tests() + jack_report_tests() + buzz_tests() + session_save_tests()
+    fails = (suggest_tests() + jack_report_tests() + jackdbus_settings_tests()
+             + buzz_tests() + session_save_tests())
     try:
         time.sleep(2.0)
         cases = [
