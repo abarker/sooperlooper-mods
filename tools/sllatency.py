@@ -841,11 +841,11 @@ def quick_report(args, interactive, sl_ports, sr):
     """ % (jack_in, ms(jack_in), jack_out, ms(jack_out)))
     il, ol = int(l0["input_latency"]), int(l0["output_latency"])
     print()
-    row = "   %-32s %7s %7s %7s"
+    row = "   %-34s %7s %7s %7s"
     say(row % ("SooperLooper latency (samples)", "input", "output", "total"))
-    say(row % ("current (%s)" % ("autoset" if l0.get("autoset_latency") else "manual"),
+    say(row % ("current (%s):" % ("autoset" if l0.get("autoset_latency") else "manual"),
                il, ol, il + ol))
-    say(row % ("suggested (reported)", jack_in, jack_out, jack_in + jack_out))
+    say(row % ("suggested (JACK's reports):", jack_in, jack_out, jack_in + jack_out))
     within = abs(ms((jack_in + jack_out) - (il + ol))) <= args.tolerance
     if within:
         print()
@@ -1378,13 +1378,14 @@ examples:
     auto_misses = (auto_in is not None and jack_in is not None
                    and (auto_in < jack_in or auto_out < jack_out))
     print()
-    row = "   %-32s %7s %7s %7s"
+    row = "   %-34s %7s %7s %7s"
     say(row % ("SooperLooper latency (samples)", "input", "output", "total"))
-    say(row % ("current (%s)" % ("autoset" if l0.get("autoset_latency") else "manual"),
+    say(row % ("current (%s):" % ("autoset" if l0.get("autoset_latency") else "manual"),
                il, ol, il + ol))
     if auto_in is not None:
-        say(row % ("autoset would use", auto_in, auto_out, auto_in + auto_out))
-    say(row % ("measured best", new_in, new_out, total))
+        say(row % ("SooperLooper's autoset would use:", auto_in, auto_out,
+                   auto_in + auto_out))
+    say(row % ("measured best:", new_in, new_out, total))
     print()
     if jack_in is not None:
         explain("""

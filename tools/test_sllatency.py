@@ -365,8 +365,8 @@ def quick_mode_test(sl, port, client):
         cap = sllatency.port_latency(c.get_port_by_name("system:capture_1"), False)[1]
         pb = sllatency.port_latency(c.get_port_by_name("system:playback_1"), True)[1]
         _, _, report = run_tool(1230, port, client, extra=["--reported"])
-        row = [l for l in report.splitlines() if "suggested (reported)" in l]
-        got = tuple(int(v) for v in row[0].split("suggested (reported)")[1].split()[:2]) \
+        row = [l for l in report.splitlines() if "suggested (JACK's reports):" in l]
+        got = tuple(int(v) for v in row[0].split("suggested (JACK's reports):")[1].split()[:2]) \
             if row else None
         ok = got == (cap, pb) and "Round trip:" not in report
         print("%s quick mode suggests JACK's figures: %s (expected %s), no clicks played"
@@ -406,8 +406,8 @@ def autoset_row_tests(sl, port, client):
             sl.set("use_common_outs", common, loop=0)
             time.sleep(0.3)
             _, _, report = run_tool(1230, port, client)
-            row = [l for l in report.splitlines() if "autoset would use" in l]
-            got = tuple(int(v) for v in row[0].split("autoset would use")[1].split()[:2]) \
+            row = [l for l in report.splitlines() if "autoset would use:" in l]
+            got = tuple(int(v) for v in row[0].split("autoset would use:")[1].split()[:2]) \
                 if row else None
             said_short = "Autoset would come out short" in report
             ok = got == expect and said_short == short
