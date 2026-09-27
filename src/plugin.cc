@@ -1177,7 +1177,9 @@ activateSooperLooper(LADSPA_Handle Instance) {
   //cerr << "Activate: " << pLS << endl;
 	 
   pLS->lLastMultiCtrl = -1;
-  pLS->lLastOverdubFrom = -1;   // alb: CANCEL_OVERDUB_UNDO bookkeeping
+  //------ albBegin ----------------------------------
+  pLS->lLastOverdubFrom = -1;   // cancel_overdub_undo bookkeeping
+  //------ albEnd ----------------------------------
 
   //====== albBegin ==================================================================================
   // Activation banner: always logged to confirm experimental build is active.

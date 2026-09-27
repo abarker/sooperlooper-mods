@@ -155,9 +155,10 @@ item links to its full description.
   cancel_record_mute`_.
 
 - **New command** ``cancel_overdub_undo``.  The same idea for an overdub
-  switch: its long or double press undoes the last overdub, as if the
-  eager ``overdub`` its press already fired had not happened.  Never
-  removes a loop's first take.  See `New Command: cancel_overdub_undo`_.
+  switch: its long or double press undoes as if the eager ``overdub`` its
+  press already fired had not happened -- usually taking back the last
+  overdub.  Never removes a loop's first take.  See `New Command:
+  cancel_overdub_undo`_.
 
 - **Record failsafe.**  If a recording that cut off a playing loop is left
   running longer than ``record_failsafe_seconds``, it is cancelled
@@ -283,8 +284,22 @@ exactly as the unpatched version.
 How the start and stop corrections work inside the engine is in
 `Late-Hit Record Start and Stop: Implementation`_ in the appendix.
 
+Commands for a Switch's Long or Double Press
+--------------------------------------------
+
+A footswitch can fire its command the moment it is pressed -- an "eager
+single" in the remapper -- so the command's timing gets no added delay,
+and still have a second action on a long or double press.  But by the
+time the long or double press is recognised, the first command has
+already acted.  These two commands are made for that second action: each
+first reverses what its switch's command has just done, according to
+what that was, then does its own job, and does nothing where there is
+nothing to reverse.  Each belongs on the switch whose command it follows:
+``cancel_record_mute`` after ``record``, ``cancel_overdub_undo`` after
+``overdub``.
+
 New Command: ``cancel_record_mute``
-------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Cancels a recording that has started, or one still waiting for the beat,
 and brings back the previous take.  It mutes the loop only if something was
@@ -351,7 +366,7 @@ command tells these cases apart, and what it changes internally, is in
 `cancel_record_mute Implementation`_ in the appendix.
 
 New Command: ``cancel_overdub_undo``
-------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Undo on the overdub switch.  Every press of that switch fires ``overdub``
 at once, so overdubs start with no added delay; a long press (or double
@@ -369,13 +384,16 @@ What happens, by what the overdub press just before it did:
    * - The overdub press ...
      - What happens
    * - started an overdub on a playing loop
-     - That new overdub is thrown away, and the overdub before it is
-       undone.  If there is no earlier overdub -- only the loop's first
-       take -- just the new overdub is thrown away.
+     - That new overdub is thrown away, then an ordinary undo takes back
+       the loop's last change before it -- usually the previous overdub,
+       but whatever was done last, such as a multiply or a replace.  If
+       that would reach the loop's first take, only the new overdub is
+       thrown away.
    * - started an overdub on a muted loop
      - The same, and the loop goes back to muted.
    * - was waiting for the beat to start an overdub
-     - The waiting overdub is cancelled, and the last overdub undone.
+     - The waiting overdub is cancelled, and the loop's last change
+       undone, as above.
    * - stopped the overdub in progress (at once, or waiting for the beat)
      - That overdub is undone.
    * - ended a recording into an overdub
@@ -383,7 +401,8 @@ What happens, by what the overdub press just before it did:
    * - anything else, or another command came after the overdub press
      - Nothing.
 
-It never removes a loop's first take, only the overdubs on top of it.
+It never removes a loop's first take -- the oldest layer in its undo
+history -- only what was added on top of it.
 ``redo`` brings back an overdub it undid, but never the new one the press
 had started.  Waiting for the beat only happens with SooperLooper's
 "overdub quantized" option on.
