@@ -656,7 +656,12 @@ muted.  Then run ``sllatency`` and follow the prompts:
    mic right against a speaker, or connect a cable from an output to that
    input.  With a speaker, keep the mic within a few centimetres: sound
    takes about 3 ms per metre, and that would be counted as latency.  With
-   a cable into a mic input, turn the input gain down first.
+   a cable into a mic input, turn the input gain down first.  Keep it quiet
+   by the mic: turn down or switch off amps and anything else that hums or
+   buzzes.  The tool listens only around the click's own pitch and ignores
+   returns too early to be real, so noise makes it report that the clicks
+   did not come back clearly rather than give a wrong figure, but steady
+   noise can still hide a quiet click.
 3. Press Enter.  If loop 1 records from more than one input (a stereo
    loop), a few clicks first find which input hears them best; that one is
    used as the mic input.

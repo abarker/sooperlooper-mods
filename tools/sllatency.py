@@ -343,9 +343,32 @@ class SooperLooper:
 
 # -------------------------------------------------------------- analysis
 
+def _band(x, sr, lo=800.0, hi=3500.0):
+    """Keep only the click's own frequency range (it is a 2 kHz burst):
+    mains hum, amp buzz and rumble below it, and hiss above it, no longer
+    compete with a quiet return.  Done by FFT, so it adds no delay; the
+    reference click goes through the same filter, so timing stays
+    consistent."""
+    n = len(x)
+    if n < 16:
+        return x.astype(np.float64)
+    pad = int(0.02 * sr)
+    xp = np.concatenate([np.zeros(pad), x.astype(np.float64), np.zeros(pad)])
+    X = np.fft.rfft(xp)
+    f = np.fft.rfftfreq(len(xp), 1.0 / sr)
+    # Smooth (raised-cosine) edges an octave wide, to avoid ringing.
+    g = np.zeros_like(f)
+    g[(f >= lo) & (f <= hi)] = 1.0
+    lo_e = (f > lo / 2) & (f < lo)
+    g[lo_e] = 0.5 - 0.5 * np.cos(np.pi * (f[lo_e] - lo / 2) / (lo / 2))
+    hi_e = (f > hi) & (f < 2 * hi)
+    g[hi_e] = 0.5 + 0.5 * np.cos(np.pi * (f[hi_e] - hi) / hi)
+    return np.fft.irfft(X * g, len(xp))[pad:pad + n]
+
+
 def _envelope(x, sr):
     w = max(1, int(0.00025 * sr))          # 0.25 ms smoothing
-    return np.convolve(np.abs(x.astype(np.float64)), np.ones(w) / w, mode="same")
+    return np.convolve(np.abs(_band(x, sr)), np.ones(w) / w, mode="same")
 
 
 def onset(env, lo, hi, frac=0.2):
@@ -376,8 +399,10 @@ def _click_ref(click, sr):
     return onset(np.concatenate([np.zeros(2000), env_c]), 2000, 2000 + len(env_c)) - 2000
 
 
-def measure_round_trip(rec, starts, click, sr, max_latency_ms):
-    """Per-click lag (samples) from each click's start to its return."""
+def measure_round_trip(rec, starts, click, sr, max_latency_ms, min_lag=0):
+    """Per-click lag (samples) from each click's start to its return.  A
+    lag under `min_lag` is not a return (nothing comes back through JACK
+    in less than one period) and is left out."""
     ref = _click_ref(click, sr)
     env = _envelope(rec, sr)
     maxlag = int(max_latency_ms / 1000.0 * sr)
@@ -385,7 +410,9 @@ def measure_round_trip(rec, starts, click, sr, max_latency_ms):
     for s in starts:
         o = onset(env, int(s), int(s) + maxlag + len(click))
         if o is not None:
-            lags.append(o - (s + ref))
+            lag = o - (s + ref)
+            if lag >= min_lag:
+                lags.append(lag)
     return np.array(lags)
 
 
@@ -491,7 +518,7 @@ def input_candidates(client, sl_client, any_port=False):
     return []
 
 
-def strongest_input(outs, candidates, sr, bpm, level, max_latency_ms):
+def strongest_input(outs, candidates, sr, bpm, level, max_latency_ms, min_lag=0):
     """Play a few clicks and record every candidate input; return the one
     with the most clicks back, then the loudest, and each one's
     (clicks back, peak level)."""
@@ -501,7 +528,7 @@ def strongest_input(outs, candidates, sr, bpm, level, max_latency_ms):
     recs = rec.run(signal)
     heard = {}
     for port, r in zip(candidates, recs):
-        lags = measure_round_trip(r, starts, click, sr, max_latency_ms)
+        lags = measure_round_trip(r, starts, click, sr, max_latency_ms, min_lag)
         heard[port] = (len(lags), float(np.abs(r).max()) if len(r) else 0.0)
     best = max(candidates, key=lambda p: heard[p])
     return best, heard, len(starts)
@@ -1162,6 +1189,10 @@ examples:
             centimetres: sound takes about 3 ms per metre through the air, and
             that would be counted as latency.  Don't wear the headphones: the
             click level is %.2f of full scale.
+
+            Keep it quiet by the mic during the run: turn down or switch off
+            amps and anything else that hums or buzzes.  Steady noise can hide
+            the returning click.
         """ % args.level)
     else:
         explain("""
@@ -1203,7 +1234,8 @@ examples:
         """ % (" and ".join(candidates), " and ".join(outs)))
         print()
         inp, heard, n = strongest_input(outs, candidates, sr, args.bpm,
-                                        args.level, args.max_latency)
+                                        args.level, args.max_latency,
+                                        blocksize - 2)
         for p in candidates:
             say("   %-24s %d of %d clicks back, peak %.3f" % (p, heard[p][0], n,
                                                               heard[p][1]))
@@ -1265,10 +1297,13 @@ examples:
     if rec.xruns:
         say("   WARNING: %d xrun(s) during the run -- the result may be wrong; "
             "run it again." % rec.xruns)
-    lags = measure_round_trip(recs[0], starts, click, sr, args.max_latency)
+    # Nothing comes back through JACK in less than one period.
+    lags = measure_round_trip(recs[0], starts, click, sr, args.max_latency,
+                              blocksize - 2)
     if len(lags) < max(3, len(starts) // 2):
         say("   Only %d of %d clicks came back clearly.  Raise --level, move the "
-            "headphones closer to the mic, or check the connections."
+            "headphones closer to the mic, quieten background noise (an amp's "
+            "hum or buzz), or check the connections."
             % (len(lags), len(starts)))
         if not len(lags):
             return 1

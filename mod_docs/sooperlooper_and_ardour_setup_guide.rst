@@ -481,7 +481,9 @@ and run ``sllatency`` in a terminal.  It asks which outputs to play a click
 on -- suggesting the ones SooperLooper is heard through -- and then asks
 you to balance the headphones on the mic loop 1 records from (or hold the
 mic right against a speaker, or connect a cable from an output to that
-input).  In about half a minute it measures the round trip, checks JACK's
+input).  Keep the room quiet while it runs -- turn down or switch off the
+amp and anything else that hums or buzzes near the mic.  In about half a
+minute it measures the round trip, checks JACK's
 latency settings, and checks where SooperLooper's loops land as you hear
 them, including any delay from the Ardour bus they are monitored through.
 It shows the values to set, and offers to apply them to SooperLooper and

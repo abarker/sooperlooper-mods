@@ -500,6 +500,34 @@ def apply_save_tests(sl, port, client, tmp, session, il, ol):
     return fails
 
 
+def buzz_tests():
+    """A buzzing amp by the mic (sharp 120 Hz spikes, locked to the click
+    rate as mains is) with a weak click return: the round trip must come
+    out right, or not at all -- never a buzz spike's time.  Before the
+    band filter, 0.002 buzz with a 0.010 return gave 390 for 1486, which
+    is how a rig run once read 74 samples.  No JACK needed."""
+    fails = 0
+    delay = 1486
+    for buzz, ret in ((0.002, 0.010), (0.005, 0.030), (0.010, 0.030), (0.050, 0.010)):
+        click = sllatency.make_click(SR, 0.3)
+        sig, starts = sllatency.build_output(SR, 120.0, 10.0, click)
+        n = len(sig)
+        t = np.arange(n) / SR
+        rng = np.random.default_rng(5)
+        rec = (buzz * np.exp(-((t * 120.0) % 1.0) * 40.0) * np.sign(np.sin(2 * np.pi * 60 * t))
+               + 0.0005 * rng.standard_normal(n))
+        rec[delay:] += ret / 0.3 * sig[:n - delay]
+        lags = sllatency.measure_round_trip(rec.astype(np.float32), starts, click, SR,
+                                            250.0, PERIOD - 2)
+        med = float(np.median(lags)) if len(lags) else None
+        ok = med is None or abs(med - delay) <= 1.0
+        fails += not ok
+        print("%s buzz %.3f, return %.3f: %s" % ("PASS" if ok else "FAIL", buzz, ret,
+              "%d clicks, %.1f (expected %d)" % (len(lags), med, delay) if med is not None
+              else "not measured (no wrong answer)"))
+    return fails
+
+
 def jack_report_tests():
     """JACK's result section, with jackdbus-style settings (the test server
     is plain jackd, which never reports them): absolute new values, the
@@ -583,7 +611,7 @@ def main():
     jackd = subprocess.Popen(["jackd", "-n", SERVER, "-d", "dummy", "-r", str(SR),
                               "-p", str(PERIOD)],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    fails = suggest_tests() + jack_report_tests()
+    fails = suggest_tests() + jack_report_tests() + buzz_tests()
     try:
         time.sleep(2.0)
         cases = [
