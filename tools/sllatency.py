@@ -50,14 +50,14 @@ def say(msg=""):
         print(msg, flush=True)
         return
     indent = " " * (len(msg) - len(msg.lstrip()))
-    print(textwrap.fill(msg.strip(), WIDTH, initial_indent=indent,
+    print(textwrap.fill(msg.strip(), WIDTH, break_on_hyphens=False, initial_indent=indent,
                         subsequent_indent=indent), flush=True)
 
 
 def say_field(label, value):
     """A "label:  value" line whose wrapped lines line up under the value."""
     head = "   %-13s" % label
-    print(textwrap.fill(value, WIDTH, initial_indent=head,
+    print(textwrap.fill(value, WIDTH, break_on_hyphens=False, initial_indent=head,
                         subsequent_indent=" " * len(head)), flush=True)
 
 
@@ -68,7 +68,7 @@ def explain(msg):
     for i, para in enumerate(paras):
         if i:
             print()
-        print(textwrap.fill(" ".join(para.split()), WIDTH,
+        print(textwrap.fill(" ".join(para.split()), WIDTH, break_on_hyphens=False,
                             initial_indent="   ", subsequent_indent="   "),
               flush=True)
 
@@ -99,7 +99,10 @@ def port_latency(port, playback):
     global _libjack
     try:
         if _libjack is None:
-            _libjack = ctypes.CDLL(ctypes.util.find_library("jack") or "libjack.so.0")
+            # The same library the jack module loaded (on Windows it is
+            # libjack64 or libjack, not "jack").
+            _libjack = ctypes.CDLL(getattr(jack, "_libname", None)
+                                   or ctypes.util.find_library("jack") or "libjack.so.0")
             _libjack.jack_port_get_latency_range.argtypes = [
                 ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(_Range)]
             _libjack.jack_port_get_latency_range.restype = None
@@ -690,7 +693,7 @@ def choose_outputs(client, interactive, sl_dests=()):
     for i, n in enumerate(names, 1):
         say("   %s %d  %s" % ("*" if n in guess else " ", i, n))
         f = feeds[n]
-        print(textwrap.fill(", ".join(f) if f else "(nothing)", WIDTH,
+        print(textwrap.fill(", ".join(f) if f else "(nothing)", WIDTH, break_on_hyphens=False,
                             initial_indent="          <- " if f else "          ",
                             subsequent_indent="             "), flush=True)
     if not interactive:
@@ -714,7 +717,8 @@ def ask(question, default=False):
     """A yes/no question, wrapped to the terminal; the answer goes after
     its last line."""
     text = textwrap.fill(question + " [%s]" % ("Y/n" if default else "y/N"),
-                         WIDTH - 2, initial_indent="   ", subsequent_indent="   ")
+                         WIDTH - 2, break_on_hyphens=False,
+                         initial_indent="   ", subsequent_indent="   ")
     lines = text.split("\n")
     for line in lines[:-1]:
         print(line)
@@ -759,62 +763,43 @@ def jack_settings():
 CONFIG = os.path.join(os.path.expanduser("~"), ".sooperlooper", "sllatency.conf")
 
 
-def session_from_cmdlines(procs, osc_port):
-    """From (cwd, argv) of running processes, the session file the
-    sooperlooper engine listening on osc_port was started with (its -L /
-    --load-session option), made absolute; None if there is none."""
-    for cwd, argv in procs:
-        if not argv or os.path.basename(argv[0]) != "sooperlooper":
-            continue
-        port, sess = 9951, None          # 9951: the engine's default port
-        i = 1
-        while i < len(argv):
-            a = argv[i]
-            nxt = argv[i + 1] if i + 1 < len(argv) else None
-            if a in ("-p", "--osc-port") and nxt is not None:
-                port, i = nxt, i + 2
-                continue
-            if a in ("-L", "--load-session") and nxt is not None:
-                sess, i = nxt, i + 2
-                continue
-            if a.startswith("--osc-port="):
-                port = a.split("=", 1)[1]
-            elif a.startswith("--load-session="):
-                sess = a.split("=", 1)[1]
-            elif a.startswith("-p") and len(a) > 2 and not a.startswith("--"):
-                port = a[2:]
-            elif a.startswith("-L") and len(a) > 2:
-                sess = a[2:]
-            i += 1
-        try:
-            port = int(port)
-        except ValueError:
-            continue
-        if port == osc_port and sess:
-            return os.path.normpath(os.path.join(cwd or "/", os.path.expanduser(sess)))
-    return None
-
-
-def running_session_file(osc_port):
-    """The session file the running SooperLooper engine was started with,
-    read from its command line (Linux /proc); None if not found -- another
-    OS, or an engine started without one (a session loaded later from
-    slgui's menu does not show here)."""
-    procs = []
-    try:
-        pids = [d for d in os.listdir("/proc") if d.isdigit()]
-    except OSError:
+def pick_session_file(initial):
+    """Show a file picker for the session file, starting at `initial` (the
+    file used last time) or the home folder.  Returns the chosen path, ""
+    if cancelled, or None when no picker can be shown: no tkinter
+    (Ubuntu package python3-tk), or no display (e.g. over SSH).  Uses
+    tkinter, which comes with Python on Windows and macOS."""
+    # On Linux and other X11/Wayland systems a window needs a display;
+    # Windows and macOS always have one.
+    if (os.name == "posix" and sys.platform != "darwin"
+            and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))):
         return None
-    for pid in pids:
+    try:
+        import tkinter
+        from tkinter import filedialog
+    except ImportError:
+        return None
+    try:
+        root = tkinter.Tk()
+    except tkinter.TclError:
+        return None
+    try:
+        root.withdraw()
         try:
-            with open("/proc/%s/cmdline" % pid, "rb") as f:
-                argv = [a.decode(errors="replace") for a in f.read().split(b"\0") if a]
-            if not argv or os.path.basename(argv[0]) != "sooperlooper":
-                continue
-            procs.append((os.readlink("/proc/%s/cwd" % pid), argv))
-        except OSError:
-            continue
-    return session_from_cmdlines(procs, osc_port)
+            root.attributes("-topmost", True)    # in front of the terminal
+        except tkinter.TclError:
+            pass
+        if initial and os.path.isfile(initial):
+            folder, name = os.path.dirname(initial), os.path.basename(initial)
+        else:
+            folder, name = os.path.expanduser("~"), ""
+        chosen = filedialog.askopenfilename(
+            parent=root, title="Session file to store the latency settings in",
+            initialdir=folder, initialfile=name,
+            filetypes=[("SooperLooper sessions", "*.slsess"), ("All files", "*")])
+        return chosen if isinstance(chosen, str) else ""
+    finally:
+        root.destroy()
 
 
 def remembered_session_file():
@@ -863,11 +848,12 @@ def save_latency_to_session(path, il, ol):
     with open(tmp, "w") as f:
         f.write(text)
     shutil.copymode(path, tmp)
-    st = os.stat(path)
-    try:
-        os.chown(tmp, st.st_uid, st.st_gid)   # works for the owner's own group, or root
-    except OSError:
-        pass
+    if hasattr(os, "chown"):                  # not on Windows
+        st = os.stat(path)
+        try:
+            os.chown(tmp, st.st_uid, st.st_gid)   # the owner's own group, or root
+        except OSError:
+            pass
     os.replace(tmp, path)
     return path, backup, n_in
 
@@ -936,10 +922,12 @@ def jack_report(js, cap, play, rt, tolerance_ms, sr):
     else:
         explain("""
             Change JACK's extra input + output latency by %+d samples in total,
-            shared between the two, then restart JACK.  They are the ALSA
-            backend's -I and -O options (in QJackctl: Setup, Advanced tab).
-            Their current values could not be read, because JACK is not
-            running through jackdbus.
+            shared between the two, then restart JACK.  With jackd these are
+            its audio backend's -I and -O options (in QJackctl: Setup,
+            Advanced tab); their current values could only be read if JACK
+            ran through jackdbus.  If JACK here is PipeWire's, those options
+            do not exist: adjust the audio device's latency in PipeWire's own
+            settings instead.
         """ % total)
 
 
@@ -1057,41 +1045,39 @@ def offer_apply_and_save(sl, args, interactive, il, ol, new_in, new_out, within,
 
     print()
     explain("""
-        These last until SooperLooper restarts.  To keep them, the tool can
-        change only the latency values in the session file SooperLooper loads
-        at startup (a backup copy is kept); the rest of the file stays exactly
-        as it is.
+        These last until SooperLooper restarts.  To keep them, they can be
+        saved in the session file SooperLooper loads at startup.  Only the
+        latency values are changed; everything else in the file stays as it
+        is.  Before it is changed, the file is copied in the same folder to
+        NAME.bak-YYYYMMDD-HHMMSS (the date and time), so it can be put back.
     """)
-    # Which file: --session-file, else the one the running SooperLooper
-    # was started with, else the one saved to last time.
-    path, source = args.session_file, "given with --session-file"
-    if not path:
-        path, source = running_session_file(args.sl_port), "SooperLooper was started with"
-    if not path:
-        path, source = remembered_session_file(), "saved to last time"
-    if interactive:
-        if not ask("Save them in the session file?"):
+    if not interactive:
+        if not args.save:
             return 0
-        if not args.session_file:
-            print()
-            if path:
-                say("   The session file %s:" % source)
-                say("      %s" % path)
-                ans = input("   Press Enter to save there, or type another file: ").strip()
-            else:
-                say("   Which session file does SooperLooper load at startup?")
-                ans = input("   Session file: ").strip()
-            if ans:
-                path = os.path.expanduser(ans)
+        path = args.session_file
         if not path:
-            say("   No session file given; nothing saved.")
+            say("   --save needs --session-file; nothing saved.")
+            return 1
+    else:
+        print()
+        if not ask("Save them in a session file?"):
             return 0
-    elif args.save and not path:
-        say("   --save needs --session-file: SooperLooper was not started with a "
-            "session file, and none was saved to before.")
-        return 1
-    if not (interactive or args.save):
-        return 0
+        path = args.session_file
+        if not path:
+            # A file picker, starting at the file used last time; typed
+            # instead when none can be shown, or input is not from a person.
+            known = remembered_session_file()
+            chosen = None
+            if sys.stdin.isatty():
+                say("   Choose the file in the window that opens...")
+                chosen = pick_session_file(known)
+            if chosen is None:
+                ans = input("   Session file%s: " % (" [%s]" % known if known else "")).strip()
+                chosen = os.path.expanduser(ans) if ans else (known or "")
+            path = chosen
+        if not path:
+            say("   No session file chosen; nothing saved.")
+            return 0
     if not os.path.isfile(path):
         say("   %s does not exist; nothing saved." % path)
         return 1
@@ -1164,7 +1150,8 @@ examples:
                     help="SooperLooper's JACK client name (default sooperlooper)")
     ap.add_argument("--session-file", metavar="FILE",
                     help="the SooperLooper session file loaded at startup, to "
-                         "save new values in.  Remembered for later runs.")
+                         "save new values in, instead of choosing it in a file "
+                         "picker.  Needed with --yes --save.")
     # Tests stand in for the audio interface with an ordinary JACK client.
     ap.add_argument("--as-hardware", action="store_true", help=argparse.SUPPRESS)
     # Debugging: save the recordings and click times to a .npz file.
@@ -1184,7 +1171,8 @@ examples:
     ap.add_argument("--apply", action="store_true",
                     help="with --yes: apply the recommended SooperLooper values")
     ap.add_argument("--save", action="store_true",
-                    help="with --yes and --apply: also save them in the session file")
+                    help="with --yes, --apply and --session-file: also save "
+                         "them in that session file")
     args = ap.parse_args()
     interactive = not args.yes
 

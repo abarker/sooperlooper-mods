@@ -639,7 +639,10 @@ It is installed with ``sooperlooper`` and ``slgui`` by the same ``make
 install``, into the same directory, as ``sllatency``.  It is a Python 3
 script and needs ``numpy`` and the Python ``jack`` module (Ubuntu packages
 ``python3-numpy`` and ``python3-jack-client``; or ``pip install numpy
-JACK-Client``).  The source is ``tools/sllatency.py``.
+JACK-Client``).  Choosing the session file in a file picker also needs
+tkinter (Ubuntu package ``python3-tk``; included with Python on Windows and
+macOS); without it the file name is typed instead.  The source is
+``tools/sllatency.py``.
 
 **Running it.**  Start JACK and SooperLooper with the usual session, and
 the DAW if SooperLooper is monitored through one.  Leave loop 1 empty or
@@ -719,13 +722,14 @@ in the session file SooperLooper loads at startup.  Saving changes only the
 ``auto_latency`` to ``no`` so they are used); everything else in the file
 stays as it was.
 
-It offers a file and says where it came from: the one given with
-``--session-file``; else the one the running SooperLooper was started with
-(its ``-L`` option, as ``slgui`` starts it with the session named in its
-own ``-L``); else the one saved to last time, remembered in
-``~/.sooperlooper/sllatency.conf`` for an engine started without one.
-Press Enter to save there, or type another file.  A session loaded later
-from ``slgui``'s menu is not detected; type its path.
+Before asking, it says how the file is backed up.  On yes, a file picker
+opens to choose the session file -- the one SooperLooper loads at startup
+(the file given to ``slgui`` or ``sooperlooper`` with ``-L``).  It starts
+at the file chosen last time, which is remembered in
+``~/.sooperlooper/sllatency.conf`` only for this purpose.  Cancelling
+saves nothing.  When no picker can be shown -- no tkinter, or no display,
+as over SSH -- the file name is typed instead, with the one chosen last
+time as the default.  ``--session-file`` skips the choice.
 
 A backup is made first, next to the file, named after it with the date and
 time added: ``my_session.slsess.bak-YYYYMMDD-HHMMSS``.  If the session file
@@ -784,8 +788,8 @@ a starting point, not a measurement.
      - No questions: use the suggested outputs; apply or save only with
        ``--apply`` / ``--save``.
    * - ``--apply``, ``--save``
-     - With ``--yes``: apply the measured-best values; with ``--save`` too,
-       also save them in the session file.
+     - With ``--yes``: apply the measured-best values; with ``--save`` and
+       ``--session-file`` too, also save them in that session file.
 
 **Limits.**  It measures loop 1 and applies the result to every loop, so
 it assumes all loops are recorded and monitored the same way.  The click
@@ -793,6 +797,24 @@ must come back on the same audio interface it was played from; two
 separately clocked devices drift against each other.  It tests a
 quantized recording, not the timing of a live pedal press (trigger
 latency).
+
+**Platforms.**  Tested on Linux with jackd (started by QJackctl).  It is
+written to run anywhere JACK, Python 3 and the ``jack`` module do, but is
+untested elsewhere:
+
+- *Linux with PipeWire's JACK:* the measurements should work.  PipeWire
+  has no extra input/output latency options, so the advice to change them
+  does not apply there; adjust the device's latency in PipeWire's own
+  settings instead.
+- *macOS:* should work, with JACK installed.  The advice gives only the
+  total change, since JACK's current extra latencies can be read only
+  through jackdbus, which is Linux-only.
+- *Windows:* not installed by the Windows build; running the script
+  directly should work where JACK and the ``jack`` module do, with the
+  same limitation as on macOS.
+
+The file picker needs a graphical desktop; elsewhere the file name is
+typed.
 
 Compile-Time Flags
 ------------------

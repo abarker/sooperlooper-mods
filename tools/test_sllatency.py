@@ -489,7 +489,7 @@ def apply_save_tests(sl, port, client, tmp, session, il, ol):
                                answers="\ny\ny\n%s\n" % path2)
     got2 = (sl.get("input_latency", loop=0), sl.get("output_latency", loop=0))
     saved_ok2, n2 = _check_saved(path2, orig2, int(got2[0]), int(got2[1]))
-    ok2 = got2 == got and saved_ok2 and "Save them in the session file?" in report
+    ok2 = got2 == got and saved_ok2 and "Save them in a session file?" in report
     fails += not ok2
     print("%s interactive apply and save (asked for the file path): live %s, "
           "file changed in %d line(s)" % ("PASS" if ok2 else "FAIL", got2, n2))
@@ -501,34 +501,27 @@ def apply_save_tests(sl, port, client, tmp, session, il, ol):
 
 
 def session_save_tests():
-    """Finding the session file and saving to it, without JACK or
-    SooperLooper: the running engine's -L option, symlinks, permissions, a
-    file with no latency values, and an empty answer."""
-    import tempfile, io, contextlib, types, builtins
+    """Saving to the session file, without JACK or SooperLooper: symlinks,
+    permissions, a file with no latency values, and the dialog -- the
+    notice before the question, the file picker (a stand-in here) chosen,
+    cancelled or unavailable, the file used last time as its starting
+    point, and scripted --save."""
+    import tempfile, io, contextlib, types, builtins, shutil
     fails = 0
     def check(ok, msg):
         nonlocal fails
         fails += not ok
         print("%s %s" % ("PASS" if ok else "FAIL", msg))
-    rig = ["sooperlooper", "-q", "-U", "osc.udp://127.0.0.1:11442/", "-p", "9951",
-           "-l", "1", "-c", "2", "-m", "/x/b.slb", "-L", "/home/u/sl/rig.slsess"]
-    S = sllatency.session_from_cmdlines
-    check(S([("/", rig)], 9951) == "/home/u/sl/rig.slsess", "engine's -L found on its port")
-    check(S([("/", rig)], 9952) is None, "engine on another port ignored")
-    check(S([("/home/u", ["/usr/local/bin/sooperlooper", "--load-session=sl/a.slsess"])], 9951)
-          == "/home/u/sl/a.slsess", "--load-session=, relative to the engine's directory, default port")
-    check(S([("/", ["sooperlooper", "-p9000", "-Lx.slsess"])], 9000) == "/x.slsess",
-          "joined -p/-L forms")
-    check(S([("/", ["sooperlooper", "-p", "9951"])], 9951) is None, "engine without -L: none")
-    check(S([("/", ["slgui", "-L", "/a.slsess"])], 9951) is None, "other programs ignored")
 
     tmp = tempfile.mkdtemp(prefix="sllat_save_")
     body = ('<Loop auto_latency="yes">\n'
             '<Control name="input_latency" value="743"/>\n'
             '<Control name="output_latency" value="743"/>\n</Loop>\n') * 2
     target = os.path.join(tmp, "real.slsess")
-    with open(target, "w") as f:
-        f.write(body)
+    def fresh():
+        with open(target, "w") as f:
+            f.write(body)
+    fresh()
     os.chmod(target, 0o640)
     link = os.path.join(tmp, "link.slsess")
     os.symlink(target, link)
@@ -553,42 +546,61 @@ def session_save_tests():
         raised = True
     check(raised and set(os.listdir(tmp)) == before, "no latency values: error, nothing written")
 
-    # The dialog, with a stand-in SooperLooper and typed answers.
+    # The dialog, with a stand-in SooperLooper, picker and typed answers.
     class FakeSL:
         def __init__(self): self.v = {}
         def set(self, k, v, loop=None): self.v[k] = float(v)
         def get(self, k, loop=None): return self.v.get(k)
-    saved_conf = sllatency.CONFIG
+    class Tty(io.StringIO):
+        def isatty(self): return True
+    saved = (sllatency.CONFIG, sllatency.pick_session_file, builtins.input, sys.stdin)
     sllatency.CONFIG = os.path.join(tmp, "sllatency.conf")
-    real_input = builtins.input
-    def run_dialog(answers, session_file=None):
+    picked_from = []
+    def run_dialog(answers, picker_result="none", session_file=None, interactive=True,
+                   save=False):
         feed = iter(answers)
         builtins.input = lambda prompt="": (print(prompt), next(feed))[1]
-        args = types.SimpleNamespace(session_file=session_file, sl_port=1,
-                                     apply=False, save=False)
+        def picker(initial):
+            picked_from.append(initial)
+            return None if picker_result == "none" else picker_result
+        sllatency.pick_session_file = picker
+        sys.stdin = Tty()
+        args = types.SimpleNamespace(session_file=session_file, apply=True, save=save)
         out = io.StringIO()
         try:
             with contextlib.redirect_stdout(out):
-                rc = sllatency.offer_apply_and_save(FakeSL(), args, True, 743, 743,
+                rc = sllatency.offer_apply_and_save(FakeSL(), args, interactive, 743, 743,
                                                     608, 880, False)
         finally:
-            builtins.input = real_input
+            builtins.input = saved[2]
+            sys.stdin = saved[3]
         return rc, " ".join(out.getvalue().split())
     try:
-        rc, out = run_dialog(["y", "y", ""])
-        check("No session file given; nothing saved." in out, "empty answer: says nothing was saved")
-        rc, out = run_dialog(["y", "y", bad])
+        rc, out = run_dialog(["y", "y"], picker_result=target)
+        check(rc == 0 and "Saved in" in out and picked_from[-1] is None
+              and out.index("NAME.bak-YYYYMMDD-HHMMSS") < out.index("Save them in a session file?"),
+              "backup explained before the question; picker's file saved to")
+        fresh()
+        rc, out = run_dialog(["y", "y"], picker_result=target)
+        check(picked_from[-1] == target, "next time the picker starts at the file used last time")
+        rc, out = run_dialog(["y", "y"], picker_result="")
+        check(rc == 0 and "No session file chosen; nothing saved." in out,
+              "picker cancelled: nothing saved, and it says so")
+        fresh()
+        rc, out = run_dialog(["y", "y", ""], picker_result="none")
+        check(rc == 0 and "Saved in" in out and ("[%s]" % target) in out,
+              "no picker possible: typed instead, Enter takes the file used last time")
+        rc, out = run_dialog(["y", "y", bad], picker_result="none")
         check(rc == 1 and "has no latency values to change" in out,
               "not a session file: plain message, no traceback")
-        rc, out = run_dialog(["y", "y", target])
-        check(rc == 0 and "Saved in" in out and open(sllatency.CONFIG).read().strip().endswith(target),
-              "typed path saved to and remembered")
-        rc, out = run_dialog(["y", "y", ""])
-        check(rc == 0 and "saved to last time" in out and target in out and "Saved in" in out,
-              "next time: the remembered file offered, Enter accepts it")
+        rc, out = run_dialog([], interactive=False, save=True)
+        check(rc == 1 and "--save needs --session-file" in out,
+              "scripted --save without --session-file: refused")
+        fresh()
+        rc, out = run_dialog([], interactive=False, save=True, session_file=target)
+        check(rc == 0 and "Saved in" in out, "scripted --save --session-file: saved")
     finally:
-        sllatency.CONFIG = saved_conf
-        import shutil
+        sllatency.CONFIG, sllatency.pick_session_file = saved[0], saved[1]
         shutil.rmtree(tmp, ignore_errors=True)
     return fails
 
