@@ -44,8 +44,16 @@ typedef struct _jack_client jack_client_t;
 // where the stock framepos mod cycle_length puts them (ROADMAP entries 8 and
 // 13).  ALB_JACK_BEAT_TRACKING (engine.hpp, on by default) replaces the
 // pulse code entirely; with it defined, this flag only adds the BBT fields
-// to the sync-pulse log.  Kept, not deleted, as the starting point for a
-// correct BBT layer (ROADMAP entry 15).  The description below is the
+// to the sync-pulse log.
+//
+// Required by ALB_JACK_BBT_TRACKING (engine.hpp), which follows the
+// timebase master's own bar/beat/tick position and reads these fields: that
+// switch stops the build with an #error if this one is off.  The reverse
+// does not hold -- this flag works alone, and with beat tracking on its only
+// effect is the BBT columns in the pulse log, a behaviour-neutral first step
+// when checking what a master publishes (ROADMAP entry 15).  Defined here,
+// not in engine.hpp, because it changes TransportInfo's layout, which every
+// file including this header must agree on.  The description below is the
 // original intent, not what the code achieves.
 //
 // WHEN DEFINED:
