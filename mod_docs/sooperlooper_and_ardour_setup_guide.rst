@@ -340,6 +340,9 @@ pressed, and how far that record has got:
        recording)
      - **Nothing at all happens.**
 
+So the record switch can be held as long as you like, except when starting a
+recording over a playing loop, where a hold means stop.
+
 A remapper sending plain ``mute_on`` and ``undo`` cannot tell these cases
 apart, which is why this is a command inside SooperLooper.
 

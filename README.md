@@ -35,7 +35,10 @@ case where that second trigger never comes at all — a record simply left
 running too long, with no press of any kind.  `cancel_overdub_undo` does
 the same job for an overdub switch: its long press undoes as if the
 overdub press it follows had not happened — usually taking back the last
-overdub.
+overdub.  Since that hold is a real undo, the overdub switch must be
+tapped: a press that is merely slow undoes too.  The record switch, by
+contrast, can be held freely except when it starts a recording over a
+playing loop.
 
 **JACK sync through tempo changes.**  With a JACK timebase master such
 as Hydrogen, stock SooperLooper's sync pulses drift off the master's beat

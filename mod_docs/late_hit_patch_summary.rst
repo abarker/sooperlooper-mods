@@ -345,7 +345,9 @@ It acts only on a recording whose ``record`` press interrupted a playing
 loop (playing or one-shot).  A recording started from mute, pause or an
 empty loop is left alone and carries on.  From there a hold has nothing to
 stop, so it can only be a slow press, and cancelling would throw away the
-take you meant to start.
+take you meant to start.  In practice the record switch can be held as
+long as you like, except when starting a recording over a playing loop,
+where a hold means stop.
 
 What happens, by what the loop is doing when the command arrives:
 
@@ -438,6 +440,18 @@ the loop instead, mute it.  A ``redo`` brings back an
 overdub it undid, but never the new one the press had started.  Waiting
 for the beat only happens with SooperLooper's "overdub quantized" option
 on.
+
+Unlike the record switch, the overdub switch must always be tapped.  The
+hold is a real undo wherever it acts, so a press that is only slow still
+undoes something: a slow start on a playing loop throws away the new
+overdub and undoes the layer under it (never the first take), so a part
+drops out; a slow stop
+undoes the overdub just played.  Neither is a glitch -- there is no
+click, and the loop keeps its place and its sync -- but the loss is
+audible.  A ``redo`` brings the undone layer back.  This is the price of
+a general undo on the same switch: tap to record an overdub, hold to
+remove it.  If slow presses become a problem, a longer long-press time
+on the overdub switch alone is the simplest fix.
 
 A long press is the safer gesture for it.  Two quick taps on an overdub
 switch are sometimes meant as two taps -- to overdub a short phrase and
