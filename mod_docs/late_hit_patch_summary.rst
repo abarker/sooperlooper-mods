@@ -154,10 +154,11 @@ item links to its full description.
   doing nothing in other states is what makes that safe.  See `New Command:
   cancel_record_mute`_.
 
-- **New command** ``cancel_overdub_undo``.  The same idea for an overdub
-  switch: its hold or double tap undoes as if the ``overdub`` the press
-  already fired had not happened -- usually taking back the last overdub.  Never removes a loop's first take.  See `New Command:
-  cancel_overdub_undo`_.
+- **New command** ``cancel_overdub_undo``.  A general undo button bound
+  on top of an overdub switch: its hold or double tap undoes as if the
+  ``overdub`` the press already fired had not happened -- usually taking
+  back the last overdub, but undoing whatever was done last.  Never
+  removes a loop's first take.  See `New Command: cancel_overdub_undo`_.
 
 - **Record failsafe.**  If a recording that cut off a playing loop is left
   running longer than ``record_failsafe_seconds``, it is cancelled
@@ -393,11 +394,18 @@ command tells these cases apart, and what it changes internally, is in
 New Command: ``cancel_overdub_undo``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Undo on the overdub switch.  Every press of that switch fires ``overdub``
-at once, so overdubs start with no added delay; a long press (or double
-press) then fires ``cancel_overdub_undo``, which undoes as if that overdub
-press had not happened.  Plain ``undo`` in that position would act on
-whatever the press had just done -- usually undoing only the new, empty
+A general undo button, bound on top of the overdub switch.  A tap records
+an overdub as usual; a hold undoes the loop's last change -- usually the
+last overdub, if it was bad or has worn out, but equally a multiply, a
+replace, or whatever was done last.  Read that way, the cases below follow
+naturally: the hold is an ordinary undo, with the switch's own press taken
+out of the way first.
+
+That last step is what the command adds.  Every press of the switch fires
+``overdub`` at once, so overdubs start with no added delay; a long press (or
+double press) then fires ``cancel_overdub_undo``, which undoes as if that
+overdub press had not happened.  Plain ``undo`` in that position would act
+on whatever the press had just done -- usually undoing only the new, empty
 overdub the press started.
 
 What happens, by what the overdub press just before it did:
