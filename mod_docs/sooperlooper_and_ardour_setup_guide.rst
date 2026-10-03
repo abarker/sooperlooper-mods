@@ -317,7 +317,8 @@ leaves the loop you made **muted**. Unmuting resumes it where it is in its
 cycle; **mute_trigger** restarts it from the top.
 
 The command is **state-aware**, which is what lets one switch carry all of
-this. What it does depends on how far the record it follows has got:
+this. What it does depends on what the loop was doing when record was
+pressed, and how far that record has got:
 
 .. list-table::
    :header-rows: 1
@@ -325,10 +326,14 @@ this. What it does depends on how far the record it follows has got:
 
    * - State when the long press lands
      - Result
-   * - Recording (the recording has started)
+   * - Recording, or waiting to record, started from mute, pause or an
+       empty loop
+     - **Nothing happens**: the recording carries on. There was nothing
+       playing to stop, so a slow press doesn't lose the take.
+   * - Recording over a loop that was playing
      - The new recording is discarded, the previous loop is restored, and
        the looper is left **muted**. Only that one recording is undone.
-   * - Record still waiting for the sync boundary
+   * - Record over a playing loop, still waiting for the sync boundary
      - The waiting record is cancelled and the loop **keeps playing** --
        nothing was recorded.
    * - Anything else (for example, just after a press that ended a

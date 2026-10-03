@@ -266,24 +266,6 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
-// CANCEL_RECORD_REDO_FIX: after cancel_record_mute (or the record
-// failsafe) discards a record in progress, redo must not bring the
-// discarded fragment back.  Undo keeps each chunk's `next` so redo can
-// restore it (popHeadLoop: "leave the next where is is for redo"), and
-// after undoing a lone first take tailLoopChunk still points at it
-// ("redo from nothing").  So without this, a redo after the cancel
-// restores the few hundred ms recorded before the long press, replacing
-// the take -- silently if muted.  There is nothing legitimate to redo
-// there: the eager record already reused the chunk slot redo would have
-// used.  The fix unlinks the discarded chunk just before the undo runs;
-// the undo itself steps back through the chunk's `prev`, which is left
-// alone.  The pending-record cancel creates no chunk and is untouched.
-// Regression tests: cancelThenRedo in testdef_cancel_record_mute.py.
-// ROADMAP.rst entry 1.  Set to 0 for the previous behaviour exactly.
-#define CANCEL_RECORD_REDO_FIX 1
-//------ albEnd ----------------------------------
-
-//------ albBegin ----------------------------------
 // SYNC_MODE_LATE_HIT_RESET_FIX: compile-time safety switch for a
 // fork-introduced bug (NOT stock -- the vulnerable field and its
 // gating pattern were both added by this fork's own late-hit
@@ -2555,7 +2537,34 @@ runSooperLooper(LADSPA_Handle Instance,
   // following undo would land in STATE_PLAY, audible.  Setting wasMuted here
   // bypasses the mute state machine entirely and is immediate.
   else if (lMultiCtrl == MULTI_CANCEL_RECORD_MUTE || bRecordFailsafeFired) {
-	  if (pLS->state == STATE_RECORD) {
+	  //------ albBegin ----------------------------------
+	  // Only from play: ignore the command unless the RECORD press that
+	  // started this record interrupted a playing loop (STATE_PLAY or
+	  // STATE_ONESHOT, the bRecordEnteredFromActivePlay flag that also
+	  // gates record_failsafe).  For a record started from Mute, Paused or
+	  // an empty loop it is a no-op, and the record carries on.
+	  //
+	  // Why: the command is the long-press partner of an eager-single
+	  // record button, so it can only ever reach the record its own press
+	  // started, a few hundred ms in.  From a playing loop that is the
+	  // hold-to-stop gesture: the press fires record, the hold takes it
+	  // back and leaves the loop muted.  From silence there is nothing to
+	  // stop, so the only way a hold happens is a lazy press -- and
+	  // cancelling then throws away the take the performer meant to start.
+	  //
+	  // The failsafe path is excluded explicitly, although its counter
+	  // already runs only when the same flag is set.  So a cancelled
+	  // record always has a previous take under it, which the redo unlink
+	  // below relies on.  Regression tests: testdef_cancel_record_mute.py.
+	  // ROADMAP.rst entry 1.
+	  const bool bCancelIgnored =
+	      !bRecordFailsafeFired && !pLS->bRecordEnteredFromActivePlay;
+	  //------ albEnd ----------------------------------
+	  if (bCancelIgnored) {
+		  // Record started from silence: the hold was a lazy press.
+		  lMultiCtrl = -1;
+	  }
+	  else if (pLS->state == STATE_RECORD) {
 		  // Committed record: audio was captured, so undo it and stay silent.
 		  // Forcing wasMuted makes MULTI_UNDO take its STATE_MUTE branch
 		  // (undoLoop with no crossfade back to play).
@@ -2610,22 +2619,23 @@ runSooperLooper(LADSPA_Handle Instance,
 		  pLS->fFeedFadeDelta    =  1.0f / xfadeSamples;
 		  pLS->fFeedSrcFadeDelta =  1.0f / xfadeSamples;
 
-#if CANCEL_RECORD_REDO_FIX
 		  // Unlink the chunk about to be discarded, so a later redo cannot
-		  // restore it (see CANCEL_RECORD_REDO_FIX near the top).  Done
-		  // before the undo, which finds the previous take through
-		  // dead->prev and never reads prev->next.
+		  // restore it.  Undo keeps each chunk's `next` for redo
+		  // (popHeadLoop: "leave the next where is is for redo"), so
+		  // without this a redo after the cancel would bring back the few
+		  // hundred ms recorded before the long press, replacing the take
+		  // -- silently if muted.  Nothing legitimate is lost: the record
+		  // press already overwrote prev->next with this chunk, as any new
+		  // take does.  Done before the undo, which finds the previous take
+		  // through dead->prev and never reads prev->next.  The
+		  // pending-record cancel below creates no chunk and is untouched.
+		  // Regression tests: cancelThenRedo in testdef_cancel_record_mute.py.
 		  {
 			  LoopChunk *dead = pLS->headLoopChunk;
-			  if (dead) {
-				  if (dead->prev && dead->prev->next == dead) {
-					  dead->prev->next = NULL;
-				  } else if (!dead->prev && pLS->tailLoopChunk == dead) {
-					  pLS->tailLoopChunk = NULL;
-				  }
+			  if (dead && dead->prev && dead->prev->next == dead) {
+				  dead->prev->next = NULL;
 			  }
 		  }
-#endif
 
 		  lMultiCtrl = MULTI_UNDO;
 	  }

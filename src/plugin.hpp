@@ -370,6 +370,9 @@ typedef struct {
 	// ahead of the remap chain): the failsafe now only ever fires for a
 	// record that cut off a playing take, not a first/fresh recording
 	// from an empty loop. See mod_docs/ROADMAP.rst entry 4.
+	// Also gates cancel_record_mute (plugin.cc): the command is ignored
+	// for a record started from Mute, Paused or an empty loop.
+	// ROADMAP.rst entry 1.
 	// calloc() zeroes the struct so default is false, matching
 	// bLateHitBypassed's convention above.
 	bool bRecordEnteredFromActivePlay;

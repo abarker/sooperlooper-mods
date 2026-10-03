@@ -341,6 +341,12 @@ playing loop.  The hold saves that second pedal, and is an extension of the
 gesture already in progress rather than one more control to reach for under
 performance pressure.
 
+It acts only on a recording whose ``record`` press interrupted a playing
+loop (playing or one-shot).  A recording started from mute, pause or an
+empty loop is left alone and carries on.  From there a hold has nothing to
+stop, so it can only be a slow press, and cancelling would throw away the
+take you meant to start.
+
 What happens, by what the loop is doing when the command arrives:
 
 .. list-table::
@@ -350,11 +356,14 @@ What happens, by what the loop is doing when the command arrives:
    * - The loop is ...
      - What happens
      - What you hear
-   * - recording (the press started a recording)
-     - The recording is discarded and the previous take restored.  If it
-       was the loop's first recording, the loop is empty again.
+   * - recording, started from mute, pause or an empty loop, or waiting
+       for the beat to start such a recording
+     - Nothing.  The recording carries on.
+     - The new take, as normal.
+   * - recording, started over a playing loop
+     - The recording is discarded and the previous take restored.
      - Silence: the loop is muted.  Unmute to hear the previous take.
-   * - waiting for the beat to start a recording
+   * - waiting for the beat to start a recording over a playing loop
      - The queued recording is cancelled.
      - The previous take keeps playing, uninterrupted: the hold does not
        stop it.
@@ -982,15 +991,6 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING`` and
        behaviour.  Unlike the other flags/globals here, this is a bug
        fix with an escape hatch, not a tunable parameter -- no
        session-file or OSC equivalent.
-   * - ``CANCEL_RECORD_REDO_FIX``
-     - ``plugin.cc``
-     - ``1``
-     - When 1 (default), a ``redo`` after ``cancel_record_mute`` (or the
-       record failsafe) has cancelled a recording does nothing.  Set to 0
-       for the earlier behaviour, in which such a redo brought back the
-       cancelled fragment -- the part recorded before the cancel --
-       replacing the take.  A bug fix with an escape hatch, not a tunable
-       parameter.
    * - ``SYNCWDEBUG``
      - ``plugin.cc``
      - *(commented out)*

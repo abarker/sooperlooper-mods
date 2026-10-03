@@ -5,6 +5,10 @@ only if audio was actually captured.  No-op in every other state -- which
 is what makes it safe as the long-press partner of an eager-single record
 button.  Design and rationale: mod_docs/ROADMAP.rst entry 1.
 
+It acts only on a record whose RECORD press interrupted a playing loop
+(Playing or OneShot); a record started from Off, OffMuted, Muted or Paused
+carries on.
+
 Scope: these run with sync and quantize off (the harness default), so they
 cover the STATE_RECORD branch and the no-op branches.  The STATE_TRIG_START
 (pending record) and STATE_TRIG_STOP (pending record end) branches need
@@ -56,15 +60,14 @@ class cancelRecordMute(testdef_simple_state.simpleStateTest):
         time.sleep(0.001)
         self.assertState("Off")
 
-    def testCancelsFirstRecord(self):
-        # First loop, so there is no previous take and the undo falls
-        # through to the UNDO_ALL path.  Forcing wasMuted makes it land
-        # muted -- compare testdef_simple_state_off.testUndo, where a plain
-        # UNDO from the same point gives "Off".
+    def testIgnoredDuringFirstRecord(self):
+        # Only from play: a first take did not interrupt playback, so the
+        # hold is a lazy press and the record carries on.  (Before that rule
+        # this cancelled into OffMuted through the UNDO_ALL path.)
         self.engine.request("RECORD")
         self.engine.request(CMD)
         time.sleep(0.001)
-        self.assertState("OffMuted")
+        self.assertState("Recording")
 
     def testNoOpWhilePlaying(self):
         # RECORD twice completes a take and leaves STATE_PLAY.  This is the
@@ -348,15 +351,37 @@ class cancelRecordMuteQuantized(_AudioHelpers,
         self.waitBuffers(n)
         self.looper.sync_inject_value = 0.0
 
-    def testPendingCancelFromOff(self):
-        # No prior take: cancelling a pending record just returns to Off.
+    def testPendingFirstRecordNotCancelled(self):
+        # Only from play: a pending first take stays pending and starts on
+        # the boundary.  (Before that rule this returned to Off.)
         self.syncOn()
         self.engine.request("RECORD")
         self.waitBuffers(2)
         self.assertState("WaitStart")
         self.engine.request(CMD)
         self.waitBuffers(3)
-        self.assertState("Off")
+        self.assertState("WaitStart")
+        self.pulse()
+        self.waitBuffers(5)
+        self.assertState("Recording")
+
+    def testPendingRecordFromMuteNotCancelled(self):
+        # The rig case: sync on, a take muted, record pressed lazily.  The
+        # record must stay pending and start on the boundary.
+        self.recordTake(TAKE_LEVEL)
+        self.engine.request("MUTE_ON")
+        self.waitBuffers(5)
+        self.assertState("Muted")
+        self.syncOn()
+        self.engine.request("RECORD")
+        self.waitBuffers(2)
+        self.assertState("WaitStart")
+        self.engine.request(CMD)
+        self.waitBuffers(3)
+        self.assertState("WaitStart")
+        self.pulse()
+        self.waitBuffers(5)
+        self.assertState("Recording")
 
     def testPendingCancelKeepsExistingTake(self):
         # Decision 1(b), and the case that matters most on the live rig,
@@ -457,18 +482,11 @@ class cancelThenRedo(_AudioHelpers, testdef_simple_state.simpleStateTest):
                 "fragment." % (mn, mx, TAKE_LEVEL, NOISE_LEVEL))
         self.assertAlmostEqual(mx, TAKE_LEVEL, places=3)
 
-    def testRedoAfterCancelledFirstTakeStaysOff(self):
-        self.looper.input_inject_value = NOISE_LEVEL
-        self.engine.request("RECORD")            # first take, eager
-        self.waitBuffers(10)
-        self.engine.request(CMD)
-        self.waitBuffers(10)                     # UNDO_ALL fade completes
-        self.assertState("OffMuted")
-        self.engine.request("REDO")
-        self.waitBuffers(10)
-        self.assertState("OffMuted",
-                         "redo after cancelling the first take brought back "
-                         "the cancelled fragment")
+    # The redo fix's lone-first-take branch had a test here
+    # (testRedoAfterCancelledFirstTakeStaysOff).  Now that the cancel acts
+    # only from play, a first take can no longer be cancelled, so the
+    # branch and its test were removed; testIgnoredDuringFirstRecord
+    # covers the new behaviour.
 
     def testRedoAfterPendingCancelStillRestoresUndoneLayer(self):
         # Guard against cutting too much: a pending cancel creates no chunk,
@@ -522,3 +540,82 @@ class cancelThenRedo(_AudioHelpers, testdef_simple_state.simpleStateTest):
         self.assertAlmostEqual(mn, second, places=3,
                                msg="redo should restore the second take")
         self.assertAlmostEqual(mx, second, places=3)
+
+
+class cancelRecordMuteStartState(_AudioHelpers,
+                                 testdef_simple_state.simpleStateTest):
+    """Only from play: whether the hold acts depends on the
+    state the RECORD press came from.  Playing and OneShot: it cancels (the
+    hold-to-stop gesture).  Muted, OffMuted and Paused: it is ignored and the
+    record carries on, since a hold there can only be a lazy press.
+    ROADMAP.rst entry 1."""
+
+    NEW_TAKE = -0.3
+
+    def setUp(self):
+        testdef_simple_state.simpleStateTest.setUp(self)
+        self.initAudio()
+
+    def holdDuringRecord(self):
+        """Press RECORD (eager), then send the hold's CMD."""
+        self.looper.input_inject_value = self.NEW_TAKE
+        self.engine.request("RECORD")
+        self.waitBuffers(10)
+        self.assertState("Recording")
+        self.engine.request(CMD)
+        self.waitBuffers(5)
+
+    def assertNewTakeKept(self):
+        """The record carried on: end it and check the new take plays."""
+        self.assertState("Recording", "the hold cancelled a record started "
+                         "from silence")
+        self.waitBuffers(20)
+        self.engine.request("RECORD")
+        self.waitBuffers(10)
+        self.assertState("Playing")
+        mn, mx = self.outputRange()
+        self.assertAlmostEqual(mn, self.NEW_TAKE, places=3)
+        self.assertAlmostEqual(mx, self.NEW_TAKE, places=3)
+
+    def testIgnoredFromMuted(self):
+        self.recordTake(TAKE_LEVEL)
+        self.engine.request("MUTE_ON")
+        self.waitBuffers(5)
+        self.assertState("Muted")
+        self.holdDuringRecord()
+        self.assertNewTakeKept()
+
+    def testIgnoredFromOffMuted(self):
+        self.engine.request("MUTE_ON")
+        self.waitBuffers(5)
+        self.assertState("OffMuted")
+        self.holdDuringRecord()
+        self.assertNewTakeKept()
+
+    def testIgnoredFromPaused(self):
+        self.recordTake(TAKE_LEVEL)
+        self.engine.request("PAUSE_ON")
+        self.waitBuffers(5)
+        self.assertState("Paused")
+        self.holdDuringRecord()
+        self.assertNewTakeKept()
+
+    def testCancelsFromOneShot(self):
+        # OneShot is playback too, so the hold-to-stop gesture applies.
+        self.recordTake(TAKE_LEVEL)
+        self.engine.request("ONESHOT")
+        self.waitBuffers(3)
+        self.assertState("OneShot")
+        self.holdDuringRecord()
+        self.assertState("Muted")
+
+    def testHoldToStopThenLazyRecordFromMute(self):
+        # The sequence on the rig: hold-to-stop from a playing loop (cancels
+        # into Muted), then later a lazy record press from that mute.  The
+        # flag is recomputed at the second press, so the hold is ignored.
+        self.recordTake(TAKE_LEVEL)
+        self.holdDuringRecord()
+        self.assertState("Muted")
+        self.waitBuffers(20)
+        self.holdDuringRecord()
+        self.assertNewTakeKept()

@@ -130,9 +130,9 @@ class recordFailsafe(_AudioHelpers, testdef_simple_state.simpleStateTest):
         # actively playing loop -- so bRecordEnteredFromActivePlay is
         # false and the failsafe must never arm, no matter how long this
         # runs.  Before the 2026-09-01 specialization this used to fire
-        # and land OffMuted (compare
-        # testdef_cancel_record_mute.testCancelsFirstRecord, which still
-        # covers that landing spot for the *manual* cancel path).
+        # and land OffMuted.  Since 2026-10-03 the manual cancel ignores a
+        # first record too (compare
+        # testdef_cancel_record_mute.testIgnoredDuringFirstRecord).
         self.engine.request("RECORD")
         self.waitBuffers(2)
         self.assertState("Recording")
@@ -237,9 +237,13 @@ class recordFailsafe(_AudioHelpers, testdef_simple_state.simpleStateTest):
     def testManualCancelStillWorksWithFailsafeArmed(self):
         # Side-effect guard: the failsafe is an alternate trigger into the
         # same branch, not a replacement for the manual long-press path.
+        # Recorded over a playing take: that is the only case the manual
+        # cancel acts on.
+        # (This test used a first take, which the cancel now ignores.)
+        self.recordTake(0.5)
         self.engine.request("RECORD")
         self.waitBuffers(2)
         self.assertState("Recording")
         self.engine.request("CANCEL_RECORD_MUTE")
         self.waitBuffers(5)
-        self.assertState("OffMuted")
+        self.assertState("Muted")
