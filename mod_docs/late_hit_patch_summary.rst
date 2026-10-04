@@ -635,11 +635,11 @@ effect at that exact sample.  Commands over OSC or ALSA MIDI carry no
 position and take effect at the start of a buffer, so JACK MIDI commands
 are timed more precisely.
 
-**MIDI clock: use ALSA for now.**  Clock sent to ``midi_in`` is counted,
-but the tempo is never measured from it, and the first synced recording
-after a MIDI Start is not quantized -- two bugs this fork introduced; see
-`Known Issues and Future Work`_.  Clock through ALSA MIDI works as in
-stock.
+**MIDI clock.**  Clock sent to ``midi_in`` is counted and sets the tempo,
+as clock through ALSA does.  (Until a fix in this fork, clock on
+``midi_in`` never set the tempo: those events carried no timestamp.)  One
+open issue with MIDI clock sync is listed under `Known Issues and Future
+Work`_.
 
 How this is done inside the engine, including how it interacts with
 SooperLooper's trigger latency setting, is in `JACK MIDI Input:
@@ -1160,7 +1160,8 @@ Where the Changes Are in the Source
 | **Modified files:** ``src/plugin.cc``, ``src/plugin.hpp``, ``src/engine.cpp``,
 | ``src/engine.hpp``, ``src/looper.cpp``, ``src/looper.hpp``, ``src/audio_driver.hpp``,
 | ``src/jack_audio_driver.hpp``, ``src/jack_audio_driver.cpp``, ``src/event.hpp``,
-| ``src/command_map.cpp``, and some test files in ``src/test_plugin``.
+| ``src/command_map.cpp``, ``src/event.cpp``, and some test files in
+| ``src/test_plugin``.
 | **New files** (not modifications, so not listed above) are documented in
 | their own sections: ``src/big_state_display/`` in `New Tool: slbigstate`_,
 | ``src/beat_tracker.hpp`` in `JackSync Beat Tracking`_, new test files in
@@ -2043,22 +2044,19 @@ Architecture Notes
 Known Issues and Future Work
 ----------------------------
 
--  **MIDI clock through the JACK MIDI input -- two bugs this fork introduced
-   (high priority).**  They apply only when Sync To is MidiClock *and* the
-   clock arrives on ``sooperlooper:midi_in``; clock through ALSA MIDI works
-   exactly as in stock.
+-  **MIDI clock sync: a synced recording sometimes starts at once (high
+   priority, introduced by this fork).**  With Sync To MidiClock, a
+   recording occasionally starts when pressed instead of waiting for the
+   next boundary.  Seen with the clock on ``sooperlooper:midi_in`` and,
+   less often, through ALSA MIDI; never seen in stock.  Cause not yet
+   found.  A second bug in the same area -- MIDI clock on ``midi_in`` never
+   setting the tempo -- is fixed.
 
-   - **The tempo is never measured.**  The JACK MIDI input passes events
-     with their position in the audio buffer but no timestamp, and the
-     MIDI clock tempo measurement needs timestamps, so the tempo stays at
-     0.  Anything that depends on the tempo under MIDI clock sync is
-     affected.
-   - **The first synced recording after a MIDI Start is not quantized:**
-     it starts when pressed instead of waiting for the next boundary.
-     Later recordings wait correctly.  Cause not yet found.
-
-   Until these are fixed, send MIDI clock to SooperLooper through ALSA.
-   Commands on the JACK MIDI input are not affected.
+-  **Smart eighths and MIDI clock (stock behaviour).**  The "auto 8th"
+   option, on by default, doubles Eighths/Cycle whenever the tempo is
+   below 60, and the tempo measured from MIDI clock starts low for a few
+   beats after every Start.  Eighths/Cycle can then double, once or more,
+   and stays doubled.  With MIDI clock sync, turn "auto 8th" off.
 
 -  **Only tested on Ubuntu 24.04:** no other environments yet tested.
 

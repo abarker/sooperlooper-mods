@@ -1288,6 +1288,9 @@ Engine::process (nframes_t nframes)
 	fill_common_outs (nframes);
 
 	_running_frames += nframes;
+	//------ albBegin ----------------------------------
+	_total_frames += nframes;   // see engine.hpp
+	//------ albEnd ----------------------------------
 	
 	return 0;
 }
@@ -2935,6 +2938,20 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				evt = vec.buf[vecn] + n;
 				fragpos = (nframes_t) (evt->FragmentPos() % nframes);
 				timestamp = evt->getTimestamp();
+				//------ albBegin ----------------------------------
+				// JACK MIDI clock fix (ROADMAP.rst entry 22): events from
+				// the JACK MIDI input carry their offset in this buffer but
+				// no timestamp (0), and the tempo measurement below works
+				// only from timestamps, so with clock on midi_in the tempo
+				// was never measured.  Give such events a time in seconds
+				// from the frame count -- the same units as the ALSA host
+				// time stamps; only differences are used.  ALSA events
+				// always carry a timestamp and are unchanged.
+				if (timestamp == 0.0) {
+					timestamp = (double) (_total_frames + fragpos)
+					            / (double) _driver->get_samplerate();
+				}
+				//------ albEnd ----------------------------------
 
 				++n;
 				// to avoid code copying

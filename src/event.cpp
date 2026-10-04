@@ -112,6 +112,16 @@ namespace SooperLooper {
     Event::Event(EventGenerator* pGenerator, int fragmentpos) {
         pEventGenerator = pGenerator;
         iFragmentPos    = fragmentpos;
+        //------ albBegin ----------------------------------
+        // Stock left TimeStamp uninitialised here.  Harmless in stock, which
+        // creates sync events only through createTimestampedEvent(), but the
+        // fork's JACK MIDI input creates them through createEvent(framepos),
+        // so MIDI clock on midi_in carried a garbage timestamp and the
+        // MidiClockSync tempo measurement never worked.  0 means "no
+        // timestamp"; generate_sync() then times the event from the frame
+        // count.  ROADMAP.rst entry 22.
+        TimeStamp       = 0.0;
+        //------ albEnd ----------------------------------
     }
 	
 } // namespace LinuxSampler

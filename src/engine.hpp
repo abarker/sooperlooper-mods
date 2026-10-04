@@ -474,6 +474,14 @@ class Engine
 	unsigned int _midi_loop_tick; // tick number to loop (sync) on
 
 	nframes_t _running_frames;
+	//------ albBegin ----------------------------------
+	// Frames processed since start, 64-bit so it does not wrap (the 32-bit
+	// _running_frames wraps after about 24.8 hours at 48 kHz).  Used to
+	// time MIDI clock arriving on the JACK MIDI input, which carries no
+	// timestamp; see generate_sync()'s MidiClockSync branch.  RT thread
+	// only.  ROADMAP.rst entry 22.
+	uint64_t _total_frames = 0;
+	//------ albEnd ----------------------------------
 	nframes_t _last_tempo_frame;
 	volatile bool _tempo_changed;
 	volatile bool _beat_occurred;
