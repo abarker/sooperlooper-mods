@@ -126,9 +126,6 @@ typedef struct _jack_port jack_port_t;
 // session: 102 min, 33 tempo changes, drums within ~2 ms of the pulses).
 // WHEN NOT DEFINED: the stock JackSync code runs exactly as before.
 #define ALB_JACK_BEAT_TRACKING
-#ifdef ALB_JACK_BEAT_TRACKING
-#include "beat_tracker.hpp"
-#endif
 
 // ALB_JACK_BBT_TRACKING: NOT DEFINED by default -- built and unit-tested
 // (src/test_beat_tracker), not yet tried against a real master.  Keeps
@@ -154,7 +151,7 @@ typedef struct _jack_port jack_port_t;
 #endif
 #endif
 
-// ALB_CYCLE_CHANGE_REANCHOR: NOT DEFINED by default -- built and tested
+// ALB_CYCLE_CHANGE_REANCHOR: DEFINED by default -- built and tested
 // (src/test_beat_tracker, pulse-log probes), not yet tried live.  When
 // Eighths/Cycle changes while the source runs, start the new cycles at the
 // nearest boundary of the old grid, instead of at the next multiple of the
@@ -165,9 +162,14 @@ typedef struct _jack_port jack_port_t;
 // master's new 3/4 bars only by luck.  A Quantize change alone does not
 // move the origin; a relocate or MIDI Start resets it.  The JACK part
 // needs ALB_JACK_BEAT_TRACKING.  ROADMAP.rst entry 21.
-//#define ALB_CYCLE_CHANGE_REANCHOR
+#define ALB_CYCLE_CHANGE_REANCHOR
 #if defined(ALB_CYCLE_CHANGE_REANCHOR) && !defined(ALB_JACK_BEAT_TRACKING)
 #error "ALB_CYCLE_CHANGE_REANCHOR needs ALB_JACK_BEAT_TRACKING"
+#endif
+
+// After all the switches above: beat_tracker.hpp tests them.
+#ifdef ALB_JACK_BEAT_TRACKING
+#include "beat_tracker.hpp"
 #endif
 //------ albEnd ----------------------------------
 

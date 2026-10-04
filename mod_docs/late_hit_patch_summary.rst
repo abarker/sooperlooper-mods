@@ -193,7 +193,7 @@ item links to its full description.
   half a cycle until the next relocate.  See `JackSync Beat Tracking`_.
 
 - **Eighths/Cycle changes that keep to the bar** (``ALB_CYCLE_CHANGE_REANCHOR``,
-  **off** by default, not yet tried live).  When Eighths/Cycle changes
+  **on** by default, not yet tried live).  When Eighths/Cycle changes
   while JACK or MIDI clock sync is running, the new cycles start at the
   old cycles' nearest boundary, instead of being counted from transport
   position 0 or the last MIDI Start.  See `Eighths/Cycle Changes While
@@ -1135,14 +1135,14 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        error otherwise.  **When not defined (default):** no effect.
    * - ``ALB_CYCLE_CHANGE_REANCHOR``
      - ``engine.hpp``
-     - *(commented out)*
-     - **When defined:** when Eighths/Cycle changes while JACK or MIDI
+     - defined
+     - **When defined (default):** when Eighths/Cycle changes while JACK or MIDI
        clock sync is running, the new cycles start at the old grid's
        nearest boundary (a bar line, if the old cycle was a bar), as they
        already do with Internal sync.  A Quantize change alone does not
        move them; a relocate or MIDI Start counts from the start again.
        Tested, not yet tried live.  **Needs** ``ALB_JACK_BEAT_TRACKING``.
-       **When not defined (default):** new cycles count from transport
+       **When not defined:** new cycles count from transport
        position 0 (JACK) or the last MIDI Start, as in stock.
    * - ``ALB_SYNC_PULSE_LOG``
      - ``engine.hpp``
@@ -1378,7 +1378,7 @@ tempo is taken from JACK only when the master publishes one, and the
 backwards-locate reset of the loops' relative-sync counters uses the
 tracker's record of the previous frame.
 
-With ``ALB_CYCLE_CHANGE_REANCHOR`` (off by default), the cycle grid has an
+With ``ALB_CYCLE_CHANGE_REANCHOR`` (on by default), the cycle grid has an
 origin, in beats, that is 0 unless Eighths/Cycle has changed the cycle
 length since the last relocate: ``generate_sync()`` then calls
 ``reanchor_cycle()`` with the old step, which moves the origin to the old
