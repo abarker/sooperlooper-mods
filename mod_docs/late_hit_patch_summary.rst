@@ -635,6 +635,12 @@ effect at that exact sample.  Commands over OSC or ALSA MIDI carry no
 position and take effect at the start of a buffer, so JACK MIDI commands
 are timed more precisely.
 
+**MIDI clock: use ALSA for now.**  Clock sent to ``midi_in`` is counted,
+but the tempo is never measured from it, and the first synced recording
+after a MIDI Start is not quantized -- two bugs this fork introduced; see
+`Known Issues and Future Work`_.  Clock through ALSA MIDI works as in
+stock.
+
 How this is done inside the engine, including how it interacts with
 SooperLooper's trigger latency setting, is in `JACK MIDI Input:
 Implementation`_ in the appendix.
@@ -2037,6 +2043,23 @@ Architecture Notes
 Known Issues and Future Work
 ----------------------------
 
+-  **MIDI clock through the JACK MIDI input -- two bugs this fork introduced
+   (high priority).**  They apply only when Sync To is MidiClock *and* the
+   clock arrives on ``sooperlooper:midi_in``; clock through ALSA MIDI works
+   exactly as in stock.
+
+   - **The tempo is never measured.**  The JACK MIDI input passes events
+     with their position in the audio buffer but no timestamp, and the
+     MIDI clock tempo measurement needs timestamps, so the tempo stays at
+     0.  Anything that depends on the tempo under MIDI clock sync is
+     affected.
+   - **The first synced recording after a MIDI Start is not quantized:**
+     it starts when pressed instead of waiting for the next boundary.
+     Later recordings wait correctly.  Cause not yet found.
+
+   Until these are fixed, send MIDI clock to SooperLooper through ALSA.
+   Commands on the JACK MIDI input are not affected.
+
 -  **Only tested on Ubuntu 24.04:** no other environments yet tested.
 
 -  **Only tested in basic looping setups:** only basic looping and overdubs have
@@ -2068,8 +2091,8 @@ Known Issues and Future Work
    position adjustment more involved; low priority since Multiply start snaps to the
    current loop's cycle boundary which is a natural and musically acceptable snap point.
 
--  **Insert end:** not needed — Insert end does not use ``waitingForSync`` and takes
-   effect at the exact press sample already.
+-  **Insert end:** not needed — with Quantize on, Insert end waits for the next
+   cycle boundary on its own (a forward wait, not a missed boundary).
 
 -  **Insert start:** deferred for the same reason as Multiply start.
 
