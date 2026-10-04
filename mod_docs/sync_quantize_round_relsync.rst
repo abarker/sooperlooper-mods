@@ -129,9 +129,22 @@ every cycle or every eighth note, according to Quantize; with Quantize Off
 or Loop it places one every beat.  The count, and with it the grid, is
 reset to the start of a bar by a MIDI **Start** or **Continue** message.  A
 **Stop** does not reset it; the Start or Continue that follows does.  The
-tempo is measured from the time between beats, so it settles after a
-beat or two following a Start.  Two options in the preferences make a MIDI
-Start trigger all loops and a MIDI Stop pause them.
+tempo is measured from the time between beats and averaged, so it reads
+low for the first few beats after a Start and settles after about four.
+Two options in the preferences make a MIDI Start trigger all loops and a
+MIDI Stop pause them.
+
+The clock can arrive through ALSA MIDI or, in this fork, on SooperLooper's
+own JACK MIDI input (``sooperlooper:midi_in``); both work the same.
+
+Turn off **auto 8th** in the main window when syncing to MIDI clock.  It
+doubles Eighths/Cycle whenever the tempo reads below 60 BPM, which it does
+for a moment after every Start, and it does not undo the doubling, so a
+cycle of 8 can become 16 or 32.
+
+*Fork fix.*  In stock SooperLooper, a boundary from MIDI clock could
+linger in the sync signal, so a synced recording sometimes started at once
+instead of waiting for the next boundary.  This fork fixes it.
 
 **Jack/Host.**  Tempo and position come from the JACK transport master: a
 DAW, Hydrogen, or another program that sets the tempo.  Boundaries fall on

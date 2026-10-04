@@ -47,7 +47,8 @@ is rolling, and stay off until the next relocate.  This fork counts beats
 through tempo changes, so the pulses stay on the beat.
 
 **Direct JACK MIDI ports.**  A `sooperlooper:midi_in` port accepts MIDI
-commands with sub-buffer sample-accurate timestamps.  A
+commands with sub-buffer sample-accurate timestamps, and MIDI clock for
+syncing to.  A
 `sooperlooper:midi_out` port generates 24-ppqn MIDI clock and sends JACK
 Transport Start/Stop messages, replacing the need for `a2jmidid` when
 driving external hardware.

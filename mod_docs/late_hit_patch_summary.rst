@@ -1337,6 +1337,21 @@ read only where overdub, multiply and insert (and replace and substitute, throug
 overdub) start taking input (``lFramesUntilInput = input_latency −
 trigger_latency``); plain record does not use it.
 
+**MIDI clock on the JACK MIDI input.**  Clock, Start and Stop messages on
+``midi_in`` go through the same path as commands, into SooperLooper's MIDI
+clock handling in ``generate_sync()``.  That code measures the tempo from
+event timestamps, which ALSA provides and the JACK MIDI path does not.
+Events created with a buffer offset now carry a timestamp of 0 (stock left
+it uninitialised, ``event.cpp``), and ``generate_sync()`` times such events
+from a 64-bit frame count, ``(_total_frames + offset) / sample_rate`` --
+seconds, like ALSA's host-time stamps; only differences between them are
+used.  ALSA events are unchanged.
+
+The same branch (``ALB_MIDI_SYNC_CLEAR_FIX``) now clears the sync buffer up
+to every clock event.  Stock cleared it only up to boundary ticks, so a
+boundary mark written early in one buffer could survive into later ones
+and read as a pulse in every buffer.
+
 JackSync Beat Tracking: Implementation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
