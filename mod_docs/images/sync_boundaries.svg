@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="330" viewBox="0 0 880 330" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13">
+  <rect x="0" y="0" width="880" height="330" fill="#ffffff"/>
+
+  <!-- timeline: x 210..850, 160 px per bar, 20 px per eighth note -->
+  <!-- faint bar guides -->
+  <g stroke="#d4d4d8" stroke-width="1">
+    <line x1="210" y1="40" x2="210" y2="300"/>
+    <line x1="370" y1="40" x2="370" y2="300"/>
+    <line x1="530" y1="40" x2="530" y2="300"/>
+    <line x1="690" y1="40" x2="690" y2="300"/>
+    <line x1="850" y1="40" x2="850" y2="300"/>
+  </g>
+
+  <!-- bar labels -->
+  <g font-weight="bold" text-anchor="middle" fill="#27272a">
+    <text x="290" y="28">bar 1</text>
+    <text x="450" y="28">bar 2</text>
+    <text x="610" y="28">bar 3</text>
+    <text x="770" y="28">bar 4</text>
+  </g>
+
+  <!-- beats row -->
+  <text x="12" y="62" fill="#27272a">beats</text>
+  <g text-anchor="middle" fill="#52525b" font-size="12">
+    <text x="210" y="62">1</text><text x="250" y="62">2</text><text x="290" y="62">3</text><text x="330" y="62">4</text>
+    <text x="370" y="62">1</text><text x="410" y="62">2</text><text x="450" y="62">3</text><text x="490" y="62">4</text>
+    <text x="530" y="62">1</text><text x="570" y="62">2</text><text x="610" y="62">3</text><text x="650" y="62">4</text>
+    <text x="690" y="62">1</text><text x="730" y="62">2</text><text x="770" y="62">3</text><text x="810" y="62">4</text>
+  </g>
+
+  <!-- source grid, Quantize Cycle -->
+  <text x="12" y="98" fill="#1d4ed8">source grid,</text>
+  <text x="12" y="113" fill="#1d4ed8">Quantize Cycle</text>
+  <g stroke="#2563eb" stroke-width="3">
+    <line x1="210" y1="84" x2="210" y2="118"/>
+    <line x1="370" y1="84" x2="370" y2="118"/>
+    <line x1="530" y1="84" x2="530" y2="118"/>
+    <line x1="690" y1="84" x2="690" y2="118"/>
+    <line x1="850" y1="84" x2="850" y2="118"/>
+  </g>
+
+  <!-- source grid, Quantize 8th -->
+  <text x="12" y="143" fill="#1d4ed8">source grid,</text>
+  <text x="12" y="158" fill="#1d4ed8">Quantize 8th</text>
+  <g stroke="#2563eb" stroke-width="2">
+    <path d="M210 136 v16 M230 136 v16 M250 136 v16 M270 136 v16 M290 136 v16 M310 136 v16 M330 136 v16 M350 136 v16
+             M370 136 v16 M390 136 v16 M410 136 v16 M430 136 v16 M450 136 v16 M470 136 v16 M490 136 v16 M510 136 v16
+             M530 136 v16 M550 136 v16 M570 136 v16 M590 136 v16 M610 136 v16 M630 136 v16 M650 136 v16 M670 136 v16
+             M690 136 v16 M710 136 v16 M730 136 v16 M750 136 v16 M770 136 v16 M790 136 v16 M810 136 v16 M830 136 v16 M850 136 v16"/>
+  </g>
+
+  <!-- a free loop's own grid: recorded from beat 3 of bar 1, six beats long -->
+  <text x="12" y="188" fill="#c2410c">a free loop's</text>
+  <text x="12" y="203" fill="#c2410c">own grid</text>
+  <rect x="290" y="178" width="240" height="22" fill="#ffedd5"/>
+  <rect x="530" y="178" width="240" height="22" fill="#fed7aa"/>
+  <g text-anchor="middle" fill="#9a3412" font-size="12">
+    <text x="410" y="194">cycle 1 (6 beats)</text>
+    <text x="650" y="194">cycle 2</text>
+  </g>
+  <g stroke="#ea580c" stroke-width="3">
+    <line x1="290" y1="172" x2="290" y2="206"/>
+    <line x1="530" y1="172" x2="530" y2="206"/>
+    <line x1="770" y1="172" x2="770" y2="206"/>
+  </g>
+
+  <!-- waiting example -->
+  <text x="12" y="248" fill="#15803d">Record, loop's Sync</text>
+  <text x="12" y="263" fill="#15803d">checked, Quantize Cycle</text>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 z" fill="#52525b"/>
+    </marker>
+  </defs>
+  <line x1="436" y1="252" x2="524" y2="252" stroke="#52525b" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#arrow)"/>
+  <circle cx="430" cy="252" r="6" fill="#15803d"/>
+  <rect x="530" y="242" width="160" height="20" fill="#bbf7d0" stroke="#15803d"/>
+  <text x="610" y="257" text-anchor="middle" fill="#14532d" font-size="12">recording</text>
+  <g fill="#3f3f46" font-size="12" text-anchor="middle">
+    <text x="430" y="282">pressed here</text>
+    <text x="478" y="240">waits</text>
+    <text x="534" y="282" text-anchor="start">starts at the next boundary</text>
+  </g>
+</svg>

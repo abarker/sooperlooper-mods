@@ -1,765 +1,462 @@
 Sync, Quantize, Round, Rel Sync, Multiply, and Eighths/Cycle
 =============================================================
 
-These settings work together to control how SooperLooper aligns loops to a
-rhythmic grid and how it builds up longer loops from shorter ones. There are
-two separate "sync" concepts that are easily confused, so we describe them
-first before covering the other settings.
+SooperLooper can line its actions up with a beat: start a recording on the
+bar line, end an overdub on the next beat, keep a loop in step with a drum
+machine.  Several settings work together to do this, and the way they
+combine can be confusing.  The word "sync" alone names two
+different controls, and Quantize matters in places you would not expect.
+This guide explains how the settings fit together, then each one in turn,
+then some setups for live use.  It describes the SooperLooper in this fork;
+where the fork adds or changes something, the text says so.
 
-The running examples assume a JACK-connected sync source (such as Hydrogen)
-at 120 BPM with Eighths/Cycle set to 8 (one standard 4/4 bar), unless noted.
+A cycle -- the unit SooperLooper syncs to -- can be any number of eighth
+notes, set by Eighths/Cycle: 2 for every beat, 6 for a bar of 3/4, 8 for a
+bar of 4/4, 16 for two bars, and so on.  The examples use 8, at a tempo of
+120 BPM, so one cycle is one bar of 4/4 and lasts 2 seconds.
 
-Two separate "sync" concepts
------------------------------
+.. contents:: Contents
+   :local:
+   :depth: 1
 
-SooperLooper has two independent controls that both use the word "sync":
+How it fits together
+--------------------
 
-**1. "Sync To" (sync source selector)**
-This drop-down selects where the timing reference comes from. The options are:
+SooperLooper can hold an action back until a **boundary**: a point on a
+regular grid in time.  When the boundary arrives, the action happens.
+There are two kinds of grid.
 
-- *None / Internal Tempo* — SooperLooper uses its own internal tempo clock.
-  The tap button lets you set the tempo by feel.
-- *MIDI Clock* — tempo and beat pulses come from incoming MIDI clock messages.
-  SooperLooper's sync grid is anchored to the last **MIDI Start** message:
-  the internal tick counter resets to zero on Start, and sync pulses fire
-  at fixed tick intervals from that point. A MIDI Stop followed by a new
-  MIDI Start therefore resets the grid cleanly — no separate locate command
-  is needed. Note that MIDI Stop alone does not reset the grid; only the
-  subsequent Start does. In Hydrogen, stopping transport resets the pattern
-  to its beginning and sending Start resumes from there, so the Stop+Start
-  pair gives automatic bar-1 alignment on each resume. Tempo is derived by
-  measuring the interval between quarter-note beats (every 24 ticks) rather
-  than reading a reported BPM, so it requires at least one beat after Start
-  before locking to the correct value.
-- *JACK Transport* — tempo is provided by the JACK time master (a DAW,
-  Hydrogen, or any other transport master). SooperLooper's sync grid is
-  anchored to JACK transport position 0: boundary pulses fall at exact
-  multiples of the quantize interval counting from that origin, so the
-  grid is fully determined by tempo, Eighths/Cycle, and the starting
-  position — not by when you press Record. Locating the transport back
-  to position 0 re-aligns SooperLooper's grid with the master's grid
-  cleanly. Locating to a non-zero position, or changing Eighths/Cycle
-  mid-transport without a locate, can shift the grids out of alignment.
-  Simply stopping and restarting transport without a locate preserves
-  alignment, since both SooperLooper and the master resume from the same
-  frame position.
-- *Loop N* — any existing loop can be the sync source. The tempo is derived
-  from that loop's length divided by Eighths/Cycle, so Eighths/Cycle must be
-  set correctly for this to work.
+- **The source's grid** comes from the sync source (the **Sync To**
+  selector) and the **Quantize** setting together.  With Quantize set to
+  Cycle there is one boundary per cycle: with Eighths/Cycle 8, one per bar
+  of 4/4; with 2, one per beat.  With 8th there is one per eighth note.
+  With Off there are none.
+- **Each loop's own grid** has a boundary at the end of each of the loop's
+  cycles, counted from where the loop was recorded.  A loop recorded with
+  its Sync box checked starts on a source boundary, so its own grid lies
+  on the source's grid.  A loop recorded freely has a grid of its own.
 
-The sync source must be active for any of the sync-dependent features below
-to do anything.
+.. image:: images/sync_boundaries.svg
+   :width: 100%
+   :alt: Four bars of 4/4.  The source grid has a boundary at every bar
+         with Quantize Cycle, and at every eighth note with Quantize 8th.
+         A loop recorded freely from beat 3 of bar 1, six beats long, has
+         its own boundaries at its cycle ends.  A Record pressed on the
+         "and" of beat 2 in bar 2, with the loop's Sync checked and
+         Quantize Cycle, waits and starts at the next boundary, bar 3.
 
-**2. Per-loop "Sync" checkbox**
-Each loop has its own Sync checkbox. When checked, most operations on that
-loop — Record, Multiply, Replace, Substitute, Insert, Reverse, Trigger, and
-Once — wait for the next pulse from the sync source before taking effect.
-With Sync unchecked, operations take effect at the exact sample the command
-arrives, regardless of the sync source.
+The picture shows four bars at Eighths/Cycle 8.  The free loop was
+recorded starting on beat 3 of the first bar and is six beats long, so its
+own boundaries fall on beats it chose, not on the bar lines.
 
-These are independent: you can have a sync source configured without the Sync
-checkbox enabled on any loop, and vice versa. Neither does anything useful
-without the other.
+Three questions decide what you get: where the boundaries come from
+(above), which actions wait for one, and which grid a waiting action uses.
 
-Eighths/Cycle
--------------
+**Which actions wait?**  Two different kinds of setting decide this:
 
-**What it is**
+- The loop's **Sync** checkbox makes Record, Trigger and Once wait for the
+  source's next boundary.
+- Quantize, on its own, makes Multiply, Insert and Reverse wait for a
+  boundary.  The three checkboxes **mute quant**, **odub quant** and
+  **repl quant** do the same for mute, overdub, and replace and substitute.
+  These all wait **whether or not the loop's Sync box is checked**.
 
-Eighths/Cycle tells SooperLooper the phrase length you are working with,
-expressed as a count of eighth notes per cycle. For common time (4/4), one
-bar contains eight eighth notes: use 8. For 3/4 waltz time, use 6. For a
-two-bar phrase, use 16.
+**Which boundary does a waiting action use?**  With the loop's Sync box
+checked, the source's boundaries.  With it unchecked, the loop's own cycle
+boundaries.  For a loop recorded with Sync on, the two are the same, so in
+practice the Sync box decides mainly whether *Record* waits.
 
-**What it affects**
+What each action does with a sync source and Quantize set to Cycle:
 
-*Snap grid interval — Quantize = Cycle only.* Eighths/Cycle directly controls
-the snap-grid spacing **only when Quantize is set to Cycle**. One cycle equals
-the number of eighth notes you specify. Examples at any tempo in 4/4 time:
-Eighths/Cycle 2 → quarter-note snaps; 4 → half-note snaps; 8 → bar snaps.
-With Quantize set to 8th the snap is always one eighth note regardless of this
-setting. With Quantize Off there is no snap grid at all.
+.. list-table::
+   :header-rows: 1
+   :widths: 34 33 33
 
-*Play Sync and Rel Sync half-period.* The engine converts Eighths/Cycle and
-the current tempo into a half-period value (``syncSamples``) used for Play Sync
-boundary detection and the Rel Sync phase-offset correction. For Quantize =
-Cycle this is ``syncSamples = (sampleRate × 30 / tempo) × eighthsPerCycle / 2``.
-For Quantize = 8th the value is half an eighth-note period, which does not
-involve Eighths/Cycle.
+   * - Action
+     - Loop's Sync on
+     - Loop's Sync off
+   * - Record start and end
+     - Waits for the next bar
+     - Acts at once
+   * - Trigger, Once
+     - Waits for the next bar
+     - Acts at once
+   * - Reverse
+     - Waits for the next bar
+     - Waits for the loop's next cycle
+   * - Multiply start, Insert start and end
+     - Waits for the next bar
+     - Waits for the loop's next cycle
+   * - Multiply end
+     - Waits for the next bar
+     - Acts at once; the loop keeps a whole number of cycles
+   * - Replace, Substitute (repl quant on)
+     - Start and end wait for the next bar
+     - Start and end wait for the loop's next cycle
+   * - Overdub (odub quant on)
+     - Start and end wait for the next bar
+     - Start and end wait for the loop's next cycle
+   * - Mute and unmute (mute quant on)
+     - Wait for the next bar
+     - Wait for the loop's next cycle
+   * - Overdub, replace, substitute or mute with its quant box off
+     - Acts at once
+     - Acts at once
 
-*Loop-as-sync-source.* When another loop is the sync source, there is no
-external BPM reference. The tempo is derived from the loop's length divided
-by Eighths/Cycle. Setting this correctly is essential in that mode.
+With Quantize set to Off, nothing waits -- with one important exception,
+JACK, described under `Sync To: the source`_.
 
-**What it does NOT affect**
+Sync To: the source
+-------------------
 
-The Multiply operation counts cycles in units of the originally recorded loop
-length (``lCycleLength``), not in units of Eighths/Cycle. If you record a
-two-bar loop and Multiply it, each pass adds one two-bar unit regardless of
-this setting.
+The **Sync To** selector, in the main window, chooses where the timing
+comes from.  It applies to all loops.
+
+**None.**  No source.  There are no boundaries from outside, so with a
+loop's Sync box checked, everything happens at once.  With it unchecked,
+quantized actions start at once, and some of them (ending a replace,
+substitute, overdub or insert) wait for the loop's own next cycle.  The
+tempo box can be typed into or tapped, but nothing follows it.
+
+**Internal.**  SooperLooper's own tempo, typed in or tapped with the tap
+button.  Boundaries fall at every cycle or eighth note at that tempo,
+according to Quantize.  With Quantize Off or Loop, there are no boundaries
+and synced actions happen at once.
+
+**MidiClock.**  Tempo and boundaries come from incoming MIDI clock.
+SooperLooper counts the clock's ticks (24 to a beat) and places a boundary
+every cycle or every eighth note, according to Quantize; with Quantize Off
+or Loop it places one every beat.  The count, and with it the grid, is
+reset to the start of a bar by a MIDI **Start** or **Continue** message.  A
+**Stop** does not reset it; the Start or Continue that follows does.  The
+tempo is measured from the time between beats, so it settles after a
+beat or two following a Start.  Two options in the preferences make a MIDI
+Start trigger all loops and a MIDI Stop pause them.
+
+**Jack/Host.**  Tempo and position come from the JACK transport master: a
+DAW, Hydrogen, or another program that sets the tempo.  Boundaries fall on
+the master's bars (Quantize Cycle) or eighth notes (8th), and only while
+the transport is rolling.  Two cases catch people out:
+
+- **Quantize Off or Loop with JACK means no boundaries at all.**  An action
+  that waits for one -- for example Record on a loop with Sync checked --
+  waits forever.  Set Quantize to Cycle or 8th, or uncheck the loop's
+  Sync box.
+- **A stopped transport means no boundaries.**  A synced Record waits until
+  the transport rolls.
+
+*Fork change -- beat tracking.*  Stock SooperLooper counts its JACK grid
+from transport frame 0 at the current tempo.  When the master changes
+tempo while the transport is rolling, as Hydrogen does, that grid drifts
+off the master's beat -- by up to half a cycle -- until the next relocate.
+This fork follows the master's beat through tempo changes, so the
+boundaries stay on the beat; on a relocate it lines up again with wherever
+the master puts its beat.  At a steady tempo the result is the same as
+stock.  It is on by default; see the patch summary
+(``late_hit_patch_summary.rst``, "JackSync Beat Tracking").
+
+**Loop 1, Loop 2, ...**  Another loop is the source.  Its tempo is worked
+out from its length and Eighths/Cycle -- a 2-second loop with Eighths/Cycle
+8 gives 120 BPM -- so set Eighths/Cycle to the number of eighth notes the
+source loop really holds.  Boundaries are the source loop's cycles (Quantize
+Cycle), eighth notes (8th) or whole length (Loop); with Quantize Off,
+synced actions happen at once.
 
 Quantize
 --------
 
-**What it does**
+The **quantize** selector in the main window has four settings, and applies
+to all loops:
 
-The Quantize selector determines the snap resolution for sync operations. There
-are four modes:
+- **Off** -- no boundaries: nothing waits (but see JACK above).
+- **Cycle** -- a boundary at every cycle, as set by Eighths/Cycle and the
+  tempo.  For a loop's own boundaries, a cycle is the length of the
+  original recording, even after Multiply has made the loop longer.
+- **8th** -- a boundary at every eighth note.
+- **Loop** -- a boundary at the end of the whole loop, including every
+  cycle added by Multiply.  It is meant for a loop as the source, or for a
+  loop's own boundaries; with Internal or JACK as the source it gives no
+  boundaries, like Off.
 
-- **Off** — no snap-grid subdivisions for internal sync or Rel Sync.
-  With Sync also off, presses take effect immediately. With Sync on and an
-  external pulse source active, the late-hit correction window still fires —
-  the snap point is the external pulse itself, which is independent of
-  Quantize mode. Quantize Off does disable Play Sync and the Rel Sync
-  phase-offset half-period correction.
+As the table in `How it fits together`_ shows, Quantize is not only about
+the source.  It also makes Multiply, Insert, Reverse and the three quant
+checkboxes wait for the loop's own cycle when the loop's Sync box is off.
 
-- **Cycle** — the snap boundary is one full cycle, where a cycle is one
-  repetition of the original loop length (``lCycleLength``). For a freshly
-  recorded loop, cycle and loop length are identical. After Multiply, the
-  cycle is the original pre-multiply length. ``syncSamples`` is set to half
-  the cycle period in samples.
+Eighths/Cycle
+-------------
 
-- **8th** — the snap boundary is one eighth note. ``syncSamples`` is set to
-  half an eighth-note period in samples. **Note:** the physical Quantize
-  button in the GUI only toggles between Off and Cycle. The 8th mode is
-  accessible only via OSC or MIDI.
-
-- **Loop** — operations snap to the end of the complete loop, including all
-  cycles after a Multiply. Where Cycle snaps at the end of each one-bar unit
-  within a four-bar loop, Loop only snaps at the end of all four bars.
-  ``syncSamples`` is calculated identically to Cycle mode. Also only
-  accessible via OSC or MIDI.
-
-**What Quantize does and does not control**
-
-It is easy to confuse the roles of Sync and Quantize:
-
-- The per-loop Sync checkbox determines *whether* operations snap at all —
-  by making them wait for the next sync pulse.
-- Quantize determines the *subdivision* used within a sync period: Cycle,
-  8th-note, or full Loop boundaries. This matters for Rel Sync (see below)
-  and Play Sync, where the engine needs to know the expected pulse interval
-  to compute phase offsets correctly.
-
-For absolute sync (Sync checkbox on, Rel Sync off), the snap always fires
-on the next incoming pulse from the sync source — Quantize mode does not
-change *when* that snap occurs. The snap interval is entirely defined by the
-rate at which your sync source fires. Quantize matters here for one thing:
-setting ``syncSamples`` for Play Sync and slave loop boundary output. The
-late-hit correction window fires based solely on ``fSyncMode > 0`` and the
-elapsed time since the last pulse — Quantize Off does not disable it.
-
-**The late-hit correction window (this patch)**
-
-When an external sync source is active (``fSyncMode > 0``) and the Sync
-checkbox is on, pressing Record or Stop within a configurable window
-(default 100ms, set via ``late_hit_window_ms`` in the session file) *after*
-a sync pulse is automatically corrected back to that
-pulse. Without this correction, any press arriving after the pulse is treated
-as belonging to the next cycle — one full pulse interval later — regardless
-of how slightly late it was.
-
-A second session-file parameter, ``late_hit_max_8th_fraction``, caps the
-window as a fraction of one eighth note. At fast tempos a fixed-ms window
-can span a significant portion of the beat, potentially snapping a press
-genuinely aimed at the *next* boundary back to the *previous* one. For example,
-at 200 BPM an eighth note is about 75 ms, so the default 100 ms window
-would exceed it. Setting ``late_hit_max_8th_fraction`` to 0.5 caps the window
-at half an eighth note regardless of tempo. The default of 100.0 disables the
-cap, leaving ``late_hit_window_ms`` as the sole limit. Both parameters live in
-the ``<Globals>`` section of the ``.slsess`` session file.
-
-*Planned: ``late_hit_max_quant_unit_fraction``.* A future revision may rename
-this parameter and change its reference unit from an eighth note to the full
-quantize interval — one cycle when Quantize is set to Cycle, one eighth note
-when Quantize is set to 8th. (Quantize = Loop is not supported for late-hit
-correction regardless of this parameter: no periodic sync pulses are generated
-in that mode, so the correction window never fires.) Under the new scheme a
-value of 0.25 would cap the window at one-quarter of the quantize interval
-regardless of tempo or Eighths/Cycle, which is a more direct expression of
-"do not correct presses that are more than X% of the way to the next
-boundary." The implementation is a one-line formula change plus a session-key
-rename. This paragraph will be updated or removed when that change is
-implemented; sessions using the default value of 100.0 will not need updating.
-
-The boundary being corrected back to is the last sync pulse, tracked by the
-``lGlobalSamplesSinceSync`` counter which counts samples elapsed since the
-most recent pulse in all states. The counter increments in all engine
-states and resets on every incoming pulse, so it always reflects the true
-elapsed time regardless of Quantize mode.
-
-**Musical meaning**
-
-With Sync on, on-time presses snap to the external pulse identically
-whether Quantize is on or off. The late-hit correction window is also
-active in both cases when an external source is present — an 80ms-late
-press is corrected back to the barline regardless of Quantize setting.
-What Quantize Off does disable is Play Sync drift correction and the Rel
-Sync half-period phase offset correction, both of which require a non-zero
-``syncSamples`` value.
-
-Sync checkbox + Quantize — the full picture
---------------------------------------------
-
-These two settings combine as follows:
+**8th/cycle** in the main window sets how many eighth notes make one cycle.
+Any whole number works.  Some common choices:
 
 .. list-table::
    :header-rows: 1
+   :widths: 20 80
 
-   * - Sync checkbox
-     - Quantize
-     - On-time press behaviour
-     - Late press behaviour
-   * - Off
-     - Off
-     - Takes effect immediately
-     - Takes effect immediately
-   * - Off
-     - Cycle/8th/Loop
-     - Takes effect immediately (Quantize has no effect without Sync)
-     - Takes effect immediately
-   * - On
-     - Off
-     - Snaps to next sync pulse
-     - Corrected back if within window (external pulse is the snap point)
-   * - On
-     - Cycle/8th/Loop
-     - Snaps to next sync pulse
-     - Corrected back to current pulse if within window
+   * - Eighths/Cycle
+     - One cycle is
+   * - 1
+     - an eighth note
+   * - 2
+     - one beat (a quarter note)
+   * - 4
+     - half a bar of 4/4
+   * - 6
+     - a bar of 3/4 or 6/8
+   * - 8
+     - a bar of 4/4
+   * - 16
+     - two bars of 4/4
+
+With Quantize Cycle it sets the spacing of the source's boundaries, and
+with them the lengths a synced recording can have: a recording started and
+ended on boundaries is a whole number of cycles.  At 2, a loop can be any
+whole number of beats long; at 8, any whole number of bars.  With Quantize
+8th the spacing is always one eighth note, whatever Eighths/Cycle says.
+
+When a loop is the sync source, Eighths/Cycle also sets the tempo, as
+described above.
+
+With Jack/Host as the source, the cycles are counted in beats from the
+start of the transport (position 0), not from the master's most recent bar
+line.  A change of Eighths/Cycle takes effect at once, but the counting
+still runs from the start.  Changed from 8 to 6 in the middle of a song,
+the new three-beat cycles fall on beats 12, 15, 18 and so on of the song.
+They line up with the master's bars only if its three-beat bars also start
+on a multiple of three beats.  Relocating the transport to position 0
+restarts the count.
+
+Once a loop is recorded, its own cycle length is fixed by the recording.
+Changing Eighths/Cycle afterwards changes the source's boundaries, not the
+loop's cycles; Multiply always adds whole cycles of the loop as recorded.
+
+The loop's Sync checkbox
+------------------------
+
+Each loop has its own **sync** checkbox.  With it checked, Record, Trigger
+and Once wait for the source's next boundary, and the actions that
+Quantize and the quant checkboxes make wait use the source's boundaries.
+With it unchecked, Record, Trigger and Once act at once, and the other
+waiting actions use the loop's own cycles.
+
+The checkbox and the source need each other: without a source, a checked
+Sync box makes nothing wait.
+
+*Fork addition -- late-hit correction.*  A Record press that lands just
+after a boundary is normally pushed to the next boundary, a whole cycle
+later.  This fork treats a press within a short window after a boundary
+(100 ms by default) as if it had arrived on that boundary: a late start
+still starts on the beat, with the audio played since the beat kept, and a
+late stop ends the loop on the beat.  The same applies to the press that
+ends a Multiply.  It needs the loop's Sync box checked and a source
+producing boundaries -- with JACK or Internal, that means Quantize set to
+Cycle or 8th.  It does not apply with Rel Sync on, where a recording is
+meant to start and end off the boundary.  The window and a
+tempo-relative cap on it are session-file settings; see the patch summary,
+"What the Patch Does" and "Record Late-Hit Window Size".
+
+The quant checkboxes: mute quant, odub quant, repl quant
+--------------------------------------------------------
+
+These three checkboxes in the main window apply to all loops, and are all
+off by default.
+
+**mute quant** makes muting and unmuting wait for a boundary -- both
+directions.  Pause shares this setting: entering Pause waits too, but
+leaving Pause always happens at once.
+
+**odub quant** makes starting and ending an overdub wait for a boundary.
+With it off, overdubs start and stop exactly when pressed.
+
+**repl quant** makes starting and ending Replace *and Substitute* wait for
+a boundary.  There is no separate setting for Substitute.  (Substitute is
+like Replace, except that you still hear the old material while you play
+over it; from the next time round, only the new material is heard.)
+
+As the table in `How it fits together`_ shows, these work whether or not
+the loop's Sync box is checked, as long as Quantize is not Off.
+
+*Fork additions.*  With mute quant on, a Mute or Unmute press that lands
+just after a boundary acts on that boundary instead of waiting a whole
+cycle for the next (100 ms window by default; see the patch summary, "New
+Feature: mute/unmute late-hit correction").  And a quantized Pause pressed
+while muted now ends up paused, where stock SooperLooper starts the loop
+playing instead.
 
 Multiply
 --------
 
-**What it does — the basic operation**
+**What it does.**  Multiply makes a loop longer by whole cycles while you
+play over it.
 
-Multiply is the primary tool for building up longer loops from a shorter one.
-The sequence is:
+1. With a loop playing, press **Multiply**.  The loop keeps playing as
+   before, and SooperLooper records what you play over it into a longer
+   loop.
+2. Each time the original loop comes round, the new loop grows by one
+   cycle.
+3. Press **Multiply** again to finish.  How the last, partial cycle is
+   handled depends on Round (below).
 
-1. You have a loop already playing.
+While multiplying you hear the original loop with your playing over it.
 
-2. You press **Multiply once.** The engine enters Multiply mode. It continues
-   playing your existing loop as before. Simultaneously it begins recording
-   new audio into an extended buffer. The length of the original loop is
-   locked in as the unit for this operation (``lCycleLength``).
+**An example.**  A two-bar bass riff is looping.  You press Multiply and
+play a chord progression four bars long, hearing the riff twice underneath,
+then press Multiply again.  You now have a four-bar loop: the riff twice,
+with your chords over the top.  Every repeat plays all four bars.  This is
+the usual way to build up a part without stopping.
 
-3. As the original loop repeats, the buffer extends automatically. After one
-   full pass the loop doubles; after two passes it triples. At each cycle
-   boundary the engine increments its cycle counter (``lCycles``) and appends
-   another ``lCycleLength`` block.
+**More presses.**  If the end of a Multiply is still waiting for a boundary,
+each further press of Multiply adds one more cycle before it ends -- a way
+to end on a cycle you have not reached yet without timing the last press.
 
-4. You press **Multiply again** to end the operation. What happens next
-   depends on Round mode (see below).
+**Ending with Record instead.**  Pressing Record to end a Multiply ends it
+at once, exactly where you press, and makes the whole new loop a single
+cycle.  Later Multiplies then add that whole length each time.  Use this to
+turn a multiplied loop into a new, longer basic unit.
 
-**What the performer hears during Multiply**
+**Shortening.**  Multiplying a loop that is already several cycles long,
+and ending early, can leave it shorter than before -- always by whole
+cycles.
 
-The output is the source loop — your original recording — playing back with
-your live input mixed over it. You hear the original loop underneath what you
-are now playing; the engine records your new material simultaneously.
-
-**A worked musical example**
-
-You have a two-bar bass riff looping. You press Multiply and play a chord
-progression that takes four bars. While you play you hear the bass riff
-repeating underneath — once, twice. After your four bars you press Multiply
-again.
-
-You now have a four-bar loop. Bars 1–2 contain the bass riff plus your first
-pass. Bars 3–4 contain the bass riff repeating plus your second pass. Every
-subsequent cycle plays all four bars in sync. This is the central workflow for
-building up live layered accompaniment without stopping playback.
-
-**Pressing Multiply additional times during the operation**
-
-If you press Multiply a third time while already in Multiply mode, the engine
-notes the current cycle count as a checkpoint and schedules the end of the
-operation at that checkpoint. Pressing multiple times accumulates additional
-cycles before committing. This is a way to end a multiply pass on a future
-cycle boundary without timing the final press precisely.
-
-**Ending Multiply with a Record press**
-
-If you press **Record** (rather than Multiply) to end a Multiply operation,
-the loop stops immediately at the exact sample of the press. Additionally,
-the cycle length is redefined to the full new loop length (``lCycleLength =
-lLoopLength``, ``lCycles = 1``). Subsequent Multiply passes treat the longer
-loop as a single indivisible cycle. Use this to promote a multiplied loop into
-a new base unit.
-
-**Can Multiply reduce a loop?**
-
-Yes. If you use Multiply on a loop that has already been multiplied, you can
-end the operation before reaching the original cycle count, producing a shorter
-result. The loop must be at least one cycle long.
-
-**Effect on subsequent operations**
-
-After Multiply, ``lLoopLength`` is longer but ``lCycleLength`` stays the same
-(the original loop length). Subsequent Multiply passes add one ``lCycleLength``
-unit per pass. Overdub and Replace span the full new length.
+**Afterwards** the loop is longer, but its cycle is still the length of the
+original recording, so another Multiply adds that much each pass.  Overdub
+and Replace work over the whole new length.
 
 Round
 -----
 
-**What it does**
+**round**, in the main window, applies to Multiply and Insert only; it has
+no effect on Record.  When you press to end a Multiply you are rarely
+exactly at the end of a cycle.  Round decides what fills the rest of it:
 
-Round applies **only** to Multiply and Insert operations — it has no effect
-on Record or Stop. When you press Multiply to end the operation, you are
-almost never at an exact cycle boundary. Round determines how the partial
-cycle at the end is handled:
+- **Round off** -- the loop takes your playing up to the press, and the rest
+  of that cycle is filled from the original loop.  You can stop playing
+  early and the loop closes itself; the last beats are the original
+  material.
+- **Round on** -- SooperLooper keeps recording to the end of the cycle, so
+  everything you play up to the boundary is kept.  Keep playing until the
+  loop closes.
 
-- **Round off** — the engine fills the portion from your button press to the
-  end of the current cycle from the original source loop (``srcloop``). Your
-  playing up to the press is kept; the tail is patched silently from the
-  original.
+**An example.**  With a two-bar loop, you Multiply and play for about three
+and a half bars, then press Multiply.  With Round off, the result is four
+bars: three and a half of your new playing and half a bar of the original.
+With Round on, you keep playing to the end of bar four, and all four bars
+are your new playing.
 
-- **Round on** — the engine keeps recording your live input all the way
-  through to the next complete cycle boundary. Nothing is filled from the
-  source; every sample up to the boundary is your new playing.
-
-**Musical consequence**
-
-With Round off: press Multiply at any point. The tail is covered by the
-original loop material — comfortable in live performance because you can ease
-off before the boundary and the loop closes itself. The trade-off: the final
-beats revert to the original content.
-
-With Round on: you must keep playing until SooperLooper closes the loop. After
-you press Multiply there is a brief wait — the engine holds the recording open
-until the next cycle boundary. Every note you play right up to that moment is
-captured. Choose Round on when you want full control over every sample, or
-when the original material would sound wrong patched into the tail.
-
-**Practical example**
-
-You have a 2-bar loop. You start Multiply and play for about 3.5 bars, then
-press Multiply to end.
-
-- Round off: bars 1–3.5 are your new playing; bars 3.5–4 are filled from the
-  original 2-bar loop. Final result: a clean 4-bar loop.
-- Round on: you continue playing through bar 4. The loop closes at the
-  boundary. Final result: a 4-bar loop entirely of your new performance.
-
-**Without an external sync source**
-
-Round still works, using the internal cycle length (``lCycleLength``) to
-determine where boundaries fall. The separate Round Integer Tempo parameter
-(``pfRoundIntegerTempo``, not the Round button) applies a different mechanism
-in the Record/Stop path: it finds the nearest integer-BPM interpretation of
-the current loop length and extends the recording to that exact length.
+Round does the same for the end of an Insert.  It is separate from the
+**Round Integer Tempo** setting, which adjusts a loop's length when a
+recording ends so that it matches a whole-number tempo.
 
 Insert
 ------
 
-**What it does**
+**What it does.**  Insert makes a loop longer by splicing new material into
+the middle.  Where Multiply repeats the loop while you play over it, Insert
+cuts the loop where you press, records new cycles there, and moves the rest
+of the original to after them.
 
-Insert is a splice operation. Where Multiply extends the loop at the end by
-recording additional cycles during playback, Insert cuts the loop at the
-*current playback position* and splices in a new cycle's worth of material,
-shifting the original content that follows the cut point to after the new
-material.
+If the loop holds sections ``[A][B][C]`` and you insert during ``[B]``, the
+result is ``[A][new][B][C]``, with ``[B]`` resumed from the cut.
 
-Concretely: suppose your loop contains three sections ``[A][B][C]`` and you
-press Insert while the loop is partway through ``[B]``. The engine mutes the
-loop output and you record a new cycle. When Insert ends, the loop becomes
-``[A][new material][B][C]``. The original content from the cut point onward
-is preserved, pushed to after the inserted cycle.
+1. With the loop playing, press **Insert**.  With Quantize on, the insert
+   starts at the next cycle boundary.
+2. While inserting, the loop is silent; you hear only what you play, and
+   it is recorded.
+3. Press **Insert** again to finish.  With Quantize on, it ends at a cycle
+   boundary, so the loop grows by whole cycles.  Pressing Record instead
+   ends it at once and makes the whole loop one new cycle, as with
+   Multiply.
 
-**The sequence**
+**An example.**  A two-bar chord loop is playing.  At the start of bar two
+you insert a one-bar fill.  The loop becomes three bars: bar one, the fill,
+then bar two.
 
-1. Press **Insert** while the loop is playing. The engine records the current
-   position as the cut point (``lInsPos``). With Round on, the cut point is
-   rounded to the next cycle boundary; with Round off, the cut point is
-   wherever you pressed.
-
-2. During Insert, the output is muted and you record a new cycle. The engine
-   plays back the source loop up to the cut point, then replaces output with
-   your live input for one cycle length, then resumes the original content from
-   the cut point onward (the ``lRemLen`` remainder).
-
-3. Press **Insert again** (or another command) to end. Insert end is
-   *not* sync-gated — unlike Multiply end, it takes effect at the exact sample
-   you press, since the cycle length is already fixed by the operation itself.
-
-**Musical meaning**
-
-Insert is for adding a section that was not in the original loop — a
-transition, a fill, a bridge. Unlike Overdub (which layers on top of what is
-already there), Insert genuinely lengthens the loop. Unlike Multiply (which
-repeats cycles), Insert adds novel content in the middle.
-
-A practical example: you have a two-bar loop of sustained chords. While
-playing, you press Insert at the start of bar 2 to splice in a one-bar drum
-fill. The result is a three-bar loop: bar 1 (chords) + bar 2 (fill) +
-original bar 2 (chords continuing). The loop is now one cycle longer.
-
-**How Round affects Insert**
-
-With Round off: the cut point is wherever you pressed. The new cycle starts
-at that exact position, and the original remainder follows immediately after.
-The resulting loop length may not be a clean multiple of the cycle length.
-
-With Round on: the cut point is rounded to the next cycle boundary, so the
-insert always begins at a musically clean point and the resulting loop remains
-a multiple of the original cycle length.
-
-**Relation to Substitute**
-
-Substitute is a simplified Insert-like operation. It overwrites one cycle
-starting at the current position with new material (no muting, no shifting),
-then returns to play. The ``bReplaceQuantized`` (Replace Quant) flag controls
-whether Substitute start is sync-gated — the same flag as Replace, not a
-separate control.
+Use Insert for something that was not in the loop before -- a fill, a
+break, a bridge.  Unlike Overdub, which plays on top of what is there,
+Insert makes the loop longer; unlike Multiply, it adds new material rather
+than repeating the old.
 
 Play Sync
 ---------
 
-**What it does**
+The loop's **play sync** checkbox keeps a playing loop in step with the
+source.  When a boundary from the source arrives close to the loop's start
+or end, SooperLooper jumps the loop to where it should be.  It is a small
+position correction, not a time-stretch, so it only fixes slow drift.  It
+needs Quantize to be on.
 
-The Play Sync checkbox causes the loop's playback position to be retriggered
-when a sync pulse arrives near a loop boundary. Specifically: if a sync pulse
-occurs while the loop position is within ``syncSamples`` of the loop's start
-or end, the playback position is snapped to the sync-aligned position.
+It is mainly for MIDI clock, which can drift slowly against the audio:
+without it, a loop recorded against MIDI clock gradually moves out of step.
+It cannot follow a change of tempo.
 
-Play Sync requires Quantize to be set to something other than Off, because
-``syncSamples`` must be non-zero for the near-boundary test to have any range.
+Rel Sync
+--------
 
-**Musical meaning**
+**rel sync**, in the main window, changes how a synced Record behaves.  It
+applies to all loops, and only to loops with their Sync box checked.  With
+it on:
 
-Play Sync is useful when your sync source (particularly MIDI clock) may drift
-slightly over time. Without it, a loop recorded to MIDI clock will gradually
-drift out of phase as the two run independently. With Play Sync on, the loop
-is nudged back into phase alignment on each sync pulse, as long as it is close
-to a boundary. It does not do any time-stretching — it is a position
-correction only, so it is effective only for small accumulated drift.
+- Record starts **at once**, wherever you press, instead of waiting for a
+  boundary.  SooperLooper notes how far the press was from the last
+  boundary.
+- The press to end the recording waits until the same distance after a
+  boundary comes round again, so the loop is meant to be a whole number of
+  cycles long even though it did not start on one.
+- While the loop plays, it is kept at that same offset from the source's
+  boundaries.
 
-Rel Sync (Relative Sync)
-------------------------
+This suits a phrase that starts off the beat -- a pickup on the "and" of
+four, say.  With plain Sync, Record would wait for beat one and miss the
+pickup; with Rel Sync, you press on the pickup and the loop closes on the
+next one.
 
-**What it does**
-
-Rel Sync is a fundamentally different sync mode, not an add-on to the Sync
-checkbox. When Rel Sync is active:
-
-- Pressing Record starts immediately — no waiting for a sync pulse. The engine
-  records the exact phase offset between the last sync pulse and the moment you
-  pressed Record (stored as ``lSyncOffset``).
-
-- Pressing Stop waits for the moment in the next sync period where the same
-  phase offset recurs (``lSamplesSinceSync == lSyncOffset``). The loop length
-  is therefore an exact multiple of the sync period even though you did not
-  start on a boundary.
-
-- During playback, every time a sync pulse arrives, the engine re-cues the
-  loop position to the stored offset (``lSyncPos``), correcting accumulated
-  drift.
-
-**Musical meaning**
-
-Normal Sync forces your loop to start and end on beat boundaries. Rel Sync
-lets the loop start wherever your phrase starts — even mid-beat — while
-keeping it phase-locked to the tempo on every repeat.
-
-Suppose you want to capture a phrase that begins on the "and of 4" — a pickup
-before the bar. With normal Sync you would have to wait until beat 1, losing
-the pickup. With Rel Sync you press Record on the "and of 4," the engine notes
-the offset, and when you press Stop the loop closes at the next "and of 4."
-Every subsequent repeat re-anchors on each incoming sync pulse.
-
-**Rel Sync and Quantize**
-
-Rel Sync works with Quantize off, but is designed to be used with Quantize set
-to Cycle or 8th. When ``syncSamples`` is non-zero (Quantize ≠ Off), the engine
-applies a half-period correction to the stored ``lSyncPos``: if you pressed
-Record in the second half of a sync interval, ``lSyncPos`` is adjusted so that
-the playback re-cue aligns to the nearest boundary. Without this correction
-(Quantize off), presses in the second half of a period store an uncorrected
-offset that can cause slight misalignment on subsequent pulses.
-
-**When Rel Sync is a no-op**
-
-Rel Sync requires a live sync signal. Without a sync source, the stop
-condition never fires and the playback re-cue never runs.
-
-Overdub Quant, Replace Quant, and Mute Quant
---------------------------------------------
-
-These three checkboxes control whether specific operations snap to a sync
-boundary when Sync is enabled. They are independent of the main Quantize
-setting and of each other.
-
-**Overdub Quant** (``fOverdubQuantized``, default: off)
-
-When off (the default), Overdub start and stop take effect immediately
-regardless of sync settings. When on, both the start and stop of an Overdub
-operation wait for the next sync pulse before taking effect.
-
-Use Overdub Quant when you want overdub layers to always begin and end on
-beat boundaries — for example, when adding a sustained pad that should start
-exactly on the downbeat rather than wherever your finger landed.
-
-**Replace Quant** (``bReplaceQuantized``, default: on)
-
-When on, both Replace start and Replace stop wait for the next sync pulse.
-When off, Replace takes effect immediately.
-
-Notably, **Replace Quant also controls Substitute**. The code reads the same
-flag (``bReplaceQuantized``) in both the Replace and Substitute dispatch
-paths. There is no separate Substitute quantize control.
-
-Replace Quant defaults to on, unlike the other two, because Replace
-destructively overwrites loop content. Snapping to a boundary by default
-reduces the risk of accidentally replacing audio at the wrong position.
-
-**Mute Quant** (``fMuteQuantized``, default: off)
-
-When on, *returning from mute to play* waits for the next sync pulse. Muting
-itself (pressing Mute while playing) is always immediate — only the return
-to play is gated. This means you can mute at any moment, but the loop will
-re-enter audibly exactly on the next beat.
-
-Pause behaviour is similar: leaving the Paused state to return to Play is
-gated; entering Pause is immediate.
-
-**Are these subject to late-hit correction?**
-
-No, and by design. These operations snap to the *next* sync boundary forward
-in time, not *back* to a recent one. They are used to control texture
-mid-performance (layering, muting, replacing a section) rather than to define
-loop boundaries. The user is not trying to hit a precise boundary — they are
-performing within an existing loop and the sync wait is a forward-looking
-cleanup, not a correction of a missed entry point. Late-hit correction applies
-only to **Record start**, **Record stop**, and **Multiply end** — the three
-operations where the user is explicitly trying to land on a specific boundary.
-Insert end already fires at the exact sample of the press and needs no
-correction; Insert start correction is not yet implemented.
-
-A note on Overdub
------------------
-
-Overdub is not quantized in normal operation — it starts and stops immediately
-when the button is pressed, regardless of Sync or Quantize settings. An
-internal ``OverdubQuantized`` parameter exists in the engine (``pfOverdubQuantized``)
-but defaults to off and is not exposed in the standard GUI.
-
-Summary table
--------------
-
-.. list-table::
-   :header-rows: 1
-
-   * - Setting
-     - Affects
-     - Requires
-     - No-op when
-   * - **Sync To** (source selector)
-     - Provides the timing reference pulse
-     - JACK connection, MIDI clock, or an existing loop
-     - Nothing connected
-   * - **Sync** (per-loop checkbox)
-     - Operations wait for the next sync pulse before acting
-     - Sync source active
-     - No sync source
-   * - **Quantize** Off/Cycle/8th/Loop
-     - Subdivision for Rel Sync phase-offset correction and Play Sync
-       boundary detection; does **not** affect the late-hit window
-     - Rel Sync on, or Sync on with Play Sync enabled
-     - Sync and Rel Sync both off
-   * - **Round**
-     - Multiply/Insert end on a complete cycle boundary
-     - An active Multiply or Insert operation
-     - Using only Record/Stop
-   * - **Play Sync**
-     - Retriggering near boundaries to correct drift
-     - Sync source active; Quantize ≠ Off
-     - No sync source, or Quantize off
-   * - **Rel Sync**
-     - Records phase offset; re-cues playback on each pulse
-     - Sync source active; Quantize ≠ Off recommended
-     - No sync source
-   * - **Eighths/Cycle**
-     - Cycle period for sync calculations; defines tempo if loop is source
-     - Rel Sync, Quantize Cycle/8th/Loop, or loop-as-sync-source
-     - Absolute external-pulse sync with no Rel Sync
-
-Big-picture control flow (pseudocode)
---------------------------------------
-
-The following pseudocode shows the main decision paths in the engine
-(``plugin.cc``) when a Record or Multiply button arrives. It omits per-sample
-audio detail to focus on the control logic.
-
-::
-
-    # ── On each JACK buffer callback ─────────────────────────────────────────
-
-    # 1. Snapshot global sync phase BEFORE scanning this buffer
-    T = lGlobalSamplesSinceSync          # samples since last sync pulse
-
-    # 2. Scan this buffer for sync pulses; update the global counter
-    for each sample in buffer:
-        lGlobalSamplesSinceSync += 1
-        if pfSyncInput[sample] > 1.5:
-            lGlobalSamplesSinceSync = 0  # pulse arrived; reset counter
-
-    # 3. Process any control event that arrived this buffer
-    switch command:
-
-        case RECORD_BUTTON:
-            switch current_state:
-
-                case STATE_RECORD:          # second press = stop recording
-                    if fSyncMode == 0 and not bRoundIntegerTempo:
-                        → STATE_PLAY immediately
-                    elif late-stop window:
-                        # (fSyncMode > 0 and 0 < T <= shiftSamples
-                        #  and bSyncPulseReceived)
-                        trim lLoopLength by T; lCycleLength = lLoopLength; lCycles = 1
-                        set dCurrPos = lLoopLength + latency + T
-                        → STATE_PLAY immediately
-                    else:
-                        → STATE_TRIG_STOP  # wait for next sync pulse
-
-                default:                    # first press = start recording
-                    shiftSamples = effectiveLateHitWindow(sampleRate, tempo,
-                                       eighthPerCycle)  # ms cap + 8th-fraction cap
-                                       # (session params: late_hit_window_ms,
-                                       #  late_hit_max_8th_fraction)
-                    if fSyncMode > 0
-                       and 0 < T <= shiftSamples
-                       and bSyncPulseReceived:   # false until first real pulse
-                        # late-hit correction
-                        allocate loop buffer
-                        backfill T samples from input ring buffer
-                          at readPos = inputWritePos - T  # no latency term
-                        dCurrPos = T
-                        → STATE_RECORD immediately
-                    elif fSyncMode > 0:
-                        → STATE_TRIG_START  # wait for next sync pulse
-                    else:
-                        → STATE_RECORD immediately
-
-        case MULTIPLY_BUTTON:
-            switch current_state:
-
-                case STATE_PLAY:            # first press = begin multiply
-                    lock lCycleLength = current lLoopLength
-                    → STATE_MULTIPLY
-
-                case STATE_MULTIPLY:        # second press = end multiply
-                    if Sync and not yet at boundary:
-                        → STATE_TRIG_STOP  # wait for next pulse, then endMultiply
-                    else:
-                        endMultiply():
-                            if Round off:
-                                lLoopLength = lCycles * lCycleLength
-                                fill tail from srcloop
-                            if Round on:
-                                extend recording to next cycle boundary
-                                (live input fills to boundary)
-                        → STATE_PLAY
-
-    # ── STATE_TRIG_START: per-sample, waiting for sync pulse ─────────────────
-
-    for each sample:
-        if fSyncMode == 0 and input > threshold:   → STATE_RECORD
-        elif fSyncMode == 2 (Rel Sync):            → STATE_RECORD immediately
-        elif fSyncMode > 0 and syncInput != 0:     → STATE_RECORD
-
-    # ── STATE_TRIG_STOP: per-sample, waiting for sync pulse ──────────────────
-
-    for each sample:
-        roundTempoDone = bRoundIntegerTempo and dCurrPos == roundedSamples
-        if fSyncMode == 0 and (not bRoundIntegerTempo or roundTempoDone):
-            → nextState (STATE_PLAY or STATE_OVERDUB)
-        elif fSyncMode == 1 and syncInput != 0:
-            → nextState
-        elif fSyncMode == 2 and lSamplesSinceSync == lSyncOffset:
-            → nextState
-
-    # ── STATE_PLAY: per-sample ────────────────────────────────────────────────
-
-    for each sample:
-        output = loop[dCurrPos % lLoopLength]
-        if PlaySync on and Quantize != OFF:
-            if syncInput != 0 and dCurrPos near loop boundary:
-                dCurrPos = lLoopLength - lSyncPos  # retrigger to stored offset
-        dCurrPos += fRate
-        # natural wrap:
-        dCurrPos = fmod(dCurrPos, lLoopLength)  # wraps at each loop end
+It needs a source producing boundaries, and Quantize set to Cycle or 8th.
+The first recording after turning Rel Sync on, or after changing the sync
+settings, can come out the wrong length; the recordings after it are
+right.  Make one recording and undo it before relying on the length.
 
 Common setups for live performance
------------------------------------
+----------------------------------
 
-**Free looping, no sync**
-Sync To: None. Sync checkbox off, Quantize off. Record and Stop take effect
-immediately. Good for ambient or non-metered work, or when you want to
-determine loop length by feel.
+**Free looping, no beat.**  Sync To None, Quantize Off, loops' Sync boxes
+unchecked.  Everything happens when you press.  Good for ambient or
+unmetered playing, or for setting a loop's length by feel.
 
-**Metered looping, tight timing**
-Sync To: JACK Transport or MIDI Clock. Sync checkbox on, Quantize Cycle. The
-source provides the beat; SooperLooper snaps every loop to exact bar multiples.
-The late-hit window means you can press by feel without watching a metronome.
+**Looping to a drum machine or DAW.**  Sync To Jack/Host (or MidiClock),
+Quantize Cycle, Eighths/Cycle 8, loops' Sync boxes checked.  Loops start and
+end on bar lines.  This fork's late-hit correction means a press slightly
+after the bar line still lands on it.  Leave mute quant, odub quant and repl
+quant off if you want those actions to happen exactly when pressed; turn
+them on to have them land on the bar.
 
-**Tempo changes from an external JACK master**
-Sync To: JACK Transport. Sync checkbox on, Quantize Cycle. When the JACK time
-master sends a new tempo and you reset the transport to position 0 —
-for example via a footswitch — SooperLooper picks up the new tempo on the
-first rolling buffer and its sync grid re-anchors to position 0 alongside
-the master. The grids stay aligned across every tempo change as long as each
-one is accompanied by a locate back to position 0. Note that this workflow
-applies when your master (e.g. Hydrogen) changes tempo via an external command
-(such as an OSC message) while remaining in a single pattern; Hydrogen's song
-mode would be needed for pre-programmed tempo sequences.
+**Tempo changes from a JACK master.**  As above, with Jack/Host.  With this
+fork's beat tracking, the boundaries stay on the master's beat when it
+changes tempo while rolling, with no relocate needed.  If you also change
+Eighths/Cycle -- say from a four-beat to a three-beat cycle -- relocate the
+transport to position 0 at the same time, and start the master's new
+pattern there, so the new cycles line up with its bars (see
+`Eighths/Cycle`_).
 
-If you also change Eighths/Cycle between patterns (for example switching from
-a 4-beat to a 3-beat cycle), pair that change with the same locate to 0.
-SooperLooper recalculates its pulse grid immediately when Eighths/Cycle changes;
-without a locate, the new grid is anchored to frame 0 but SooperLooper's current
-transport position may land at an arbitrary point within the new cycle until the
-next pulse arrives.
+**Building up parts.**  Sync on, Quantize Cycle, Round on.  Record a short
+seed loop of one or two bars, then Multiply over it while adding parts.
+With Round on, each Multiply closes at the end of a cycle, so the closing
+press does not need to be exact.  For example: record a bass riff, Multiply
+and play chords for four bars, press Multiply; Multiply again and play a
+melody for eight bars, press Multiply.
 
-Simply stopping and restarting transport without a locate does not require a
-reset when using JACK sync: SooperLooper and Hydrogen both resume from the same
-frame position and remain in sync. Hydrogen in pattern mode does not
-auto-reset to bar 1 on a JACK transport stop — only an explicit locate to
-position 0 returns to bar 1. (With MIDI Clock sync the situation is different:
-Hydrogen resets its pattern on MIDI Stop, and the subsequent MIDI Start
-resets SooperLooper's tick counter automatically, giving implicit bar-1
-alignment on every Stop+Start without any locate command.)
+**A new basic unit.**  After building a four-bar loop with Multiply, end
+the next Multiply with Record.  The four-bar loop becomes one cycle, and
+later Multiplies add four bars at a time.
 
-If tempos vary significantly between patterns, consider setting
-``late_hit_max_8th_fraction`` in the session file (e.g. 0.4–0.5): at fast
-tempos a fixed-ms window covers a larger fraction of the beat, and the cap
-prevents it from accidentally reaching the next cycle.
+**Phrases that begin off the beat.**  Rel Sync on, Quantize Cycle, a source
+active, the loop's Sync box checked.  Press Record where the phrase starts;
+the loop closes at the same point in a later bar and stays at that offset
+as it plays.
 
-**Building up layered parts live**
-Sync on, Quantize Cycle, Round on. Record a short seed loop (one or two bars),
-then Multiply through it while adding parts. Round on means each Multiply pass
-closes cleanly at the bar line — you do not need to release the button at a
-precise moment. Typical session: record bass riff → Multiply, play chords for
-4 bars, press Multiply → press Multiply again, play melody for 8 bars, press
-Multiply. Each press closes at the next clean bar.
+**One loop following another.**  Record loop 1 freely.  Set Sync To Loop 1
+and Eighths/Cycle to the number of eighth notes loop 1 holds.  Check loop
+2's Sync box: its recordings start and end on loop 1's cycle boundaries, and
+the two stay together.
 
-**Redefining the cycle mid-performance**
-After building a 4-bar loop via Multiply, end a further Multiply with a Record
-press instead. This immediately makes the 4-bar loop a single new cycle.
-Subsequent Multiply passes add 4-bar units rather than 1-bar units.
-
-**Phrases that begin off the beat**
-Rel Sync on, Quantize Cycle, sync source active. Press Record at the natural
-start of your phrase. SooperLooper captures the phase offset and closes the
-loop at the matching offset in the next cycle. Every repeat re-anchors to the
-sync pulse. Use this for pickups or grooves whose downbeat does not land on
-beat 1.
-
-**Loop-as-sync-source with a slave loop**
-Record a master loop. Set Sync To: Loop 1. Set Eighths/Cycle to match its
-phrase length. On a second looper channel, enable the Sync checkbox. The
-second loop snaps to cycle boundaries of the first, keeping both locked
-together.
-
-**Drift correction for MIDI clock**
-Sync To: MIDI Clock. Sync on, Quantize Cycle, Play Sync on. The loop snaps to
-bar lines on record; Play Sync nudges playback back into phase on each incoming
-clock pulse if the MIDI source drifts slightly.
-
+**Keeping a loop on MIDI clock.**  Sync To MidiClock, Quantize Cycle, the
+loop's Sync and play sync boxes checked.  The loop is recorded to the bar
+lines, and play sync nudges it back into step if the clock drifts.

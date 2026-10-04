@@ -237,7 +237,11 @@ needs sync to be active, which means two things together:
   there is no boundary to measure lateness from, and the correction never
   fires, whatever the checkbox says.
 
-Quantize does not need to be on.  The window is 100 ms by default; see
+With a JACK or Internal source this also means Quantize set to Cycle or
+8th: with Quantize Off or Loop those sources produce no boundaries.  The
+correction is off under Rel Sync, where a recording deliberately starts
+and ends away from the boundary.  The
+window is 100 ms by default; see
 `Record Late-Hit Window Size`_.
 
 Late Record Start
