@@ -2896,6 +2896,23 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 	}
 	else if (_sync_source == MidiClockSync) {
 
+		//------ albBegin ----------------------------------
+		// ALB_CYCLE_CHANGE_REANCHOR (engine.hpp): when Eighths/Cycle has
+		// changed the ticks per cycle, start the new grid at the old grid's
+		// nearest boundary (in ticks), as the JACK branch does in beats.
+#ifdef ALB_CYCLE_CHANGE_REANCHOR
+		if (_reanchor_midi_loop_tick > 0
+		    && _eighth_cycle != _reanchor_midi_eighths
+		    && _midi_loop_tick != _reanchor_midi_loop_tick) {
+			const long old = (long) _reanchor_midi_loop_tick;
+			const long d   = (long) _midi_ticks - _midi_tick_origin;
+			_midi_tick_origin += (long) std::floor ((double) d / (double) old + 0.5) * old;
+		}
+		_reanchor_midi_eighths   = _eighth_cycle;
+		_reanchor_midi_loop_tick = _midi_loop_tick;
+#endif
+		//------ albEnd ----------------------------------
+
 		RingBuffer<Event>::rw_vector vec;
 		Event *evt;
 
@@ -2943,6 +2960,13 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				}
 				else if (evt->Control == Event::MidiStart) {
 					_midi_ticks = 0;
+					//------ albBegin ----------------------------------
+					// ALB_CYCLE_CHANGE_REANCHOR: a Start/Continue counts
+					// cycles from here again, as before.
+#ifdef ALB_CYCLE_CHANGE_REANCHOR
+					_midi_tick_origin = 0;
+#endif
+					//------ albEnd ----------------------------------
 					//cerr << "got start at " << fragpos << endl;
 					//calculate_midi_tick();
 					if (_use_sync_start) {
@@ -2998,7 +3022,15 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 					_prev_beatstamp = timestamp;
 				}
 				
+				//------ albBegin ----------------------------------
+				// ALB_CYCLE_CHANGE_REANCHOR: count from the grid's origin
+				// (signed: the origin can be just ahead of the count).
+#ifdef ALB_CYCLE_CHANGE_REANCHOR
+				if ((((long) _midi_ticks - _midi_tick_origin) % (long) _midi_loop_tick) == 0) {
+#else
 				if ((_midi_ticks % _midi_loop_tick) == 0) {
+#endif
+				//------ albEnd ----------------------------------
 					//cerr << "GOT SYNC TICK at " << fragpos << endl;
 
 					// zero sync before this event
@@ -3199,15 +3231,45 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 					// Cycle length in beats (_tempo_frames is frames per
 					// quantize unit at _tempo).
 					const double step = _tempo_frames * _tempo / (60.0 * sr);
+					//------ albBegin ----------------------------------
+					// ALB_CYCLE_CHANGE_REANCHOR (engine.hpp): when
+					// Eighths/Cycle has changed the cycle length, start the
+					// new grid at the old grid's nearest boundary.  Both
+					// must change: a Quantize change alone changes the step
+					// but not Eighths/Cycle, and with Quantize 8th an
+					// Eighths/Cycle change leaves the step alone.
+#ifdef ALB_CYCLE_CHANGE_REANCHOR
+					if (_reanchor_jack_step > 0.0
+					    && _eighth_cycle != _reanchor_jack_eighths
+					    && std::fabs (step - _reanchor_jack_step) > 1e-9) {
+						_beat_tracker.reanchor_cycle (_reanchor_jack_step);
+					}
+					_reanchor_jack_eighths = _eighth_cycle;
+					_reanchor_jack_step    = step;
+#endif
+					//------ albEnd ----------------------------------
 					uint32_t offs[8];
+					//------ albBegin ----------------------------------
+#ifdef ALB_CYCLE_CHANGE_REANCHOR
+					const int npulses = _beat_tracker.boundaries (step, nframes, offs, 8,
+					                                              _beat_tracker.cycle_origin ());
+#else
 					const int npulses = _beat_tracker.boundaries (step, nframes, offs, 8);
+#endif
+					//------ albEnd ----------------------------------
 					for (int k = 0; k < npulses; ++k) {
 						_internal_sync_buf[offset + offs[k]] = 2.0;
 #ifdef ALB_SYNC_PULSE_LOG
 						SyncPulseLogEvent pev = SyncPulseLogEvent();
 						pev.kind         = SyncPulseLogEvent::Pulse;
 						pev.framepos     = info.framepos + offset;
+						//------ albBegin ----------------------------------
+#ifdef ALB_CYCLE_CHANGE_REANCHOR
+						pev.thisval      = (nframes_t) lrint (_beat_tracker.frames_into_step (step, _beat_tracker.cycle_origin ()));
+#else
 						pev.thisval      = (nframes_t) lrint (_beat_tracker.frames_into_step (step));
+#endif
+						//------ albEnd ----------------------------------
 						pev.diff         = offs[k];
 						pev.bpm          = info.bpm;
 						pev.tempo_frames = _tempo_frames;

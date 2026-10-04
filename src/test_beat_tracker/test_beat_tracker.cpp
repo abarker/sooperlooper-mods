@@ -211,6 +211,119 @@ static void test_step_change ()
 	}
 }
 
+// ---- reanchor_cycle(): ALB_CYCLE_CHANGE_REANCHOR (ROADMAP entry 21) ----
+#ifdef ALB_CYCLE_CHANGE_REANCHOR
+
+// Run at 120 BPM with cycle step `s1` (beats) until the cycle starting at
+// beat `change_at`, then switch to `s2` the way generate_sync() does
+// (reanchor with the old step, then use the new one).  Optionally relocate
+// to frame 0 at beat `relocate_at`.  Returns pulse positions in beats.
+static std::vector<double> run_change (double s1, double s2, double change_at,
+                                       double relocate_at = -1.0)
+{
+	const uint32_t nf = 256;
+	const double rate = 120.0 / (60.0 * SR);
+	BeatTracker bt;
+	std::vector<double> beats;
+	uint32_t pos = 0;
+	double step = s1;
+	bool changed = false, relocated = false;
+	for (int c = 0; c < 6000; ++c) {
+		bt.update (pos, nf, 120.0, true, SR);
+		if (!changed && bt.start_beats () >= change_at) {
+			bt.reanchor_cycle (step);
+			step = s2;
+			changed = true;
+		}
+		uint32_t offs[8];
+		int n = bt.boundaries (step, nf, offs, 8, bt.cycle_origin ());
+		for (int i = 0; i < n; ++i) beats.push_back (((double) pos + offs[i]) * rate);
+		pos += nf;
+		if (relocate_at >= 0.0 && !relocated && bt.end_beats () >= relocate_at) {
+			pos = 0;
+			relocated = true;
+			beats.push_back (-1.0);              // marks the relocate
+		}
+	}
+	return beats;
+}
+
+static bool has_pulse_near (const std::vector<double> & v, double b)
+{
+	for (double x : v) if (std::fabs (x - b) < 0.01) return true;
+	return false;
+}
+
+static void test_reanchor_after_boundary ()
+{
+	// 4-beat cycles; change to 3 at beat ~9: nearest old boundary is 8.
+	std::vector<double> p = run_change (4.0, 3.0, 9.0);
+	CHECK (has_pulse_near (p, 11.0) && has_pulse_near (p, 14.0) && has_pulse_near (p, 17.0),
+	       "after a change at beat 9, expected pulses at 11, 14, 17 (from the bar at 8)");
+	CHECK (!has_pulse_near (p, 12.0) && !has_pulse_near (p, 15.0),
+	       "pulses still on the grid counted from beat 0");
+}
+
+static void test_reanchor_just_before_boundary ()
+{
+	// Change at beat ~11.8, just before the bar at 12: anchors to 12.
+	std::vector<double> p = run_change (4.0, 3.0, 11.8);
+	CHECK (has_pulse_near (p, 12.0) && has_pulse_near (p, 15.0) && has_pulse_near (p, 18.0),
+	       "a change just before the bar at 12 should anchor there");
+	CHECK (!has_pulse_near (p, 11.0) && !has_pulse_near (p, 14.0),
+	       "an early change anchored to the bar before");
+}
+
+static void test_reanchor_no_double_or_drop ()
+{
+	std::vector<double> p = run_change (4.0, 3.0, 9.0);
+	for (size_t k = 1; k < p.size (); ++k) {
+		double gap = p[k] - p[k - 1];
+		CHECK (gap > 2.9, "pulses %zu,%zu only %.3f beats apart", k - 1, k, gap);
+	}
+}
+
+static void test_reanchor_reset_by_relocate ()
+{
+	// Anchor at 8, then relocate to frame 0 at beat ~20: count from 0 again.
+	std::vector<double> p = run_change (4.0, 3.0, 9.0, 20.0);
+	size_t i = 0;
+	while (i < p.size () && p[i] != -1.0) ++i;     // skip to the marker
+	++i;
+	CHECK (i < p.size () && std::fabs (p[i]) < 0.01, "no pulse at beat 0 after the relocate");
+	CHECK (has_pulse_near (std::vector<double> (p.begin () + i, p.end ()), 3.0),
+	       "after a relocate the grid should count from 0 (pulse at 3)");
+}
+
+static void test_reanchor_origin_only_for_cycle_grid ()
+{
+	// An odd cycle (1.5 beats) can put the origin on a half beat; the
+	// quarter-note grid (called without an origin) must not move.
+	const uint32_t nf = 256;
+	BeatTracker bt;
+	uint32_t pos = 0;
+	for (int c = 0; c < 400; ++c) { bt.update (pos, nf, 120.0, true, SR); pos += nf; }
+	bt.update (pos, nf, 120.0, true, SR);
+	bt.reanchor_cycle (1.5);
+	double org = bt.cycle_origin ();
+	CHECK (std::fabs (std::fmod (org, 1.5)) < 1e-9 || std::fabs (std::fmod (org, 1.5) - 1.5) < 1e-9,
+	       "origin %g not on the old 1.5-beat grid", org);
+	std::vector<double> q;
+	pos += nf;
+	for (int c = 0; c < 2000; ++c) {
+		bt.update (pos, nf, 120.0, true, SR);
+		uint32_t offs[8];
+		int n = bt.boundaries (1.0, nf, offs, 8);
+		for (int i = 0; i < n; ++i) q.push_back (((double) pos + offs[i]) * 120.0 / (60.0 * SR));
+		pos += nf;
+	}
+	for (double b : q) {
+		CHECK (std::fabs (b - std::round (b)) < 0.01, "quarter pulse at %.3f moved off the beat", b);
+	}
+}
+
+#endif // ALB_CYCLE_CHANGE_REANCHOR
+
 // ---- follow_master(): following the master's position (ALB_JACK_BBT_TRACKING) ----
 
 // What a master publishes for a true position of `beats`: whole ticks,
@@ -564,6 +677,14 @@ int main (int argc, char ** argv)
 	test_follow_song_loop_absorbed ();
 	test_follow_start_mid_song ();
 	test_follow_song_loop_tempo_change ();
+#ifdef ALB_CYCLE_CHANGE_REANCHOR
+	test_reanchor_after_boundary ();
+	test_reanchor_just_before_boundary ();
+	test_reanchor_no_double_or_drop ();
+	test_reanchor_reset_by_relocate ();
+	test_reanchor_origin_only_for_cycle_grid ();
+	printf ("reanchor tests ran\n");
+#endif
 	if (g_fail) { fprintf (stderr, "%d check(s) failed\n", g_fail); return 1; }
 	printf ("all beat_tracker tests passed\n");
 	return 0;

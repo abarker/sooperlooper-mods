@@ -192,6 +192,13 @@ item links to its full description.
   tempo changes while the transport is rolling; stock drifts off by up to
   half a cycle until the next relocate.  See `JackSync Beat Tracking`_.
 
+- **Eighths/Cycle changes that keep to the bar** (``ALB_CYCLE_CHANGE_REANCHOR``,
+  **off** by default, not yet tried live).  When Eighths/Cycle changes
+  while JACK or MIDI clock sync is running, the new cycles start at the
+  old cycles' nearest boundary, instead of being counted from transport
+  position 0 or the last MIDI Start.  See `Eighths/Cycle Changes While
+  Running`_.
+
 .. rubric:: Realtime-Safety Fixes
 
 - **Fewer xruns on transport locates** (``ALB_RT_SAFE_COND_SIGNAL``).
@@ -655,6 +662,29 @@ On by default (``ALB_JACK_BEAT_TRACKING``), and used through full live
 sessions with frequent tempo changes.  How it works is in `JackSync Beat
 Tracking: Implementation`_ in the appendix.
 
+Eighths/Cycle Changes While Running
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+With JACK or MIDI clock as the sync source, SooperLooper counts its
+cycles from transport position 0 (JACK) or from the last MIDI Start or
+Continue.  When Eighths/Cycle changes in the middle of a song -- say from
+8 to 6 for a section in 3/4 -- the new three-beat cycles are still counted
+from there, so they line up with the new bars only if the section happens
+to start a multiple of three beats in.  Internal sync, by contrast, starts
+the new cycles from the last boundary.
+
+With ``ALB_CYCLE_CHANGE_REANCHOR`` defined in ``engine.hpp``, the new
+cycles start at the old cycles' boundary nearest the change -- the bar
+line, if the old cycle was a bar.  A change sent a little before the bar
+line it is meant for still lands on it, since the nearest boundary is
+used, not the last one.  A Quantize change alone does not move the grid,
+and a relocate or a MIDI Start counts from the start again, as before.
+JACK needs ``ALB_JACK_BEAT_TRACKING`` (the default).
+
+**Off by default:** it is built and tested -- unit tests, and probes with
+JACK and with a scripted MIDI clock -- but not yet tried live.  Without it,
+the workaround is to relocate the transport to its start with the change.
+
 New Tool: ``slbigstate``
 --------------------------
 
@@ -1079,6 +1109,17 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING`` and
        master.  **Needs** ``ALB_BBT_SYNC`` **and**
        ``ALB_JACK_BEAT_TRACKING`` **defined too;** the build stops with an
        error otherwise.  **When not defined (default):** no effect.
+   * - ``ALB_CYCLE_CHANGE_REANCHOR``
+     - ``engine.hpp``
+     - *(commented out)*
+     - **When defined:** when Eighths/Cycle changes while JACK or MIDI
+       clock sync is running, the new cycles start at the old grid's
+       nearest boundary (a bar line, if the old cycle was a bar), as they
+       already do with Internal sync.  A Quantize change alone does not
+       move them; a relocate or MIDI Start counts from the start again.
+       Tested, not yet tried live.  **Needs** ``ALB_JACK_BEAT_TRACKING``.
+       **When not defined (default):** new cycles count from transport
+       position 0 (JACK) or the last MIDI Start, as in stock.
    * - ``ALB_SYNC_PULSE_LOG``
      - ``engine.hpp``
      - *(commented out)*
@@ -1127,7 +1168,8 @@ Late-Hit Record Start and Stop: Implementation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 "Sync active" means both conditions together: the Sync checkbox controls
-whether operations wait for boundaries at all (``fSyncMode > 0``); the sync
+whether operations wait for boundaries at all (``fSyncMode`` 1; Rel Sync
+is 2, and the corrections are off there); the sync
 source selection determines what signal arrives on the sync input and
 therefore when ``lGlobalSamplesSinceSync`` resets.  With no source, *T*
 (the samples since the last boundary) grows without bound and the window
@@ -1296,8 +1338,19 @@ tempo is taken from JACK only when the master publishes one, and the
 backwards-locate reset of the loops' relative-sync counters uses the
 tracker's record of the previous frame.
 
+With ``ALB_CYCLE_CHANGE_REANCHOR`` (off by default), the cycle grid has an
+origin, in beats, that is 0 unless Eighths/Cycle has changed the cycle
+length since the last relocate: ``generate_sync()`` then calls
+``reanchor_cycle()`` with the old step, which moves the origin to the old
+grid's boundary nearest the cycle's start, and passes the origin to
+``boundaries()`` for the cycle grid only (the beat indicator still counts
+from 0).  A relocate resets it.  The MIDI clock branch does the same in
+ticks, with the origin reset on Start/Continue.
+
 The arithmetic lives in ``src/beat_tracker.hpp``; ``src/test_beat_tracker``
-has its unit tests and a JACK integration test.
+has its unit tests and a JACK integration test.  ``make check`` there
+builds and runs the unit tests twice, the second time with
+``ALB_CYCLE_CHANGE_REANCHOR`` defined, which adds its tests.
 
 slbigstate: Implementation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~

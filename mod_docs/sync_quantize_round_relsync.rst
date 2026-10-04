@@ -223,7 +223,13 @@ still runs from the start.  Changed from 8 to 6 in the middle of a song,
 the new three-beat cycles fall on beats 12, 15, 18 and so on of the song.
 They line up with the master's bars only if its three-beat bars also start
 on a multiple of three beats.  Relocating the transport to position 0
-restarts the count.
+restarts the count.  MIDI clock counts the same way, from the last MIDI
+Start or Continue.
+
+*Fork option.*  A build setting in this fork, off by default, makes the new
+cycles start at the old cycles' boundary nearest the change -- the bar
+line, if the old cycle was a bar -- as Internal sync already does.  See
+the patch summary, "Eighths/Cycle Changes While Running".
 
 Once a loop is recorded, its own cycle length is fixed by the recording.
 Changing Eighths/Cycle afterwards changes the source's boundaries, not the

@@ -153,6 +153,22 @@ typedef struct _jack_port jack_port_t;
 #error "ALB_JACK_BBT_TRACKING needs ALB_BBT_SYNC (audio_driver.hpp)"
 #endif
 #endif
+
+// ALB_CYCLE_CHANGE_REANCHOR: NOT DEFINED by default -- built and tested
+// (src/test_beat_tracker, pulse-log probes), not yet tried live.  When
+// Eighths/Cycle changes while the source runs, start the new cycles at the
+// nearest boundary of the old grid, instead of at the next multiple of the
+// new cycle counted from transport position 0 (JACK) or from the last MIDI
+// Start/Continue (MIDI clock).  Internal sync already behaves this way.
+// Without it, a change from 8 to 6 Eighths/Cycle partway through a song
+// gives 3-beat cycles on beats 12, 15, 18 ... of the song, which match the
+// master's new 3/4 bars only by luck.  A Quantize change alone does not
+// move the origin; a relocate or MIDI Start resets it.  The JACK part
+// needs ALB_JACK_BEAT_TRACKING.  ROADMAP.rst entry 21.
+//#define ALB_CYCLE_CHANGE_REANCHOR
+#if defined(ALB_CYCLE_CHANGE_REANCHOR) && !defined(ALB_JACK_BEAT_TRACKING)
+#error "ALB_CYCLE_CHANGE_REANCHOR needs ALB_JACK_BEAT_TRACKING"
+#endif
 //------ albEnd ----------------------------------
 
 namespace SooperLooper {
@@ -528,6 +544,20 @@ class Engine
 	// JackSync beat position, counted through tempo changes.  Touched only
 	// by generate_sync() in the RT thread.  See ALB_JACK_BEAT_TRACKING.
 	BeatTracker _beat_tracker;
+	//------ albEnd ----------------------------------
+#endif
+
+#ifdef ALB_CYCLE_CHANGE_REANCHOR
+	//------ albBegin ----------------------------------
+	// Last cycle's Eighths/Cycle and grid step, to notice a change of
+	// Eighths/Cycle in generate_sync() (RT thread only).  JACK: step in
+	// beats; MIDI clock: ticks per cycle, and the tick count the cycle
+	// grid starts from.  See ALB_CYCLE_CHANGE_REANCHOR.
+	float        _reanchor_jack_eighths = 0.0f;
+	double       _reanchor_jack_step = 0.0;
+	float        _reanchor_midi_eighths = 0.0f;
+	unsigned int _reanchor_midi_loop_tick = 0;
+	long         _midi_tick_origin = 0;
 	//------ albEnd ----------------------------------
 #endif
 };

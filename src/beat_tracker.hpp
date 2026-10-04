@@ -63,6 +63,14 @@
 // A master that publishes constants (Hydrogen in pattern mode sends bar 1,
 // beat 1, tick 0 throughout) never counts as live and is ignored.
 //
+// Cycle grid origin (ALB_CYCLE_CHANGE_REANCHOR, engine.hpp; off by
+// default): boundaries() can count from an origin other than beat 0.
+// When Eighths/Cycle changes while rolling, reanchor_cycle() moves the
+// origin to the boundary of the old grid nearest the current position, so
+// the new cycles start on the old grid (a bar line, if the old cycle was a
+// bar) instead of at the next multiple of the new cycle from beat 0.  A
+// relocate resets it to 0.  ROADMAP.rst entry 21.
+//
 // Header-only and free of JACK/engine dependencies so the RT code and the
 // unit tests (src/test_beat_tracker) run the same arithmetic.  RT-safe:
 // scalar arithmetic only, no allocation, no locks, no syscalls.
@@ -125,6 +133,13 @@ class BeatTracker
 			_seg_frame = framepos;
 			_seg_beats = (double) framepos * rate;
 			_have_pos = true;
+			//------ albBegin ----------------------------------
+			// ALB_CYCLE_CHANGE_REANCHOR: a relocate (or a fresh anchor)
+			// counts cycles from beat 0 again, as before.
+#ifdef ALB_CYCLE_CHANGE_REANCHOR
+			_cycle_origin = 0.0;
+#endif
+			//------ albEnd ----------------------------------
 		} else if (rate != _rate) {
 			// Tempo change: start a new constant-tempo segment where the
 			// previous cycle ended, so the position is continuous.
@@ -308,8 +323,17 @@ class BeatTracker
 	// Write into out[] the offsets (0 .. nframes-1) of every grid boundary
 	// in this cycle for a grid of `step` beats; returns how many (at most
 	// max_out).  Returns 0 when inactive or step <= 0.
+	//------ albBegin ----------------------------------
+	// ALB_CYCLE_CHANGE_REANCHOR: the grid is origin + k * step; callers
+	// pass cycle_origin() for the cycle grid and nothing (0) otherwise.
+#ifdef ALB_CYCLE_CHANGE_REANCHOR
+	int boundaries (double step, uint32_t nframes,
+	                uint32_t * out, int max_out, double origin = 0.0) const
+#else
 	int boundaries (double step, uint32_t nframes,
 	                uint32_t * out, int max_out) const
+#endif
+	//------ albEnd ----------------------------------
 	{
 		if (!_active || !(step > 0.0) || max_out <= 0) {
 			return 0;
@@ -321,7 +345,13 @@ class BeatTracker
 		// rule seen from the neighbouring cycle excludes it there, so each
 		// boundary is counted once.
 		const double EPS = 1e-6;                     // frames
+		//------ albBegin ----------------------------------
+#ifdef ALB_CYCLE_CHANGE_REANCHOR
+		double b = origin + std::ceil ((_b0 - origin - EPS * _cycle_rate) / step) * step;
+#else
 		double b = std::ceil ((_b0 - EPS * _cycle_rate) / step) * step;
+#endif
+		//------ albEnd ----------------------------------
 		int n = 0;
 		while (n < max_out) {
 			double off = (b - _b0) / _cycle_rate;
@@ -341,6 +371,18 @@ class BeatTracker
 
 	// Frames from the most recent grid boundary at or before the start of
 	// this cycle, for a grid of `step` beats (for logging).
+	//------ albBegin ----------------------------------
+	// ALB_CYCLE_CHANGE_REANCHOR: measured from the grid's origin.
+#ifdef ALB_CYCLE_CHANGE_REANCHOR
+	double frames_into_step (double step, double origin = 0.0) const
+	{
+		if (!_active || !(step > 0.0)) {
+			return 0.0;
+		}
+		const double b = _b0 - origin;
+		return (b - std::floor (b / step) * step) / _cycle_rate;
+	}
+#else
 	double frames_into_step (double step) const
 	{
 		if (!_active || !(step > 0.0)) {
@@ -348,6 +390,27 @@ class BeatTracker
 		}
 		return (_b0 - std::floor (_b0 / step) * step) / _cycle_rate;
 	}
+#endif
+	//------ albEnd ----------------------------------
+
+	//------ albBegin ----------------------------------
+	// ALB_CYCLE_CHANGE_REANCHOR: the cycle grid's origin, in beats, and
+	// moving it when the cycle length changes.  Call reanchor_cycle() in
+	// an active cycle, with the step of the grid being replaced; the new
+	// grid then starts at that grid's boundary nearest this cycle's start
+	// (the next one if it is closer, so a change sent slightly early still
+	// lands on the boundary it was meant for).
+#ifdef ALB_CYCLE_CHANGE_REANCHOR
+	double cycle_origin () const { return _cycle_origin; }
+	void reanchor_cycle (double old_step)
+	{
+		if (!_active || !(old_step > 0.0)) {
+			return;
+		}
+		_cycle_origin += std::floor ((_b0 - _cycle_origin) / old_step + 0.5) * old_step;
+	}
+#endif
+	//------ albEnd ----------------------------------
 
   private:
 	bool     _have_pos;
@@ -382,6 +445,11 @@ class BeatTracker
 	double   _settle_sum;     // sum of differences while settling
 	int      _settle_n;
 	double   _settle_base;    // _err_avg just before the song loop
+	//------ albBegin ----------------------------------
+#ifdef ALB_CYCLE_CHANGE_REANCHOR
+	double   _cycle_origin = 0.0;   // cycle grid origin, in beats
+#endif
+	//------ albEnd ----------------------------------
 };
 
 } // namespace SooperLooper
