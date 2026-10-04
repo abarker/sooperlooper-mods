@@ -398,8 +398,8 @@ Rel Sync
 --------
 
 **rel sync**, in the main window, changes how a synced Record behaves.  It
-applies to all loops, and only to loops with their Sync box checked.  With
-it on:
+is one setting for all loops, but it only affects loops whose Sync box is
+checked.  With it on:
 
 - Record starts **at once**, wherever you press, instead of waiting for a
   boundary.  SooperLooper notes how far the press was from the last
