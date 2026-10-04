@@ -264,6 +264,51 @@ class TestLateStop(LateHitTestCase):
 
 
 # ======================================================================
+# Rel Sync: late-hit must not apply (fSyncMode == 2)
+# ======================================================================
+
+class TestRelSyncNoLateHit(LateHitTestCase):
+    """Under Rel Sync a record starts where it is pressed and its end waits
+    for the same offset from the pulse, so the late-hit start and stop
+    corrections must stay out of it.  Before the fix the stop was trimmed
+    to the pulse, giving a loop that was not a whole number of cycles.
+    ROADMAP.rst entry 20."""
+
+    def setUp(self):
+        LateHitTestCase.setUp(self)
+        self.looper.set_port(test_engine.Sync, 2.0)    # Rel Sync
+        self.wait_buffers(2)
+
+    def testRelSync_LateStopNotApplied(self):
+        self.prime_pulse()
+        self.wait_buffers(self.OUTSIDE_BUFS)
+        self.engine.request("RECORD")
+        self.wait_buffers(1)
+        self.assertState("Recording", "Rel Sync record should start at once")
+        self.wait_buffers(self.RECORD_BUFS)
+        self.prime_pulse()
+        self.wait_buffers(self.WITHIN_BUFS)
+        self.engine.request("RECORD")
+        self.wait_buffers(1)
+        self.assertState("WaitStop",
+                         "Rel Sync stop must wait for its offset, not be "
+                         "late-hit corrected to the pulse")
+
+    def testRelSync_LateStartNotBackfilled(self):
+        # A late-hit start would backfill T samples, putting the position
+        # about T ahead of a plain start.
+        self.prime_pulse()
+        self.wait_buffers(self.WITHIN_BUFS)
+        self.engine.request("RECORD")
+        self.wait_buffers(1)
+        self.assertState("Recording")
+        pos = self.looper.get_control_value(test_engine.LoopPosition) * self.sr
+        self.assertLess(pos, self.t_within + self.buf // 2,
+                        "position %.0f samples suggests the start was "
+                        "backfilled to the pulse (T=%d)" % (pos, self.t_within))
+
+
+# ======================================================================
 # Window constant tests
 # ======================================================================
 

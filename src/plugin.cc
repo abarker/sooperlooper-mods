@@ -3013,19 +3013,22 @@ runSooperLooper(LADSPA_Handle Instance,
 			      // check late-hit window for stop button
 			      unsigned long shiftSamples = effectiveLateHitWindow(pLS, eighthPerCycle);
 			      unsigned long T = lGlobalSyncAtButtonPress;
-			      // fSyncMode > 0 is the essential guard: it means an external
-			      // sync source is active and pfSyncInput carries real pulses,
-			      // so lGlobalSamplesSinceSync (T) has a meaningful value.
-			      // Quantize mode is NOT required: with external sync the snap
-			      // point is always the external pulse regardless of quantize;
-			      // Quantize only controls the subdivision for internal sync
-			      // and Rel Sync.  With no sync source (fSyncMode == 0) or when
-			      // no pulse has arrived (T is huge), the window never fires.
+			      // fSyncMode == 1 is the essential guard: the loop's Sync is on
+			      // and pfSyncInput carries the source's pulses, so
+			      // lGlobalSamplesSinceSync (T) has a meaningful value.  The
+			      // source only produces pulses with Quantize Cycle or 8th (JACK
+			      // and Internal give none for Off or Loop; MIDI clock gives one
+			      // per beat), so with no pulse arriving T grows without bound
+			      // and the window never fires.
+			      // Rel Sync fix: fSyncMode == 1 only.  Under Rel Sync (2) the
+			      // stop waits for the recorded phase offset, not the pulse, so
+			      // trimming to the pulse gave a loop that was not a whole number
+			      // of cycles.  ROADMAP.rst entry 20.
 			      // C2 fix: bLateHitBypassed prevents late-hit firing on slave
 			      // channels in internal sync mode; see Looper::run() BLOCK 5.
 			      bool stopWithinWindow = (T > 0
 			                               && T <= shiftSamples
-			                               && fSyncMode > 0.0f
+			                               && fSyncMode == 1.0f
 			                               && pLS->bSyncPulseReceived
 			                               && loop != NULL
 			                               && !pLS->bLateHitBypassed);
@@ -3193,16 +3196,20 @@ runSooperLooper(LADSPA_Handle Instance,
 		 // the missed samples from pInputBuf so the loop is anchored at the boundary.
 		 unsigned long shiftSamples = effectiveLateHitWindow(pLS, eighthPerCycle);
 		 unsigned long T = lGlobalSyncAtButtonPress;
-		 // fSyncMode > 0 is the essential guard: it means an external sync
-		 // source is active.  Quantize mode is NOT required: for external
-		 // sync the snap point is always the incoming pulse regardless of
-		 // quantize setting.  With no sync source (fSyncMode == 0) T grows
+		 // fSyncMode == 1 is the essential guard: the loop's Sync is on and
+		 // the source's pulses arrive.  The source only produces pulses with
+		 // Quantize Cycle or 8th (JACK and Internal give none for Off or
+		 // Loop; MIDI clock gives one per beat); with no pulse T grows
 		 // without bound and the window never fires.
+		 // Rel Sync fix: fSyncMode == 1 only.  Under Rel Sync (2) a record
+		 // starts where it is pressed and its offset from the pulse is the
+		 // point; moving the start back to the pulse would defeat that.
+		 // ROADMAP.rst entry 20.
 		 // C2 fix: bLateHitBypassed prevents late-hit firing on slave
 		 // channels in internal sync mode; see Looper::run() BLOCK 5.
 		 bool withinWindow = (T > 0
 		                      && T <= shiftSamples
-		                      && fSyncMode > 0.0f
+		                      && fSyncMode == 1.0f
 		                      && pLS->bSyncPulseReceived
 		                      && !pLS->bLateHitBypassed);
 
@@ -3497,9 +3504,11 @@ runSooperLooper(LADSPA_Handle Instance,
 						      unsigned long shiftSamples = effectiveLateHitWindow(pLS, eighthPerCycle);
 						      // C2 fix: bLateHitBypassed prevents late-hit firing on slave
 						      // channels in internal sync mode; see Looper::run() BLOCK 5.
+						      // Rel Sync fix: fSyncMode == 1 only, as for the record
+						      // start and stop (Rel Sync is 2).  ROADMAP.rst entry 20.
 						      bool multStopInWindow = (T > 0
 							                              && T <= shiftSamples
-							                              && fSyncMode > 0.0f
+							                              && fSyncMode == 1.0f
 							                              && pLS->bSyncPulseReceived
 							                              && loop->lCycles >= 2
 							                              && !pLS->bLateHitBypassed);
