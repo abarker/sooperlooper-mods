@@ -199,6 +199,15 @@ item links to its full description.
   position 0 or the last MIDI Start.  See `Eighths/Cycle Changes While
   Running`_.
 
+- **MIDI clock sync fixes.**  MIDI clock arriving on ``midi_in`` now sets
+  the tempo; before this fix those events carried no usable timestamp and
+  the tempo stayed at 0 (a bug this fork introduced).  And a stock bug is
+  fixed (``ALB_MIDI_SYNC_CLEAR_FIX``, on by default): with MIDI clock sync,
+  a boundary mark could linger in the sync signal for many buffers, so a
+  synced recording sometimes started at once instead of waiting for the
+  next boundary.  Clock on ``midi_in``, with its perfectly regular timing,
+  hit this reliably; clock through ALSA only rarely.
+
 .. rubric:: Realtime-Safety Fixes
 
 - **Fewer xruns on transport locates** (``ALB_RT_SAFE_COND_SIGNAL``).
@@ -637,8 +646,8 @@ are timed more precisely.
 
 **MIDI clock.**  Clock sent to ``midi_in`` is counted and sets the tempo,
 as clock through ALSA does.  (Until a fix in this fork, clock on
-``midi_in`` never set the tempo: those events carried no timestamp.)  One
-open issue with MIDI clock sync is listed under `Known Issues and Future
+``midi_in`` never set the tempo: those events carried no timestamp.)  With
+MIDI clock sync, turn off "auto 8th"; see `Known Issues and Future
 Work`_.
 
 How this is done inside the engine, including how it interacts with
@@ -996,8 +1005,9 @@ unit.  Two flags are defined in headers rather than the ``.cpp``/``.cc``
 files they primarily affect: ``ALB_BBT_SYNC`` in ``audio_driver.hpp``,
 because it controls struct layout visible to multiple translation units,
 and ``ALB_SYNC_PULSE_LOG`` in ``engine.hpp``, for the same reason (it adds
-a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING`` and
-``ALB_RT_SAFE_COND_SIGNAL`` are local to ``engine.cpp``.
+a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
+``ALB_RT_SAFE_COND_SIGNAL`` and ``ALB_MIDI_SYNC_CLEAR_FIX`` are local to
+``engine.cpp``.
 
 .. list-table::
    :header-rows: 1
@@ -1081,6 +1091,14 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING`` and
        existing ``timedwait`` timeout instead.  Reduces xruns on transport
        locate events.  **When not defined:** stock behaviour — signals fire
        from the RT callback.
+   * - ``ALB_MIDI_SYNC_CLEAR_FIX``
+     - ``engine.cpp``
+     - defined
+     - **When defined (default):** with MIDI clock sync, the sync signal is
+       cleared up to every clock event, so an old boundary mark cannot
+       linger and make a waiting recording start at once.  A stock bug
+       fix.  **When not defined:** stock behaviour -- cleared only up to
+       boundary ticks.
    * - ``ALB_TEMPO_ONLY_WHEN_ROLLING``
      - ``engine.cpp``
      - defined
@@ -2043,14 +2061,6 @@ Architecture Notes
 
 Known Issues and Future Work
 ----------------------------
-
--  **MIDI clock sync: a synced recording sometimes starts at once (high
-   priority, introduced by this fork).**  With Sync To MidiClock, a
-   recording occasionally starts when pressed instead of waiting for the
-   next boundary.  Seen with the clock on ``sooperlooper:midi_in`` and,
-   less often, through ALSA MIDI; never seen in stock.  Cause not yet
-   found.  A second bug in the same area -- MIDI clock on ``midi_in`` never
-   setting the tempo -- is fixed.
 
 -  **Smart eighths and MIDI clock (stock behaviour).**  The "auto 8th"
    option, on by default, doubles Eighths/Cycle whenever the tempo is

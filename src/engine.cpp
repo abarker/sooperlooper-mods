@@ -105,6 +105,20 @@ extern float g_mute_late_hit_ms;
 // WHEN DEFINED (default): signals suppressed — RT-safe, reduces locate xruns.
 // WHEN NOT DEFINED: original stock behaviour — signals fire from RT callback.
 #define ALB_RT_SAFE_COND_SIGNAL
+
+// ALB_MIDI_SYNC_CLEAR_FIX: stock bug fix in generate_sync()'s MidiClockSync
+// branch.  Stock clears the sync buffer up to a clock event only when that
+// event is a cycle boundary, so a boundary mark (2.0) written early in one
+// buffer can survive into later buffers whenever the following ticks land at
+// earlier offsets -- the region holding it is never cleared.  Every loop
+// then sees a sync pulse at that offset in every buffer until the next
+// boundary: a waiting record starts at once, and late-hit counts from the
+// stale pulse.  Clock on the JACK MIDI input (perfectly regular offsets)
+// hits this reliably; ALSA's jittery timing rarely.  ROADMAP.rst entry 22.
+//
+// WHEN DEFINED (default): the buffer is cleared up to every clock event.
+// WHEN NOT DEFINED: original stock behaviour.
+#define ALB_MIDI_SYNC_CLEAR_FIX
 //------ albEnd ----------------------------------
 
 #define MAX_EVENTS 1024
@@ -2970,6 +2984,18 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				}
 				
 				doframes = fragpos - usedframes;
+
+				//------ albBegin ----------------------------------
+				// ALB_MIDI_SYNC_CLEAR_FIX (top of file): clear up to every
+				// event, not only boundary ticks, so no old boundary mark
+				// survives.  Guarded for an out-of-order event, where
+				// doframes would wrap.
+#ifdef ALB_MIDI_SYNC_CLEAR_FIX
+				if (fragpos > usedframes) {
+					memset (&(_internal_sync_buf[usedframes]), 0, doframes * sizeof(float));
+				}
+#endif
+				//------ albEnd ----------------------------------
 				
 				// handle special global RT events
 				if (evt->Control == Event::MidiTick) {
