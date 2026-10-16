@@ -340,7 +340,7 @@ class TestStaleSmallCounterCausesFalsePositiveLateHit(StaleSyncCounterTestCase):
 class TestStaleSmallCounterCausesFalsePositiveLateHit_Unmute(StaleSyncCounterTestCase):
     """Mirrors TestStaleSmallCounterCausesFalsePositiveLateHit above, but
     through the mute/unmute late-hit consumer of the same
-    lGlobalSamplesSinceSync counter (added later, 0d8787c, on top of the
+    lGlobalSamplesSinceSync counter (added later, 1dd577d, on top of the
     already-vulnerable counter from 692fb98) rather than Record's. Setup
     borrowed from testdef_mute_late_hit.py's MuteLateHitTestCase
     (record_a_loop / _mute_it) since reaching Muted is a prerequisite
