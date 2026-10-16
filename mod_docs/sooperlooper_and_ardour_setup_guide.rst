@@ -80,7 +80,7 @@ OS                            Ubuntu 24.04
 Kernel                        Generic kernel (low-latency settings applied)
 JACK                          JACK2 standalone server
 SooperLooper                  1.7.9, forked (see the note above)
-Remapper                      https://github.com/abarker/midiremapper
+Remapper                      https://github.com/abarker/midi-remapper
 Big Tempo                     https://github.com/abarker/big-tempo
 MIDI footswitch               ActitioN four-button MIDI controller
 Audio interface               Behringer UMC404HD (four inputs)
