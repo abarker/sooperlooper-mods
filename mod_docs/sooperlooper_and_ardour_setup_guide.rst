@@ -10,7 +10,7 @@ Ardour for recording and latency verification. It covers software
 configuration, signal routing, and -- in the most detail -- latency calibration.
 
 The forked SooperLooper used in this setup is at
-https://github.com/abarker/sooperlooper-mods (branch ``late-hit-and-jack-midi``).
+https://github.com/abarker/sooperlooper-mods.
 
 **Contents**
 

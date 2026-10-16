@@ -29,9 +29,9 @@ and glossaries at the end.
 
 .. tip:: **Compiling on Ubuntu 24.04**
 
-   The patched source is in the ``late-hit-and-jack-midi`` branch of
-   https://github.com/abarker/sooperlooper-mods.  Run
-   ``git switch late-hit-and-jack-midi`` to go to the branch.  A convenience
+   The patched source is the ``master`` branch of
+   https://github.com/abarker/sooperlooper-mods, so a plain clone gets it;
+   stock SooperLooper 1.7.9 is the tag ``stock-1.7.9``.  A convenience
    script ``ubuntu_compile.bash`` at the top level of the repository automates
    the build.
 
