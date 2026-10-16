@@ -45,8 +45,8 @@ DisplayConfig::config_dir () const
 	// over-applied the "own file, not a shared one" reasoning to the
 	// directory level too, when only the FILE needs to be exclusively
 	// this program's own to avoid slgui's and this program's writes
-	// racing (see mod_docs/ROADMAP.rst entry 6's "Position/size
-	// persistence" section) -- there's no such risk in sharing the
+	// racing --
+	// there's no such risk in sharing the
 	// directory itself.
 	return wxGetHomeDir() + wxFileName::GetPathSeparator() + wxT(".sooperlooper");
 }

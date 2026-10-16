@@ -92,7 +92,7 @@ testdef_cancel_record_mute.py
     literals in plugin.cc.  Covers the unquantized branches, the quantized
     pending states (sync on, no pulse -- WaitStart and WaitStop), and audio
     content via the input-injection / output-readback support in
-    TestLooper.  Design: ../../mod_docs/ROADMAP.rst entry 1.
+    TestLooper.  See ../../mod_docs/late_hit_patch_summary.rst.
 
 testdef_late_hit.py
     Regression tests for the late-hit recording correction patch.

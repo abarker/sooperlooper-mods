@@ -3,8 +3,8 @@ bin_PROGRAMS = slbigstate
 # Standalone at-a-distance state display, talking to a running
 # sooperlooper engine over plain OSC -- no dependency on libslcore.a or
 # any engine/plugin code, just the LooperState enum from plugin.hpp for
-# compile-time safety on the state values. See mod_docs/ROADMAP.rst
-# entry 6. Binary named slbigstate, matching slgui's own naming
+# compile-time safety on the state values.
+# Binary named slbigstate, matching slgui's own naming
 # convention (sl prefix, no hyphens), so it reads as an SL tool once
 # installed system-wide alongside sooperlooper/slgui.
 

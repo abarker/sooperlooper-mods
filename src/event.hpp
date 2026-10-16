@@ -143,7 +143,8 @@ namespace SooperLooper {
 		    // pending record is cancelled with the loop left playing.
 		    // No-op in every other state, which is what makes it safe as
 		    // the long-press partner of an eager-single record button.
-		    // Full design: mod_docs/ROADMAP.rst entry 1.
+		    // See "New Command: cancel_record_mute" in
+		    // mod_docs/late_hit_patch_summary.rst.
 		    //
 		    // MUST remain appended here, immediately before LAST_COMMAND.
 		    // plugin.cc:367-398 hardcodes MULTI_UNDO..MULTI_PAUSE_OFF as
@@ -154,7 +155,8 @@ namespace SooperLooper {
 		    CANCEL_RECORD_MUTE,
 		    // The overdub button's companion: undo, as if the eager
 		    // overdub press just before had not happened.  Same append-only
-		    // rule as above.  Design: mod_docs/ROADMAP.rst entry 19.
+		    // rule as above.  See "New Command:
+		    // cancel_overdub_undo" in mod_docs/late_hit_patch_summary.rst.
 		    CANCEL_OVERDUB_UNDO,
 		    //------ albEnd ----------------------------------
 		    LAST_COMMAND

@@ -3,7 +3,8 @@
 Cancels an in-progress or pending record and keeps the prior take, muting
 only if audio was actually captured.  No-op in every other state -- which
 is what makes it safe as the long-press partner of an eager-single record
-button.  Design and rationale: mod_docs/ROADMAP.rst entry 1.
+button.  See "New Command: cancel_record_mute" in
+mod_docs/late_hit_patch_summary.rst.
 
 It acts only on a record whose RECORD press interrupted a playing loop
 (Playing or OneShot); a record started from Off, OffMuted, Muted or Paused
@@ -449,7 +450,7 @@ class cancelThenRedo(_AudioHelpers, testdef_simple_state.simpleStateTest):
     there is nothing legitimate to redo -- and redo must not bring back the
     discarded fragment (undo keeps each chunk's `next` for redo).  The
     pending-record cancel creates no chunk, so it must leave redo alone, and
-    ordinary undo/redo must be unchanged.  ROADMAP.rst entry 1."""
+    ordinary undo/redo must be unchanged."""
 
     def setUp(self):
         testdef_simple_state.simpleStateTest.setUp(self)
@@ -547,8 +548,7 @@ class cancelRecordMuteStartState(_AudioHelpers,
     """Only from play: whether the hold acts depends on the
     state the RECORD press came from.  Playing and OneShot: it cancels (the
     hold-to-stop gesture).  Muted, OffMuted and Paused: it is ignored and the
-    record carries on, since a hold there can only be a lazy press.
-    ROADMAP.rst entry 1."""
+    record carries on, since a hold there can only be a lazy press."""
 
     NEW_TAKE = -0.3
 

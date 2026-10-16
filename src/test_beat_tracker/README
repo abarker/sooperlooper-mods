@@ -1,5 +1,5 @@
 Tests for ALB_JACK_BEAT_TRACKING (JackSync beats counted through tempo
-changes; see ../beat_tracker.hpp and mod_docs/ROADMAP.rst entry 15).
+changes; see ../beat_tracker.hpp).
 
 Unit tests, no JACK needed::
 

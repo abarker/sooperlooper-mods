@@ -18,7 +18,7 @@
 // continuous through a tempo change (Hydrogen 1.2.x, a DAW playing
 // through a tempo change) then disagrees by an amount that grows with
 // elapsed time -- measured on a live rig as one eighth note.  See
-// mod_docs/ROADMAP.rst entries 8 and 15.
+// "JackSync Beat Tracking" in mod_docs/late_hit_patch_summary.rst.
 //
 // This class instead keeps a running beat count:
 //
@@ -42,13 +42,13 @@
 // one cycle (see boundaries()), so a pulse is never dropped or doubled
 // at a buffer edge, whatever the tempo does between cycles.
 //
-// Measured against Hydrogen 1.2.4 (ROADMAP entry 15): Hydrogen's audio
+// Measured against Hydrogen 1.2.4: Hydrogen's audio
 // switches tempo one JACK cycle before the new tempo appears in the
 // transport position, which leaves pulses about 1 ms late after a ramp.
 // The error is bounded by one buffer and does not accumulate, so it is
 // not compensated here.
 //
-// Following the master's own position (ROADMAP entry 15; used
+// Following the master's own position (used
 // only when engine.hpp defines ALB_JACK_BBT_TRACKING): when the timebase
 // master publishes a live bar/beat/tick position -- a DAW with a tempo
 // map, Hydrogen in song mode -- follow_master() keeps the count on it.
@@ -69,7 +69,7 @@
 // origin to the boundary of the old grid nearest the current position, so
 // the new cycles start on the old grid (a bar line, if the old cycle was a
 // bar) instead of at the next multiple of the new cycle from beat 0.  A
-// relocate resets it to 0.  ROADMAP.rst entry 21.
+// relocate resets it to 0.
 //
 // Header-only and free of JACK/engine dependencies so the RT code and the
 // unit tests (src/test_beat_tracker) run the same arithmetic.  RT-safe:

@@ -39,8 +39,6 @@
 // reentrancy/de-dup guards on on_size() are all gone, not because they
 // were individually wrong, but because the architecture that needed
 // them (a child wxStaticText positioned by hand) is gone.
-//
-// Full design history: mod_docs/ROADMAP.rst entry 6.
 
 #ifndef __big_state_display_big_state_stack_window__
 #define __big_state_display_big_state_stack_window__

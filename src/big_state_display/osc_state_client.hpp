@@ -21,11 +21,11 @@
 // control -- deliberately NOT a port of LoopControl. No spawn-config, no
 // session management, no MIDI bindings, no multi-loop tracking: this
 // program's only job is displaying one loop's state, so it only implements
-// the one thing that needs. Full design and the mechanism this mirrors:
-// mod_docs/ROADMAP.rst entry 6.
+// the one thing that needs. How it talks to the engine: "slbigstate: Implementation"
+// in mod_docs/late_hit_patch_summary.rst.
 //
-// Reconnect strategy is deliberately the simpler of the two options the
-// ROADMAP entry weighs: unconditional periodic re-registration, not a
+// Reconnect strategy is deliberately the simpler of two options:
+// unconditional periodic re-registration, not a
 // full ping/uid mirror of LoopControl's own reconnect logic. Verified
 // safe before choosing this (control_osc.cpp's RegisterAuto handler
 // matches on the existing (url, retpath) pair and just refreshes the
@@ -57,10 +57,7 @@ class OscStateClient
 	// auto-update registration alive across an engine restart.
 	void maintain ();
 
-	// So the window title can show which loop this instance is showing --
-	// with multiple loops, the intended setup is one process per loop
-	// (--loop N each), not one combined multi-loop display; see
-	// mod_docs/ROADMAP.rst entry 6.
+	// So the window title can show which loop this instance is showing.
 	int get_loop_index () const { return _loop_index; }
 
 	static const int REREGISTER_INTERVAL_SECS = 20;

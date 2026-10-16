@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""JackSync integration test for ALB_JACK_BEAT_TRACKING (ROADMAP entry 15).
+"""JackSync integration test for ALB_JACK_BEAT_TRACKING.
 
 Runs the real sooperlooper engine against a scripted JACK timebase master
 that behaves like Hydrogen 1.2.x: its beat stays continuous through tempo

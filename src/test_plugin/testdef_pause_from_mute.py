@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 """
-Regression tests for PAUSE_FROM_MUTE_FIX (ROADMAP entry 7).
+Regression tests for PAUSE_FROM_MUTE_FIX.
 
 Stock SooperLooper 1.7.9 bug (verified present verbatim in
 original_plugin.cc, not introduced by any patch in this fork): with

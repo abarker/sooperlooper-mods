@@ -271,8 +271,7 @@ class TestRelSyncNoLateHit(LateHitTestCase):
     """Under Rel Sync a record starts where it is pressed and its end waits
     for the same offset from the pulse, so the late-hit start and stop
     corrections must stay out of it.  Before the fix the stop was trimmed
-    to the pulse, giving a loop that was not a whole number of cycles.
-    ROADMAP.rst entry 20."""
+    to the pulse, giving a loop that was not a whole number of cycles."""
 
     def setUp(self):
         LateHitTestCase.setUp(self)

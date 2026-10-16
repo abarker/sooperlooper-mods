@@ -2,14 +2,13 @@
 """
 Regression tests for the mute/unmute late-hit correction patch.
 
-Covers both directions of ROADMAP entry 5: a MUTE press arriving just
+Covers both directions: a MUTE press arriving just
 after a sync boundary is treated as if it arrived at that boundary,
 instead of waiting for the NEXT one -- both entering mute (from Playing)
 and leaving mute (unmute, from Muted). Unlike Record's late-hit
 correction, neither direction reconstructs buffer content: dCurrPos keeps
 advancing while muted, so this is a pure branch-selection decision. See
-g_mute_late_hit_ms's comment block in plugin.cc and
-mod_docs/ROADMAP.rst entry 5.
+g_mute_late_hit_ms's comment block in plugin.cc.
 
 Same buffer-precise timing technique as testdef_late_hit.py: timing is
 controlled via process_count rather than time.sleep(), and the window is
@@ -218,13 +217,11 @@ class TestUnmuteLateHit(MuteLateHitTestCase):
                          "unmuteLateHit must not leak into MULTI_PAUSE")
         # Confirm the normal wait-for-sync path still resolves once a real
         # pulse arrives -- no regression in ordinary PAUSE_ON use. The
-        # resolved state is Paused, not Playing -- was a pre-existing
-        # stock quirk (untouched by this file's own patch, entry 5) but
-        # now fixed by PAUSE_FROM_MUTE_FIX (ROADMAP entry 7, see
-        # testdef_pause_from_mute.py for the dedicated regression tests).
-        # This assertion tracks entry 7's fix, not entry 5's own scope --
-        # kept here because this exact scenario is what surfaced the bug
-        # in the first place.
+        # resolved state is Paused, not Playing: a stock bug fixed
+        # by PAUSE_FROM_MUTE_FIX (see testdef_pause_from_mute.py for the
+        # dedicated regression tests).  That fix is outside this file's scope,
+        # but the check is kept here because this exact scenario is what
+        # surfaced the bug in the first place.
         self.prime_pulse()
         self.wait_buffers(1)
         self.assertState("Paused",

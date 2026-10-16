@@ -41,8 +41,8 @@ typedef struct _jack_client jack_client_t;
 // ALB_BBT_SYNC: NOT DEFINED by default (since 2026-09-25).  It was meant to
 // place sync pulses from the JACK BBT fields, but the arithmetic is a no-op:
 // its phase shift is always a whole number of cycles, so pulses fall exactly
-// where the stock framepos mod cycle_length puts them (ROADMAP entries 8 and
-// 13).  ALB_JACK_BEAT_TRACKING (engine.hpp, on by default) replaces the
+// where the stock framepos mod cycle_length puts them.
+// ALB_JACK_BEAT_TRACKING (engine.hpp, on by default) replaces the
 // pulse code entirely; with it defined, this flag only adds the BBT fields
 // to the sync-pulse log.
 //
@@ -51,7 +51,7 @@ typedef struct _jack_client jack_client_t;
 // switch stops the build with an #error if this one is off.  The reverse
 // does not hold -- this flag works alone, and with beat tracking on its only
 // effect is the BBT columns in the pulse log, a behaviour-neutral first step
-// when checking what a master publishes (ROADMAP entry 15).  Defined here,
+// when checking what a master publishes.  Defined here,
 // not in engine.hpp, because it changes TransportInfo's layout, which every
 // file including this header must agree on.  The description below is the
 // original intent, not what the code achieves.

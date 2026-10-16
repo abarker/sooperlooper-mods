@@ -23,8 +23,7 @@
 // gui_config.xml: two independent processes writing one shared file with
 // no coordination between them is the same problem shape as the
 // LoopControl flag-sharing bug already found and fixed once, just at the
-// filesystem layer instead of in-memory (see mod_docs/ROADMAP.rst entry
-// 6's "Position/size persistence" section). Sharing the *directory* has
+// filesystem layer instead of in-memory. Sharing the *directory* has
 // no such risk, only the file -- an earlier version of this class used a
 // separate ~/.big_state_display/ directory too, over-applying that
 // reasoning; corrected 2026-09-01.
@@ -48,8 +47,7 @@ class DisplayConfig
   public:
 	// filename: which file under config_dir() this instance reads/writes.
 	// Default is the original single-loop file, unchanged -- the
-	// multi-loop stack window (mod_docs/ROADMAP.rst entry 6, "multi-loop
-	// stacked display") passes a different name so its own remembered
+	// multi-loop stack window passes a different name so its own remembered
 	// position doesn't collide with a single-loop instance's, if both
 	// happen to run at once. Same "own file, not a shared one" reasoning
 	// as this class already applies to slgui's gui_config.xml above --

@@ -4,8 +4,8 @@ If a record is left running in STATE_RECORD longer than
 g_record_failsafe_seconds, the engine treats it exactly as if the
 long-press CANCEL_RECORD_MUTE command had just arrived -- same guard
 table, same fade-residue fix, just a second way to reach that one branch.
-Design and rationale: mod_docs/ROADMAP.rst entry 4 (and entry 1 for the
-CANCEL_RECORD_MUTE branch itself, reused verbatim here).
+See "New Feature: record failsafe" in mod_docs/late_hit_patch_summary.rst
+(and "New Command: cancel_record_mute" for the branch it reuses).
 
 Specialized 2026-09-01: the failsafe only ever arms when the RECORD press
 that started this take interrupted an actively playing, unmuted loop
@@ -18,8 +18,7 @@ while the performer actually meant to hold for a long-press
 cancel_record_mute (or simply got distracted mid-overdub) -- there, an
 existing audible take is what's silently at stake. A fresh/empty
 recording has no such ambiguity with a "meant to mute" gesture and no
-prior take to protect, so it's left alone. See mod_docs/ROADMAP.rst
-entry 4's "Specialized to interrupted active playback only" section.
+prior take to protect, so it's left alone.
 
 g_record_failsafe_seconds is set to a small value for these tests via the
 SWIG-exposed global (test_engine.cvar), the same mechanism

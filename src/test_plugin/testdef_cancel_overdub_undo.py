@@ -3,8 +3,9 @@
 The overdub button's long/double-press companion: undo, as if the eager
 overdub press just before it had not happened.  Acts only when the command
 immediately before it was an overdub press, never removes a loop's first
-take, and never lets redo restore a layer the eager press started.  Design
-and the state-by-state trace: mod_docs/ROADMAP.rst entry 19.
+take, and never lets redo restore a layer the eager press started.  The
+cases are in mod_docs/late_hit_patch_summary.rst,
+"cancel_overdub_undo Implementation".
 
 Levels: a take at TAKE, real overdubs adding OD on top (run for longer
 than one loop, so the layered loop plays between TAKE + OD and TAKE + 2*OD;

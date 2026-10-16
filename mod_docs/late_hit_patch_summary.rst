@@ -696,9 +696,9 @@ used, not the last one.  A Quantize change alone does not move the grid,
 and a relocate or a MIDI Start counts from the start again, as before.
 JACK needs ``ALB_JACK_BEAT_TRACKING`` (the default).
 
-**Off by default:** it is built and tested -- unit tests, and probes with
-JACK and with a scripted MIDI clock -- but not yet tried live.  Without it,
-the workaround is to relocate the transport to its start with the change.
+**On by default.**  It is tested -- unit tests, and probes with JACK and
+with a scripted MIDI clock -- but not yet tried live.  Without it, the
+workaround is to relocate the transport to its start with the change.
 
 New Tool: ``slbigstate``
 --------------------------
@@ -1063,6 +1063,13 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        behaviour.  Unlike the other flags/globals here, this is a bug
        fix with an escape hatch, not a tunable parameter -- no
        session-file or OSC equivalent.
+   * - ``SYNC_MODE_LATE_HIT_RESET_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), switching a loop's Sync back on resets the
+       late-hit correction's pulse tracking, as a sync source change
+       already does (see `Late-Hit Correction Robustness`_).  Fixes a bug
+       in this fork's own late-hit code.  Set to 0 to remove the reset.
    * - ``SYNCWDEBUG``
      - ``plugin.cc``
      - *(commented out)*
@@ -1449,7 +1456,11 @@ computed *T* values.  Changing the sync source resets the correction's
 tracked state (``Looper::reset_late_hit_state()`` clears
 ``bSyncPulseReceived``, ``lGlobalSamplesSinceSync``, and
 ``lLastSyncPeriodSamples``), so stale period data from the old source
-can't affect the first presses on the new one.
+can't affect the first presses on the new one.  Switching a loop's Sync
+off and on again resets the same fields (``SYNC_MODE_LATE_HIT_RESET_FIX``):
+while Sync is off the time-since-pulse count stops, and without the reset
+a press soon after Sync comes back on could be corrected from that stale
+count.
 
 ``cancel_record_mute`` Implementation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

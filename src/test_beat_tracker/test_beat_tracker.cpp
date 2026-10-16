@@ -1,4 +1,4 @@
-// Unit tests for src/beat_tracker.hpp (ROADMAP entry 15).  No JACK needed.
+// Unit tests for src/beat_tracker.hpp.  No JACK needed.
 //
 //   make -C src/test_beat_tracker && src/test_beat_tracker/test_beat_tracker
 //
@@ -211,7 +211,7 @@ static void test_step_change ()
 	}
 }
 
-// ---- reanchor_cycle(): ALB_CYCLE_CHANGE_REANCHOR (ROADMAP entry 21) ----
+// ---- reanchor_cycle(): ALB_CYCLE_CHANGE_REANCHOR ----
 #ifdef ALB_CYCLE_CHANGE_REANCHOR
 
 // Run at 120 BPM with cycle step `s1` (beats) until the cycle starting at

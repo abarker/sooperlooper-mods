@@ -64,9 +64,8 @@ extern const int DEFAULT_LABEL_MARGIN;
 // Look up the display label and background colour for a state. Labels
 // use the main interface's button vocabulary (Record, Overdub,
 // Multiply, ...), not LoopControl::state_map's own lowercase
-// continuous-tense strings -- see mod_docs/ROADMAP.rst entry 6 for the
-// full per-state reasoning (colors grouped by family; Muted/OffMuted
-// share "Mute" rather than following state_map's Off/Muted grouping).
+// continuous-tense strings.  Colors are grouped by family; Muted/OffMuted
+// share "Mute" rather than following state_map's Off/Muted grouping.
 void state_display (SooperLooper::LooperState state,
                      wxString & label, wxColour & color);
 

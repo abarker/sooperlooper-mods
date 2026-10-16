@@ -20,7 +20,8 @@
 // big_state_display: standalone at-a-distance state display for one or
 // more SooperLooper loops, talking to a running engine (headless
 // sooperlooper or one spawned by slgui, either works) over plain OSC.
-// Design and rationale throughout: mod_docs/ROADMAP.rst entry 6.
+// User documentation: "New Tool: slbigstate" in
+// mod_docs/late_hit_patch_summary.rst.
 
 #include <cstdio>
 #include <vector>

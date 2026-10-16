@@ -12,7 +12,7 @@ transport session, prints:
 
 The offset model assumes a master that keeps its beat position continuous
 through a tempo change and realigns on every relocate, which is what
-Hydrogen 1.2.x does (see mod_docs/ROADMAP.rst entry 8).  SooperLooper's
+Hydrogen 1.2.x does.  SooperLooper's
 grid is framepos mod cycle length, so the two drift apart only when the
 tempo changes while rolling.  A session is everything between two
 relocates; both grids are taken as aligned at its start.

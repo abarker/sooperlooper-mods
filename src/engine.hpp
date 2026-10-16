@@ -45,13 +45,13 @@ typedef struct _jack_port jack_port_t;
 
 //------ albBegin ----------------------------------
 // ALB_SYNC_PULSE_LOG: compile-time toggle for a diagnostic log of JackSync
-// cycle-boundary pulses (see Engine::generate_sync()'s JackSync branch in
-// engine.cpp, inside the existing ALB_BBT_SYNC block).  Added to investigate
-// occasional off-beat loop sync landings (mod_docs/ROADMAP.rst, the
-// eighth-note off-beat sync investigation) -- specifically, to record which
-// formula path fired and what the timebase master was reporting at the
-// instant of every real pulse, since generate_sync() currently logs nothing
-// at all and there is no way to reconstruct this after the fact.
+// cycle-boundary pulses, transport relocates and tempo changes (see
+// Engine::generate_sync()'s JackSync branch in engine.cpp).  Added to
+// investigate loops occasionally syncing an eighth note off the beat,
+// whose cause turned out to be the stock pulse grid (fixed by
+// ALB_JACK_BEAT_TRACKING below).  Kept for checking what a timebase
+// master reports at every pulse, which cannot be reconstructed after the
+// fact.
 //
 // RT safety: the RT callback only fills a POD SyncPulseLogEvent (already-
 // computed local values, no new work) and pushes it into a lock-free
@@ -112,9 +112,10 @@ typedef struct _jack_port jack_port_t;
 // master that keeps its beat continuous through a tempo change made while
 // rolling (Hydrogen 1.2.x, a DAW playing through a tempo change) by up to
 // half a cycle until the next relocate -- measured as one eighth note on
-// a live rig.  See mod_docs/ROADMAP.rst entries 8 and 15.
+// a live rig.  See "JackSync Beat Tracking" in
+// mod_docs/late_hit_patch_summary.rst.
 //
-// Also fixes a stock bug (ROADMAP entry 14): generate_sync() reads an
+// Also fixes a stock bug: generate_sync() reads an
 // uninitialised TransportInfo -- the backwards-locate check compared
 // against leftover memory, and with no BBT master the tempo came from
 // leftover memory.  With this defined the struct is value-initialised,
@@ -140,7 +141,7 @@ typedef struct _jack_port jack_port_t;
 // when following starts or stops, at every jump, and when the master's
 // position jumps by itself (a song looping: kept as an offset).
 // Needs ALB_JACK_BEAT_TRACKING, and ALB_BBT_SYNC (audio_driver.hpp) for
-// the BBT fields.  ROADMAP entries 13 and 15.
+// the BBT fields.
 //#define ALB_JACK_BBT_TRACKING
 #ifdef ALB_JACK_BBT_TRACKING
 #ifndef ALB_JACK_BEAT_TRACKING
@@ -161,7 +162,7 @@ typedef struct _jack_port jack_port_t;
 // gives 3-beat cycles on beats 12, 15, 18 ... of the song, which match the
 // master's new 3/4 bars only by luck.  A Quantize change alone does not
 // move the origin; a relocate or MIDI Start resets it.  The JACK part
-// needs ALB_JACK_BEAT_TRACKING.  ROADMAP.rst entry 21.
+// needs ALB_JACK_BEAT_TRACKING.
 #define ALB_CYCLE_CHANGE_REANCHOR
 #if defined(ALB_CYCLE_CHANGE_REANCHOR) && !defined(ALB_JACK_BEAT_TRACKING)
 #error "ALB_CYCLE_CHANGE_REANCHOR needs ALB_JACK_BEAT_TRACKING"
@@ -481,7 +482,7 @@ class Engine
 	// _running_frames wraps after about 24.8 hours at 48 kHz).  Used to
 	// time MIDI clock arriving on the JACK MIDI input, which carries no
 	// timestamp; see generate_sync()'s MidiClockSync branch.  RT thread
-	// only.  ROADMAP.rst entry 22.
+	// only.
 	uint64_t _total_frames = 0;
 	//------ albEnd ----------------------------------
 	nframes_t _last_tempo_frame;

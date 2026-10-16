@@ -151,10 +151,8 @@ StateRender::min_size (int margin)
 }
 
 // Identical table across every version this feature has ever had
-// (src/gui/big_state_window.cpp's own in-process copy included) -- see
-// mod_docs/ROADMAP.rst entry 6 for the per-state reasoning (labels
-// match the main interface's button vocabulary; colors grouped by
-// family).
+// (src/gui/big_state_window.cpp's own in-process copy included).  Labels match
+// the main interface's button vocabulary; colors are grouped by family.
 void
 StateRender::state_display (LooperState state, wxString & label, wxColour & color)
 {

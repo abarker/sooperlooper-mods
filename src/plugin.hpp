@@ -354,7 +354,6 @@ typedef struct {
 	// STATE_RECORD.  Reset to 0 whenever state is anything else; compared
 	// each buffer against g_record_failsafe_seconds (plugin.cc) to
 	// auto-fire CANCEL_RECORD_MUTE if a record is left running unattended.
-	// See mod_docs/ROADMAP.rst entry 4.
 	unsigned long lRecordFailsafeSamples;
 	//------ albEnd ----------------------------------
 
@@ -369,10 +368,9 @@ typedef struct {
 	// then takes. Gates the record_failsafe counter (BLOCK 0 area,
 	// ahead of the remap chain): the failsafe now only ever fires for a
 	// record that cut off a playing take, not a first/fresh recording
-	// from an empty loop. See mod_docs/ROADMAP.rst entry 4.
+	// from an empty loop.
 	// Also gates cancel_record_mute (plugin.cc): the command is ignored
 	// for a record started from Mute, Paused or an empty loop.
-	// ROADMAP.rst entry 1.
 	// calloc() zeroes the struct so default is false, matching
 	// bLateHitBypassed's convention above.
 	bool bRecordEnteredFromActivePlay;

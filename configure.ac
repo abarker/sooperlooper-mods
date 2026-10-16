@@ -330,7 +330,7 @@ then
             #------ albBegin ----------------------------------
             # big_state_display: standalone at-a-distance state display,
             # gated on the same wx-found branch as gui since it also
-            # needs wxWidgets. See mod_docs/ROADMAP.rst entry 6.
+            # needs wxWidgets.
             SL_DIRS=". gui big_state_display"
             #------ albEnd ----------------------------------
         else
@@ -397,7 +397,7 @@ then
         # filename, not a comment (confirmed: autoconf errored with
         # "`#------' is already registered with AC_CONFIG_FILES").
         # Marker placed here instead: the one added line is
-        # src/big_state_display/Makefile, mod_docs/ROADMAP.rst entry 6.
+        # src/big_state_display/Makefile (slbigstate).
         AC_OUTPUT([
                    Makefile
                    src/Makefile

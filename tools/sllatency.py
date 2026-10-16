@@ -10,8 +10,9 @@ click in a temporary loop and measures the path SooperLooper is heard
 through, and suggests (and can apply and save) its latency settings.
 
 Everything is timed inside one JACK client, so the click times are known
-to the sample and nothing depends on a DAW.  See mod_docs/ROADMAP.rst
-entry 17 and sooperlooper_and_ardour_setup_guide.rst section 2.7.
+to the sample and nothing depends on a DAW.  See "New Tool: sllatency" in
+mod_docs/late_hit_patch_summary.rst and section 2.7 of
+mod_docs/sooperlooper_and_ardour_setup_guide.rst.
 
 Requires JACK, Python 3, numpy and the Python ``jack`` module.
 """

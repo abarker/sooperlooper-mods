@@ -42,10 +42,6 @@ the counter up to a known, substantial nonzero value BEFORE disabling
 sync, so a frozen-stale value and a freshly-reset value make opposite,
 unambiguous predictions.
 
-See mod_docs/ROADMAP.rst entry 8 (eighth-note off-beat sync
-investigation) for the live-incident context this test was written to
-check.
-
 Sync buffer injection values (same convention as testdef_late_hit.py):
   0.0  — no sync signal
   2.0  — sync pulse (> 1.5 threshold); sets bSyncPulseReceived and

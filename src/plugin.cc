@@ -153,7 +153,8 @@ float g_late_hit_max_quant_unit_fraction = LATE_HIT_MAX_QUANT_UNIT_FRACTION;
 // never pressed anything to stop it -- treat it exactly as if the
 // long-press CANCEL_RECORD_MUTE command had just arrived: discard the take
 // and mute, same as cancelling by hand.  See the guard added at the
-// CANCEL_RECORD_MUTE remap in run(), and mod_docs/ROADMAP.rst entry 4.
+// CANCEL_RECORD_MUTE remap in run(), and "New Feature: record
+// failsafe" in mod_docs/late_hit_patch_summary.rst.
 //
 // Deliberately NOT gated on STATE_TRIG_STOP too: that state is a brief,
 // self-resolving wait for the next quantize boundary (at most one loop
@@ -183,8 +184,8 @@ float g_record_failsafe_seconds = RECORD_FAILSAFE_SECONDS_DEFAULT;
 // either entering mute from an actively playing loop, or leaving mute
 // (unmute) -- arriving just after a sync boundary is treated as if it had
 // arrived exactly at that boundary, instead of waiting for the NEXT
-// boundary (up to a full quantize cycle later). See mod_docs/ROADMAP.rst
-// entry 5.
+// boundary (up to a full quantize cycle later). See "New Feature:
+// mute/unmute late-hit correction" in mod_docs/late_hit_patch_summary.rst.
 //
 // Deliberately a PLAIN ms-only value, unlike g_late_hit_window_ms's dual
 // ms/cycle-fraction cap (see g_late_hit_max_quant_unit_fraction above).
@@ -230,8 +231,9 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 //------ albBegin ----------------------------------
 // PAUSE_FROM_MUTE_FIX: compile-time safety switch for a stock
 // SooperLooper 1.7.9 bug fix (not fork-introduced -- verified present
-// verbatim in original_plugin.cc). See mod_docs/ROADMAP.rst entry 7 for
-// the full writeup.
+// verbatim in original_plugin.cc). Written up in
+// mod_docs/late_hit_patch_summary.rst, "Quantized Pause from Muted Now
+// Resolves to Paused".
 //
 // The bug: with mute-quantize on and sync active, pressing Pause while
 // Muted has to wait for the next sync boundary. The wait-for-sync
@@ -269,8 +271,7 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 // SYNC_MODE_LATE_HIT_RESET_FIX: compile-time safety switch for a
 // fork-introduced bug (NOT stock -- the vulnerable field and its
 // gating pattern were both added by this fork's own late-hit
-// correction work; see mod_docs/ROADMAP.rst entry 8 for the full
-// investigation writeup).
+// correction work).
 //
 // The bug: lGlobalSamplesSinceSync (added in the original Record
 // late-hit correction; also read by the later mute/unmute extension)
@@ -342,11 +343,8 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 // upstream (predating this fork) in midi_bind.cpp and engine.cpp. Uses
 // the same directory as engine.cpp's ALB_SYNC_PULSE_LOG, deliberately:
 // one place to remember for any SooperLooper-generated diagnostic
-// output, rather than two. This is unlike the rig's separate Python
-// tooling logs (the MIDI remapper, pw-top monitor, etc.) -- a different
-// program's data, which stays in its own ~/ardour/freeze_logs/ location;
-// see mod_docs/ROADMAP.rst entry 8 for why those were deliberately NOT
-// folded in here. Falls back to /tmp if $HOME is unset or the directory
+// output, rather than two.
+// Falls back to /tmp if $HOME is unset or the directory
 // could not be created, same fallback engine.cpp's
 // alb_sync_pulse_log_open() uses.
 //
@@ -2115,7 +2113,7 @@ static LoopChunk * transitionToNext(SooperLooperI *pLS, LoopChunk *loop, int nex
 		      pLS->dPausedPos = loop->dCurrPos;
 		      //------ albBegin ----------------------------------
 		      // See PAUSE_FROM_MUTE_FIX's comment block near the top of
-		      // this file and mod_docs/ROADMAP.rst entry 7. pLS->state
+		      // this file. pLS->state
 		      // still holds the pre-transition value here (only
 		      // overwritten below, after this whole switch), so this is
 		      // exactly the information needed to mirror the immediate
@@ -2446,8 +2444,8 @@ runSooperLooper(LADSPA_Handle Instance,
   // RECORD_FAILSAFE -- auto-fire CANCEL_RECORD_MUTE if a record has been
   // left running in STATE_RECORD longer than g_record_failsafe_seconds,
   // instead of leaving it recording indefinitely because the performer
-  // never got back to press anything.  Full design: mod_docs/ROADMAP.rst
-  // entry 4.
+  // never got back to press anything.  See "New Feature: record
+  // failsafe" in mod_docs/late_hit_patch_summary.rst.
   //
   // Computed here, as a plain statement pair ahead of the if/else-if chain
   // below, rather than inline at the CANCEL_RECORD_MUTE branch itself: that
@@ -2520,7 +2518,8 @@ runSooperLooper(LADSPA_Handle Instance,
   //====== albBegin ==================================================================================
   // CANCEL_RECORD_MUTE -- cancel an in-progress or pending record, keep the
   // prior take, and mute only if audio was actually captured.  No-op in every
-  // other state.  Full design and rationale: mod_docs/ROADMAP.rst entry 1.
+  // other state.  See "New Command: cancel_record_mute" in
+  // mod_docs/late_hit_patch_summary.rst.
   // The "|| bRecordFailsafeFired" below is the only change from that design:
   // a second, automatic way to reach this same branch.  See the
   // RECORD_FAILSAFE block just above.
@@ -2556,7 +2555,6 @@ runSooperLooper(LADSPA_Handle Instance,
 	  // already runs only when the same flag is set.  So a cancelled
 	  // record always has a previous take under it, which the redo unlink
 	  // below relies on.  Regression tests: testdef_cancel_record_mute.py.
-	  // ROADMAP.rst entry 1.
 	  const bool bCancelIgnored =
 	      !bRecordFailsafeFired && !pLS->bRecordEnteredFromActivePlay;
 	  //------ albEnd ----------------------------------
@@ -2683,8 +2681,8 @@ runSooperLooper(LADSPA_Handle Instance,
   // (lLastOverdubFrom, set at the start of every dispatch below), and never
   // removes a loop's first take -- only layers on top of it.  A layer the
   // eager press started is discarded and unlinked (no redo); a real
-  // overdub that gets undone stays redo-able, as with plain undo.  Design,
-  // and the state-by-state trace: mod_docs/ROADMAP.rst entry 19.
+  // overdub that gets undone stays redo-able, as with plain undo.  The cases are
+  // in mod_docs/late_hit_patch_summary.rst, "cancel_overdub_undo Implementation".
   else if (lMultiCtrl == MULTI_CANCEL_OVERDUB_UNDO) {
 	  const long from = pLS->lLastOverdubFrom;
 	  LoopChunk *head = pLS->headLoopChunk;
@@ -2963,8 +2961,7 @@ runSooperLooper(LADSPA_Handle Instance,
 	   // unmuted loop -- BEFORE the switch below changes pLS->state to
 	   // STATE_RECORD or STATE_TRIG_START.  Read later by the
 	   // record_failsafe gate ahead of the remap chain (BLOCK 0 area).
-	   // See plugin.hpp's comment on the field and mod_docs/ROADMAP.rst
-	   // entry 4.
+	   // See plugin.hpp's comment on the field.
 	   pLS->bRecordEnteredFromActivePlay =
 	       (pLS->state == STATE_PLAY || pLS->state == STATE_ONESHOT);
 	   //------ albEnd ----------------------------------
@@ -3023,7 +3020,7 @@ runSooperLooper(LADSPA_Handle Instance,
 			      // Rel Sync fix: fSyncMode == 1 only.  Under Rel Sync (2) the
 			      // stop waits for the recorded phase offset, not the pulse, so
 			      // trimming to the pulse gave a loop that was not a whole number
-			      // of cycles.  ROADMAP.rst entry 20.
+			      // of cycles.
 			      // C2 fix: bLateHitBypassed prevents late-hit firing on slave
 			      // channels in internal sync mode; see Looper::run() BLOCK 5.
 			      bool stopWithinWindow = (T > 0
@@ -3204,7 +3201,6 @@ runSooperLooper(LADSPA_Handle Instance,
 		 // Rel Sync fix: fSyncMode == 1 only.  Under Rel Sync (2) a record
 		 // starts where it is pressed and its offset from the pulse is the
 		 // point; moving the start back to the pulse would defeat that.
-		 // ROADMAP.rst entry 20.
 		 // C2 fix: bLateHitBypassed prevents late-hit firing on slave
 		 // channels in internal sync mode; see Looper::run() BLOCK 5.
 		 bool withinWindow = (T > 0
@@ -3505,7 +3501,7 @@ runSooperLooper(LADSPA_Handle Instance,
 						      // C2 fix: bLateHitBypassed prevents late-hit firing on slave
 						      // channels in internal sync mode; see Looper::run() BLOCK 5.
 						      // Rel Sync fix: fSyncMode == 1 only, as for the record
-						      // start and stop (Rel Sync is 2).  ROADMAP.rst entry 20.
+						      // start and stop (Rel Sync is 2).
 						      bool multStopInWindow = (T > 0
 							                              && T <= shiftSamples
 							                              && fSyncMode == 1.0f
@@ -3845,8 +3841,7 @@ runSooperLooper(LADSPA_Handle Instance,
 	   // (lGlobalSyncAtButtonPress) and guard shape as Record's own
 	   // late-hit correction; deliberately NOT effectiveLateHitWindow() --
 	   // see g_mute_late_hit_ms's comment block near the top of this file
-	   // for why the cycle-fraction cap does not apply here. See also
-	   // mod_docs/ROADMAP.rst entry 5.
+	   // for why the cycle-fraction cap does not apply here.
 	   unsigned long muteShiftSamples =
 	       (unsigned long)(g_mute_late_hit_ms * 0.001f * pLS->fSampleRate);
 	   unsigned long muteT = lGlobalSyncAtButtonPress;
@@ -3897,8 +3892,7 @@ runSooperLooper(LADSPA_Handle Instance,
 		       // STATE_INSERT/STATE_DELAY/default: labels further down
 		       // this same switch(pLS->state) -- otherwise a direct jump
 		       // to one of those (e.g. pLS->state == STATE_MULTIPLY)
-		       // would illegally cross this initializer. See
-		       // mod_docs/ROADMAP.rst entry 5.
+		       // would illegally cross this initializer.
 		       bool unmuteLateHit = (pLS->state == STATE_MUTE
 		                            && lMultiCtrl == MULTI_MUTE
 		                            && withinMuteWindow);
@@ -3943,7 +3937,7 @@ runSooperLooper(LADSPA_Handle Instance,
 			       }
 			       //------ albBegin ----------------------------------
 			       // See PAUSE_FROM_MUTE_FIX's comment block near the top
-			       // of this file and mod_docs/ROADMAP.rst entry 7. Missing
+			       // of this file. Missing
 			       // case in stock 1.7.9: waiting in STATE_MUTE to resolve
 			       // into STATE_PAUSED was never handled, so it fell through
 			       // to the generic STATE_PLAY branch below.
@@ -3991,7 +3985,6 @@ runSooperLooper(LADSPA_Handle Instance,
 		   // output-latency compensation branch just below, which needs
 		   // its own separate timing story), STATE_DELAY (which falls
 		   // through into this default: case from above), or MULTI_PAUSE.
-		   // See mod_docs/ROADMAP.rst entry 5.
 		   bool muteLateHit = (pLS->state == STATE_PLAY
 		                       && lMultiCtrl == MULTI_MUTE
 		                       && withinMuteWindow);

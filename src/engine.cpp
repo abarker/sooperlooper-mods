@@ -74,7 +74,7 @@ extern float g_record_failsafe_seconds;
 // Mute/unmute late-hit window (ms). Defined and defaulted in plugin.cc;
 // declared extern here so engine.cpp can persist it in the Globals session
 // node, same pattern as the globals above. See the comment block in
-// plugin.cc for the full rationale (entry 5, mod_docs/ROADMAP.rst).
+// plugin.cc for the full rationale.
 extern float g_mute_late_hit_ms;
 //------ albEnd ----------------------------------
 
@@ -114,7 +114,7 @@ extern float g_mute_late_hit_ms;
 // then sees a sync pulse at that offset in every buffer until the next
 // boundary: a waiting record starts at once, and late-hit counts from the
 // stale pulse.  Clock on the JACK MIDI input (perfectly regular offsets)
-// hits this reliably; ALSA's jittery timing rarely.  ROADMAP.rst entry 22.
+// hits this reliably; ALSA's jittery timing rarely.
 //
 // WHEN DEFINED (default): the buffer is cleared up to every clock event.
 // WHEN NOT DEFINED: original stock behaviour.
@@ -153,8 +153,7 @@ extern float g_mute_late_hit_ms;
 //      fork. Created (mkdir, best-effort) if it does not already exist,
 //      so this works out of the box for any user -- not only one who
 //      happens to already have a suitable directory lying around, which
-//      an earlier version of this function assumed (see mod_docs/ROADMAP.rst
-//      entry 8's revision history).
+//      an earlier version of this function assumed.
 //   2. /tmp -- last resort only, used solely if $HOME is unset or the
 //      directory above could not be created/opened: always writable on
 //      a POSIX system, but not guaranteed to survive a reboot, so the
@@ -2953,7 +2952,7 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				fragpos = (nframes_t) (evt->FragmentPos() % nframes);
 				timestamp = evt->getTimestamp();
 				//------ albBegin ----------------------------------
-				// JACK MIDI clock fix (ROADMAP.rst entry 22): events from
+				// JACK MIDI clock fix: events from
 				// the JACK MIDI input carry their offset in this buffer but
 				// no timestamp (0), and the tempo measurement below works
 				// only from timestamps, so with clock on midi_in the tempo
@@ -3122,7 +3121,7 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 		// ALB_JACK_BEAT_TRACKING (engine.hpp): value-initialise, so bpm is
 		// 0 (not leftover memory) when the master sends no BBT, and state
 		// is neither ROLLING nor STOPPED for a transport state the driver
-		// does not map.  ROADMAP entry 14.
+		// does not map.  Both are stock bugs.
 #ifdef ALB_JACK_BEAT_TRACKING
 		TransportInfo info = TransportInfo();
 #else
@@ -3177,7 +3176,7 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 			// ALB_JACK_BEAT_TRACKING (engine.hpp) adds: take the tempo from
 			// JACK only when the master actually sent one (info.bpm > 0 once
 			// the struct is value-initialised); otherwise keep
-			// SooperLooper's own tempo.  ROADMAP entry 14.
+			// SooperLooper's own tempo.
 #ifdef ALB_JACK_BEAT_TRACKING
 			const bool jack_tempo_known = (info.bpm > 0.0);
 #else
@@ -3222,7 +3221,7 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 			// quarter-note blink from BeatTracker's beat count, carried
 			// through tempo changes, instead of framepos mod cycle length.
 			// Replaces both blocks under #else below, which are unchanged
-			// stock/ALB_BBT_SYNC code.  ROADMAP entries 8, 14 and 15.
+			// stock/ALB_BBT_SYNC code.
 #ifdef ALB_JACK_BEAT_TRACKING
 			{
 				const double sr  = (double) _driver->get_samplerate();

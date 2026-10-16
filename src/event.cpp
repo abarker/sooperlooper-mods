@@ -119,7 +119,7 @@ namespace SooperLooper {
         // so MIDI clock on midi_in carried a garbage timestamp and the
         // MidiClockSync tempo measurement never worked.  0 means "no
         // timestamp"; generate_sync() then times the event from the frame
-        // count.  ROADMAP.rst entry 22.
+        // count.
         TimeStamp       = 0.0;
         //------ albEnd ----------------------------------
     }
