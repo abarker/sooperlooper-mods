@@ -669,7 +669,8 @@ where it should.
 This fork counts beats as the music plays, at whatever tempo JACK reports
 at each moment, so the pulses stay on the master's beat through any number
 of tempo changes; on a relocate it lines up again with where the master
-puts its beat.  At a steady tempo it gives the same pulses as stock.  It
+puts its beat.  One case still goes off: Hydrogen skipping a processing
+cycle (see `Known Issues and Future Work`_).  At a steady tempo it gives the same pulses as stock.  It
 also stops SooperLooper reading some of JACK's transport information from
 uninitialised memory, a stock bug.
 
@@ -2085,6 +2086,23 @@ Known Issues and Future Work
    below 60, and the tempo measured from MIDI clock starts low for a few
    beats after every Start.  Eighths/Cycle can then double, once or more,
    and stays doubled.  With MIDI clock sync, turn "auto 8th" off.
+
+-  **Loops drift off Hydrogen after it skips a processing cycle.**  After
+   a tempo change while the transport rolls, Hydrogen's beat no longer
+   sits on the plain "time since start x tempo" grid, and beat tracking
+   follows it there.  If Hydrogen (1.2.x, as JACK timebase master) then
+   skips a cycle, it drops back to the plain grid without a JACK
+   relocate, while SooperLooper stays where it was.  New loops then
+   start and stop off the drums, by up to half a beat, until the next
+   relocate.  A skip happens when Hydrogen's audio thread can't get its
+   engine lock in time -- logged in ``hydrogen.log`` as "missed buffer";
+   tempo messages, tap tempo and pattern changes all take that lock --
+   or under heavy load.  **Workaround:** stop and restart the drums with
+   Hydrogen's ``PLAY/STOP_TOGGLE``, which relocates to the start; loops
+   recorded after that land on the beat.  Loops already recorded off
+   stay off, so re-record them.  Pause doesn't relocate, and a tempo
+   change doesn't realign, so neither helps.  A fix is designed but not
+   built.
 
 -  **Only tested on Ubuntu 24.04:** no other environments yet tested.
 
