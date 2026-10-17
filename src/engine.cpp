@@ -3220,8 +3220,8 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 			// ALB_JACK_BEAT_TRACKING (engine.hpp): cycle pulses and the GUI
 			// quarter-note blink from BeatTracker's beat count, carried
 			// through tempo changes, instead of framepos mod cycle length.
-			// Replaces both blocks under #else below, which are unchanged
-			// stock/ALB_BBT_SYNC code.
+			// Replaces both blocks under #else below, which are stock code
+			// plus the pulse log.
 #ifdef ALB_JACK_BEAT_TRACKING
 			{
 				const double sr  = (double) _driver->get_samplerate();
@@ -3316,7 +3316,7 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 						pev.bpm          = info.bpm;
 						pev.tempo_frames = _tempo_frames;
 						pev.eighth_cycle = _eighth_cycle;
-#ifdef ALB_BBT_SYNC
+#ifdef ALB_JACK_BBT_TRACKING
 						if (info.bbt_valid) {
 							pev.beat           = info.beat;
 							pev.tick           = info.tick;
@@ -3342,109 +3342,10 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 #else
 			//------ albEnd ----------------------------------
 			if (_tempo_frames > 0.0 && info.state == TransportInfo::ROLLING) {
-
-				//====== albBegin — BBT-based JackSync pulse placement =====================
-				// Use JACK BBT position fields when the timebase master has set them
-				// (info.bbt_valid, guarded by #ifdef ALB_BBT_SYNC).  This anchors sync
-				// pulses to the master's musical grid rather than to JACK frame 0,
-				// which fixes pulse placement after locates to non-zero positions and
-				// after mid-transport Eighths/Cycle changes.
-				//
-				// Falls back to the original stock fmod(framepos) arithmetic when:
-				//   - ALB_BBT_SYNC is not defined (compile-time disable), or
-				//   - no timebase master has set JackPositionBBT (info.bbt_valid == false), or
-				//   - beat_type != 4 (non-quarter-note beats — guard for exotic time sigs), or
-				//   - bpm or ticks_per_beat is zero (degenerate / transition state).
-				//
-				// Formula (BBT path):
-				//   bar_start_frame = bar_start_tick * frames_per_beat / ticks_per_beat
-				//     (exact frame of the current bar's first sample, using the integer
-				//      bar_start_tick field — no integer-tick truncation error)
-				//   phase_shift = bar_start_frame - fmod(bar_start_frame, _tempo_frames)
-				//     (frame of the most-recent cycle boundary on or before bar_start_frame;
-				//      aligns the fmod grid to the timebase master's bar grid after any locate)
-				//   frame_in_cycle = (framepos + offset) - phase_shift
-				//     (frame position measured from the aligned cycle boundary)
-				//   thisval = lrint(fmod(frame_in_cycle, _tempo_frames))
-				//   nextval = lrint(fmod(frame_in_cycle + nframes, _tempo_frames))
-				//   diff    = lrint(_tempo_frames - thisval); if thisval==0: diff=0
-				//
-				// WHY NOT use info.tick in the formula:
-				//   info.tick is an integer (floor of the true fractional tick within the
-				//   beat).  When the truncated cumulative tick count happens to be an exact
-				//   multiple of ticks_per_cycle (960), the tick-based formula erroneously
-				//   places thisval=0, firing a spurious second pulse one buffer after the
-				//   legitimate boundary-crossing pulse.  The bar_start_frame approach uses
-				//   only the exact-integer bar_start_tick field and the absolute frame
-				//   position, so it never suffers tick-truncation rounding into a false zero.
-				//
-				// beat_type guard: assumes quarter-note beats (beat_type == 4), which is
-				// what Hydrogen and virtually all JACK timebase masters use.  With
-				// beat_type != 4, bar boundaries would not align with the _tempo_frames
-				// grid; that case falls through to the fmod path instead.
-				//
-				// STOCK (sooperlooper 1.7.9):
-				//   nframes_t thisval = (nframes_t) lrint (fmod ((double) (info.framepos + offset), _tempo_frames));
-				//   nframes_t nextval = (nframes_t) lrint (fmod ((double) (info.framepos + offset + nframes), _tempo_frames));
-				//   nframes_t diff = lrint(_tempo_frames - thisval);
-				//   diff = (thisval == 0) ? 0 : diff;
-				nframes_t thisval, nextval, diff;
-#ifdef ALB_SYNC_PULSE_LOG
-				// Set true below only on the BBT branch; stays false on the
-				// fallback branch (and if ALB_BBT_SYNC is undefined, in
-				// which case that branch does not exist at all).  Kept
-				// independent of ALB_BBT_SYNC's own `use_bbt` local so the
-				// two toggles have no compile-time dependency on each other.
-				bool pulse_used_bbt = false;
-#endif
-#ifdef ALB_BBT_SYNC
-				bool use_bbt = info.bbt_valid
-				               && info.ticks_per_beat > 0.0
-				               && info.bpm > 0.0
-				               && info.beat_type == 4.0f;
-				if (use_bbt) {
-#ifdef ALB_SYNC_PULSE_LOG
-					pulse_used_bbt = true;
-#endif
-					double sr              = (double)_driver->get_samplerate();
-					double frames_per_beat = 60.0 * sr / info.bpm;
-					// bar_start_frame: exact floating-point frame of the current bar's
-					// first sample.  bar_start_tick is an integer supplied by the
-					// timebase master; dividing by ticks_per_beat and scaling by
-					// frames_per_beat gives the frame position without rounding through
-					// an integer tick accumulator.
-					double bar_start_frame = info.bar_start_tick
-					                         * frames_per_beat / info.ticks_per_beat;
-					// phase_shift: frame of the cycle boundary immediately at or before
-					// bar_start_frame.  Because bar boundaries are always exact multiples
-					// of _tempo_frames (quarter-note beats contain an integer number of
-					// QUANT_8TH cycles, and QUANT_CYCLE cycles divide the bar evenly),
-					// fmod(bar_start_frame, _tempo_frames) is effectively zero, making
-					// phase_shift == bar_start_frame in practice.  The fmod is kept for
-					// correctness on hypothetical non-standard cycle lengths.
-					double phase_shift     = bar_start_frame
-					                         - fmod(bar_start_frame, _tempo_frames);
-					// Frame position relative to the aligned cycle grid:
-					double frame_in_cycle  = (double)(info.framepos + offset) - phase_shift;
-
-					thisval = (nframes_t) lrint(fmod(frame_in_cycle, _tempo_frames));
-					nextval = (nframes_t) lrint(fmod(frame_in_cycle + (double)nframes,
-					                                 _tempo_frames));
-					diff    = (nframes_t) lrint(_tempo_frames - (double)thisval);
-					diff    = (thisval == 0) ? 0 : diff;
-				} else {
-#endif // ALB_BBT_SYNC
-					// Stock arithmetic: anchor to frame 0.
-					thisval = (nframes_t) lrint(fmod((double)(info.framepos + offset),
-					                                 _tempo_frames));
-					nextval = (nframes_t) lrint(fmod((double)(info.framepos + offset + nframes),
-					                                 _tempo_frames));
-					diff    = (nframes_t) lrint(_tempo_frames - thisval);
-					diff    = (thisval == 0) ? 0 : diff;
-#ifdef ALB_BBT_SYNC
-				}
-#endif // ALB_BBT_SYNC
-				//====== albEnd ============================================================
+				nframes_t thisval = (nframes_t) lrint (fmod ((double) (info.framepos + offset), _tempo_frames));
+				nframes_t nextval = (nframes_t) lrint (fmod ((double) (info.framepos + offset + nframes), _tempo_frames));
+				nframes_t diff = lrint(_tempo_frames - thisval);
+				diff = (thisval == 0) ? 0 : diff;
 
 				//fprintf(stderr, "pos: %lu   lastpos: %lu  tempoframe: %g  thisval: %lu  nextval: %lu\n", info.framepos , info.last_framepos, _tempo_frames, thisval, nextval);
 
@@ -3477,22 +3378,13 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 							pev.bpm          = info.bpm;
 							pev.tempo_frames = _tempo_frames;
 							pev.eighth_cycle = _eighth_cycle;
-#ifdef ALB_BBT_SYNC
-							pev.beat = pulse_used_bbt ? info.beat : 0;
-							pev.tick = pulse_used_bbt ? info.tick : 0;
-							pev.bar            = pulse_used_bbt ? info.bar : 0;
-							pev.bar_start_tick = pulse_used_bbt ? info.bar_start_tick : 0.0;
-							pev.beats_per_bar  = pulse_used_bbt ? info.beats_per_bar : 0.0f;
-							pev.ticks_per_beat = pulse_used_bbt ? info.ticks_per_beat : 0.0;
-#else
 							pev.beat = 0;
 							pev.tick = 0;
 							pev.bar            = 0;
 							pev.bar_start_tick = 0.0;
 							pev.beats_per_bar  = 0.0f;
 							pev.ticks_per_beat = 0.0;
-#endif
-							pev.use_bbt = pulse_used_bbt;
+							pev.use_bbt = false;
 							_sync_pulse_log_queue->increment_write_ptr (1);
 						}
 					}

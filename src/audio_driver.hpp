@@ -38,44 +38,28 @@ typedef struct _jack_client jack_client_t;
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
-// ALB_BBT_SYNC: NOT DEFINED by default (since 2026-09-25).  It was meant to
-// place sync pulses from the JACK BBT fields, but the arithmetic is a no-op:
-// its phase shift is always a whole number of cycles, so pulses fall exactly
-// where the stock framepos mod cycle_length puts them.
-// ALB_JACK_BEAT_TRACKING (engine.hpp, on by default) replaces the
-// pulse code entirely; with it defined, this flag only adds the BBT fields
-// to the sync-pulse log.
+// ALB_JACK_BBT_TRACKING: NOT DEFINED by default -- built and unit-tested
+// (src/test_beat_tracker), not yet tried against a real master.  Keeps
+// the JackSync beat count on the timebase master's own bar/beat/tick
+// position (BeatTracker::follow_master), so the pulses also follow a
+// master whose position is not frames * beat length -- a DAW relocated
+// into a song with earlier tempo changes.  Small differences are nudged
+// away over a few cycles; a relocate snaps, and so does a difference over
+// a quarter beat when following starts (a song loop is absorbed instead).
+// A master whose position does not advance (Hydrogen in pattern mode) is
+// ignored.
 //
-// Required by ALB_JACK_BBT_TRACKING (engine.hpp), which follows the
-// timebase master's own bar/beat/tick position and reads these fields: that
-// switch stops the build with an #error if this one is off.  The reverse
-// does not hold -- this flag works alone, and with beat tracking on its only
-// effect is the BBT columns in the pulse log, a behaviour-neutral first step
-// when checking what a master publishes.  Defined here,
-// not in engine.hpp, because it changes TransportInfo's layout, which every
-// file including this header must agree on.  The description below is the
-// original intent, not what the code achieves.
+// Adds the BBT position fields to TransportInfo, filled from JACK in
+// JackAudioDriver::get_transport_info().  With ALB_SYNC_PULSE_LOG
+// (engine.hpp), the pulse log gets the master's bar/beat/tick on every
+// pulse, plus "event=follow" lines when following starts or stops, at
+// every jump, and when the master's position jumps by itself (a song
+// looping: kept as an offset).
 //
-// WHEN DEFINED:
-//   generate_sync() checks info.bbt_valid at runtime.  If the timebase master
-//   has set JackPositionBBT (Hydrogen, Ardour, etc.) AND beat_type == 4 AND
-//   bpm and ticks_per_beat are non-zero, the BBT path is taken.  Otherwise
-//   the code falls back automatically to the original fmod(framepos) arithmetic.
-//   PipeWire's JACK layer implements the full BBT API; no special handling needed.
-//
-// WHEN NOT DEFINED:
-//   The BBT fields are not compiled into TransportInfo and generate_sync()
-//   uses only the original fmod(framepos, _tempo_frames) arithmetic in all
-//   cases — identical to stock SooperLooper 1.7.9 JackSync behaviour.
-//   Comment out to force the fmod path (e.g. if a timebase master populates
-//   BBT fields incorrectly, or for debugging grid-alignment issues).
-//
-// Note: ALB_BBT_SYNC is defined here in audio_driver.hpp (rather than in
-// engine.cpp alongside ALB_RT_SAFE_COND_SIGNAL) because it also gates fields
-// in TransportInfo, which is included by multiple translation units.  The
-// jack_audio_driver.cpp population block and the engine.cpp pulse-placement
-// block both check #ifdef ALB_BBT_SYNC.
-//#define ALB_BBT_SYNC
+// Needs ALB_JACK_BEAT_TRACKING (engine.hpp; checked there).  Defined here,
+// not in engine.hpp, because it changes TransportInfo's layout, which
+// every file including this header must agree on.
+//#define ALB_JACK_BBT_TRACKING
 //------ albEnd ----------------------------------
 
 namespace SooperLooper {
@@ -98,7 +82,7 @@ struct TransportInfo
 	double bpm;
 	State state;
 
-	// future items (uncommented below when ALB_BBT_SYNC is defined)
+	// future items (the position fields are below, under ALB_JACK_BBT_TRACKING)
 	// int32_t bar;           /**< current bar */
 	// int32_t beat;          /**< current beat-within-bar */
 	// int32_t tick;          /**< current tick-within-beat */
@@ -110,15 +94,13 @@ struct TransportInfo
 
 	//------ albBegin ----------------------------------
 	// BBT position fields from jack_position_t.  Only present when
-	// ALB_BBT_SYNC is defined.  Populated by JackAudioDriver::get_transport_info()
-	// from the jack_position_t returned by jack_transport_query() when the
-	// timebase master has set the JackPositionBBT valid bit.
-	// bbt_valid is false when no timebase master is active, when the master
-	// does not set JackPositionBBT, or when ALB_BBT_SYNC is not defined.
-	// Engine::generate_sync() reads bbt_valid before touching any other
-	// BBT field, so an absent or unavailable timebase master falls back to
-	// the stock fmod(framepos) path with no additional overhead.
-#ifdef ALB_BBT_SYNC
+	// ALB_JACK_BBT_TRACKING is defined.  Populated by
+	// JackAudioDriver::get_transport_info() from jack_transport_query()
+	// when the timebase master has set the JackPositionBBT valid bit.
+	// bbt_valid is false when no timebase master is active or the master
+	// does not set JackPositionBBT; Engine::generate_sync() reads it before
+	// touching any other BBT field.
+#ifdef ALB_JACK_BBT_TRACKING
 	int32_t  bar;            /**< 1-indexed current bar */
 	int32_t  beat;           /**< 1-indexed beat within bar */
 	int32_t  tick;           /**< tick within beat (0 .. ticks_per_beat-1) */
@@ -129,7 +111,7 @@ struct TransportInfo
 	                              48.0 (observed on the rig 2026-08-17). */
 	bool     bbt_valid;      /**< true iff the above fields were populated
 	                              from JackPositionBBT this buffer */
-#endif // ALB_BBT_SYNC
+#endif // ALB_JACK_BBT_TRACKING
 	//------ albEnd ----------------------------------
 };
 

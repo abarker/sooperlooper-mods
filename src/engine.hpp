@@ -128,28 +128,10 @@ typedef struct _jack_port jack_port_t;
 // WHEN NOT DEFINED: the stock JackSync code runs exactly as before.
 #define ALB_JACK_BEAT_TRACKING
 
-// ALB_JACK_BBT_TRACKING: NOT DEFINED by default -- built and unit-tested
-// (src/test_beat_tracker), not yet tried against a real master.  Keeps
-// the beat count on the timebase master's own bar/beat/tick position
-// (BeatTracker::follow_master), so the pulses also follow a master whose
-// position is not frames * beat length -- a DAW relocated into a song with
-// earlier tempo changes.  Small differences are nudged away over a few
-// cycles; a relocate snaps, and so does a difference over a quarter beat
-// when following starts (a song loop is absorbed instead).  A master
-// whose position does not advance (Hydrogen in pattern mode) is ignored.
-// With ALB_SYNC_PULSE_LOG, adds "event=follow" lines to the pulse log
-// when following starts or stops, at every jump, and when the master's
-// position jumps by itself (a song looping: kept as an offset).
-// Needs ALB_JACK_BEAT_TRACKING, and ALB_BBT_SYNC (audio_driver.hpp) for
-// the BBT fields.
-//#define ALB_JACK_BBT_TRACKING
-#ifdef ALB_JACK_BBT_TRACKING
-#ifndef ALB_JACK_BEAT_TRACKING
+// ALB_JACK_BBT_TRACKING (follow the master's bar/beat/tick) is defined in
+// audio_driver.hpp, since it changes TransportInfo's layout.
+#if defined(ALB_JACK_BBT_TRACKING) && !defined(ALB_JACK_BEAT_TRACKING)
 #error "ALB_JACK_BBT_TRACKING needs ALB_JACK_BEAT_TRACKING"
-#endif
-#ifndef ALB_BBT_SYNC
-#error "ALB_JACK_BBT_TRACKING needs ALB_BBT_SYNC (audio_driver.hpp)"
-#endif
 #endif
 
 // ALB_CYCLE_CHANGE_REANCHOR: DEFINED by default -- built and tested

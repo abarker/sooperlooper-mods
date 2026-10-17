@@ -49,7 +49,7 @@
 // not compensated here.
 //
 // Following the master's own position (used
-// only when engine.hpp defines ALB_JACK_BBT_TRACKING): when the timebase
+// only when audio_driver.hpp defines ALB_JACK_BBT_TRACKING): when the timebase
 // master publishes a live bar/beat/tick position -- a DAW with a tempo
 // map, Hydrogen in song mode -- follow_master() keeps the count on it.
 // Small differences are nudged in a little each cycle, added to the end

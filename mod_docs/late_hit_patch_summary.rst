@@ -1002,8 +1002,9 @@ Compile-Time Flags
 All flags are collected here for reference.  Each is also documented at its
 definition site.  Flags in ``plugin.cc`` are purely local to that translation
 unit.  Two flags are defined in headers rather than the ``.cpp``/``.cc``
-files they primarily affect: ``ALB_BBT_SYNC`` in ``audio_driver.hpp``,
-because it controls struct layout visible to multiple translation units,
+files they primarily affect: ``ALB_JACK_BBT_TRACKING`` in
+``audio_driver.hpp``, because it controls struct layout visible to
+multiple translation units,
 and ``ALB_SYNC_PULSE_LOG`` in ``engine.hpp``, for the same reason (it adds
 a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
 ``ALB_RT_SAFE_COND_SIGNAL`` and ``ALB_MIDI_SYNC_CLEAR_FIX`` are local to
@@ -1114,16 +1115,6 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        preserved until rolling resumes, preventing non-RT-safe ``set_tempo()``
        calls from firing on every buffer during a locate.  **When not defined:**
        stock behaviour — tempo updated on every cycle regardless of state.
-   * - ``ALB_BBT_SYNC``
-     - ``audio_driver.hpp``
-     - *(commented out)*
-     - **When defined:** adds BBT fields to ``TransportInfo`` and a
-       ``generate_sync()`` branch that uses them; the branch places pulses
-       exactly where the stock formula does, and is not compiled when
-       ``ALB_JACK_BEAT_TRACKING`` is defined.  **When not defined
-       (default):** the fields and branch are absent.  Pulse placement is
-       the same either way.  Required by ``ALB_JACK_BBT_TRACKING``; on its
-       own it only adds the transport's bar/beat/tick to the pulse log.
    * - ``ALB_JACK_BEAT_TRACKING``
      - ``engine.hpp``
      - defined
@@ -1132,12 +1123,13 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        value-initialised (see `JackSync Beat Tracking`_).  **When not
        defined:** stock JackSync pulse placement.
    * - ``ALB_JACK_BBT_TRACKING``
-     - ``engine.hpp``
+     - ``audio_driver.hpp``
      - *(commented out)*
      - **When defined:** the beat count also follows the timebase master's
        own bar/beat/tick position, where the master publishes a changing
-       one (a DAW, or Hydrogen in song mode).  Not yet tried with a real
-       master.  **Needs** ``ALB_BBT_SYNC`` **and**
+       one (a DAW, or Hydrogen in song mode).  Adds the bar/beat/tick
+       fields to ``TransportInfo``, and the master's position to the
+       pulse log.  Not yet tried with a real master.  **Needs**
        ``ALB_JACK_BEAT_TRACKING`` **defined too;** the build stops with an
        error otherwise.  **When not defined (default):** no effect.
    * - ``ALB_CYCLE_CHANGE_REANCHOR``
