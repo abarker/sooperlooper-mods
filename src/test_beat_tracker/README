@@ -19,3 +19,17 @@ master's beat through tempo ramps, a relocate while rolling, a stop/start
 without a locate, and a stop / locate 0 / start.  The second passes when
 the stock code's drift is reproduced.  About 40 s each.  Set SL_BT_KEEP=1
 to keep the run's files for inspection.
+
+Hydrogen missed-cycle test: real Hydrogen as timebase master, the real
+engine, rolling tempo changes, then Hydrogen frozen for 30 ms so it misses
+cycles.  Hydrogen 1.2.4-1.2.7 drop their tempo offset when that happens,
+while the engine keeps it, so the loops end up off the drums until the
+next relocate.  Same isolation as above (private dummy JACK server, own
+HOMEs, private OSC ports); also needs numpy and a Hydrogen AppImage or
+build tree::
+
+    ./hydrogen_missed_cycle_test.py --appimage /path/to/Hydrogen-1.2.4-x86_64.AppImage
+    ./hydrogen_missed_cycle_test.py --h2-root /path/to/tree --expect kept
+
+The first passes when the drift is reproduced (about 0.4 beat after the
+freeze), the second when a fixed Hydrogen stays on the beat.  About 45 s.
