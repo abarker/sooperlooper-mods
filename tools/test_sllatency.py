@@ -506,7 +506,7 @@ def session_save_tests():
     """Saving to the session file, without JACK or SooperLooper: symlinks,
     permissions, a file with no latency values, and the dialog -- the
     notice before the question, the file picker (a stand-in here) chosen,
-    cancelled or unavailable, the file used last time as its starting
+    canceled or unavailable, the file used last time as its starting
     point, and scripted --save."""
     import tempfile, io, contextlib, types, builtins, shutil
     fails = 0
@@ -587,7 +587,7 @@ def session_save_tests():
         check(picked_from[-1] == target, "next time the picker starts at the file used last time")
         rc, out = run_dialog(["y", "y"], picker_result="")
         check(rc == 0 and "No session file chosen; nothing saved." in out,
-              "picker cancelled: nothing saved, and it says so")
+              "picker canceled: nothing saved, and it says so")
         fresh()
         rc, out = run_dialog(["y", "y", ""], picker_result="none")
         check(rc == 0 and "Saved in" in out and ("[%s]" % target) in out,

@@ -161,7 +161,7 @@ item links to its full description.
   removes a loop's first take.  See `New Command: cancel_overdub_undo`_.
 
 - **Record failsafe.**  If a recording that cut off a playing loop is left
-  running longer than ``record_failsafe_seconds``, it is cancelled
+  running longer than ``record_failsafe_seconds``, it is canceled
   automatically and the previous take comes back, muted.  It catches a
   record pressed to stop a loop without the long press that would cancel
   the new recording, and any other accidental record trigger over a
@@ -319,7 +319,7 @@ The way around it is *eager firing*: the switch sends its main command the
 moment it is pressed, every time, and then sends a second message if the
 press turns out to be a hold or a double tap.  The main command gets no
 added delay.  The catch is that by the time the hold or double tap is
-recognised, the main command has already acted.  The two commands below
+recognized, the main command has already acted.  The two commands below
 are made to be that second message: each first reverses what its
 switch's main command has just done, according to what that was, then
 does its own job, and does nothing where there is nothing to reverse.
@@ -365,7 +365,7 @@ performance pressure.
 It acts only on a recording whose ``record`` press interrupted a playing
 loop (playing or one-shot).  A recording started from mute, pause or an
 empty loop is left alone and carries on.  From there a hold has nothing to
-stop, so it can only be a slow press, and cancelling would throw away the
+stop, so it can only be a slow press, and canceling would throw away the
 take you meant to start.  In practice the record switch can be held as
 long as you like, except when starting a recording over a playing loop,
 where a hold means stop.
@@ -387,7 +387,7 @@ What happens, by what the loop is doing when the command arrives:
      - The recording is discarded and the previous take restored.
      - Silence: the loop is muted.  Unmute to hear the previous take.
    * - waiting for the beat to start a recording over a playing loop
-     - The queued recording is cancelled.
+     - The queued recording is canceled.
      - The previous take keeps playing, uninterrupted: the hold does not
        stop it.
    * - waiting for the beat to end a recording
@@ -397,7 +397,7 @@ What happens, by what the loop is doing when the command arrives:
      - Nothing.
      - No change.
 
-A ``redo`` after a cancel does nothing.  The cancelled recording cannot
+A ``redo`` after a cancel does nothing.  The canceled recording cannot
 be redone, and neither can anything undone before it: starting that
 recording already cleared redo, as starting any new recording does.  (A
 cancel of a recording still waiting for the beat started nothing, so redo
@@ -445,7 +445,7 @@ What happens, by what the overdub press just before it did:
    * - started an overdub on a muted loop
      - The same, and the loop goes back to muted.
    * - was waiting for the beat to start an overdub
-     - The waiting overdub is cancelled, and the loop's last change
+     - The waiting overdub is canceled, and the loop's last change
        undone, as above.
    * - stopped the overdub in progress (at once, or waiting for the beat)
      - That overdub is undone.
@@ -672,7 +672,7 @@ of tempo changes; on a relocate it lines up again with where the master
 puts its beat.  One case still goes off: Hydrogen skipping a processing
 cycle (see `Known Issues and Future Work`_).  At a steady tempo it gives the same pulses as stock.  It
 also stops SooperLooper reading some of JACK's transport information from
-uninitialised memory, a stock bug.
+uninitialized memory, a stock bug.
 
 On by default (``ALB_JACK_BEAT_TRACKING``), and used through full live
 sessions with frequent tempo changes.  How it works is in `JackSync Beat
@@ -840,8 +840,8 @@ muted.  Then run ``sllatency`` and follow the prompts:
 2. Put the headphones fed by those outputs on or right next to the mic
    loop 1 records from -- balancing them on the mic works -- or hold the
    mic right against a speaker, or connect a cable from an output to that
-   input.  With a speaker, keep the mic within a few centimetres: sound
-   takes about 3 ms per metre, and that would be counted as latency.  With
+   input.  With a speaker, keep the mic within a few centimeters: sound
+   takes about 3 ms per meter, and that would be counted as latency.  With
    a cable into a mic input, turn the input gain down first.  Keep it quiet
    by the mic: turn down or switch off amps and anything else that hums or
    buzzes.  The tool listens only around the click's own pitch and ignores
@@ -909,7 +909,7 @@ Before asking, it says how the file is backed up.  On yes, a file picker
 opens to choose the session file -- the one SooperLooper loads at startup
 (the file given to ``slgui`` or ``sooperlooper`` with ``-L``).  It starts
 at the file chosen last time, which is remembered in
-``~/.sooperlooper/sllatency.conf`` only for this purpose.  Cancelling
+``~/.sooperlooper/sllatency.conf`` only for this purpose.  Canceling
 saves nothing.  When no picker can be shown -- no tkinter, or no display,
 as over SSH -- the file name is typed instead, with the one chosen last
 time as the default.  ``--session-file`` skips the choice.
@@ -1064,7 +1064,7 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        Pause from Muted correctly resolves to Paused instead of
        Playing (see `Quantized Pause from Muted Now Resolves to
        Paused`_ in the appendix, below).  Set to 0 to revert to exact stock (buggy)
-       behaviour.  Unlike the other flags/globals here, this is a bug
+       behavior.  Unlike the other flags/globals here, this is a bug
        fix with an escape hatch, not a tunable parameter -- no
        session-file or OSC equivalent.
    * - ``SYNC_MODE_LATE_HIT_RESET_FIX``
@@ -1100,7 +1100,7 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
      - **When defined (default):** three ``pthread_cond_signal()`` calls in
        ``generate_sync()`` are suppressed; the main event loop wakes via its
        existing ``timedwait`` timeout instead.  Reduces xruns on transport
-       locate events.  **When not defined:** stock behaviour — signals fire
+       locate events.  **When not defined:** stock behavior — signals fire
        from the RT callback.
    * - ``ALB_MIDI_SYNC_CLEAR_FIX``
      - ``engine.cpp``
@@ -1108,7 +1108,7 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
      - **When defined (default):** with MIDI clock sync, the sync signal is
        cleared up to every clock event, so an old boundary mark cannot
        linger and make a waiting recording start at once.  A stock bug
-       fix.  **When not defined:** stock behaviour -- cleared only up to
+       fix.  **When not defined:** stock behavior -- cleared only up to
        boundary ticks.
    * - ``ALB_TEMPO_ONLY_WHEN_ROLLING``
      - ``engine.cpp``
@@ -1117,13 +1117,13 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        while rolling; during locate transitions the existing ``_tempo`` is
        preserved until rolling resumes, preventing non-RT-safe ``set_tempo()``
        calls from firing on every buffer during a locate.  **When not defined:**
-       stock behaviour — tempo updated on every cycle regardless of state.
+       stock behavior — tempo updated on every cycle regardless of state.
    * - ``ALB_JACK_BEAT_TRACKING``
      - ``engine.hpp``
      - defined
      - **When defined (default):** JackSync pulses follow a beat count
        carried through tempo changes, and ``TransportInfo`` is
-       value-initialised (see `JackSync Beat Tracking`_).  **When not
+       value-initialized (see `JackSync Beat Tracking`_).  **When not
        defined:** stock JackSync pulse placement.
    * - ``ALB_JACK_BBT_TRACKING``
      - ``audio_driver.hpp``
@@ -1344,7 +1344,7 @@ trigger_latency``); plain record does not use it.
 clock handling in ``generate_sync()``.  That code measures the tempo from
 event timestamps, which ALSA provides and the JACK MIDI path does not.
 Events created with a buffer offset now carry a timestamp of 0 (stock left
-it uninitialised, ``event.cpp``), and ``generate_sync()`` times such events
+it uninitialized, ``event.cpp``), and ``generate_sync()`` times such events
 from a 64-bit frame count, ``(_total_frames + offset) / sample_rate`` --
 seconds, like ALSA's host-time stamps; only differences between them are
 used.  ALSA events are unchanged.
@@ -1375,7 +1375,7 @@ At constant tempo since the last relocate it gives the same pulses as the
 stock formula, to within one sample.
 
 It also changes how ``TransportInfo`` is read: the struct is
-value-initialised (stock reads some fields uninitialised), the
+value-initialized (stock reads some fields uninitialized), the
 tempo is taken from JACK only when the master publishes one, and the
 backwards-locate reset of the loops' relative-sync counters uses the
 tracker's record of the previous frame.
@@ -1539,13 +1539,13 @@ it), so ``cancel_overdub_undo`` knows what the press just before it did.
 From there:
 
 - *A stop* (it found the loop overdubbing): a stop still waiting for the
-  beat is cancelled and the command becomes an ordinary ``undo``, which
+  beat is canceled and the command becomes an ordinary ``undo``, which
   discards the running overdub; a stop that happened at once becomes an
   ordinary ``undo`` of the layer just committed.
 - *A start from playing*: the new overdub layer is discarded at once
   (``discardEagerOverdubLayer()``), then an ordinary ``undo`` removes the
   layer below it, if that is not the first take.  A start still waiting
-  for the beat is cancelled, then the same ``undo``.
+  for the beat is canceled, then the same ``undo``.
 - *A start from muted*: as above, but the undo is done directly and the
   loop fades back to muted, because ``undo``'s own muted branch only holds
   the play level, which the overdub had raised.
@@ -1577,7 +1577,7 @@ the same "wait for sync" mechanism mute-quantize always uses. Once that
 boundary arrived, the loop ended up **Playing**, not **Paused**. The
 performer pressed Pause and got audible playback instead.
 
-**Why this was confidently a bug, not intended behaviour:** SooperLooper
+**Why this was confidently a bug, not intended behavior:** SooperLooper
 already handles this exact transition correctly when it acts
 *immediately* (mute-quantize off, or sync/quantize off) -- pressing
 Pause while Muted goes straight to Paused, explicitly, and the reverse
@@ -1610,7 +1610,7 @@ total, not counting the safety switch below.
 ``LATE_HIT_MULTIPLY_CORRECTION``'s own established role in this file: a
 correction with its own independent escape hatch, in case it ever needs
 pulling without touching anything else. Set it to ``0`` and rebuild to
-revert to exact stock (buggy) behaviour. This is compile-time, not a
+revert to exact stock (buggy) behavior. This is compile-time, not a
 session-file/OSC value like the four late-hit globals -- there is nothing to
 tune, only a bug to have fixed or not, so a rebuild-time switch fits
 better than a runtime one.
@@ -1633,7 +1633,7 @@ the LADSPA port descriptor table and ``slgui`` wiring. The trade-off is that it 
 in the standalone build where both translation units share an address space. When
 ``plugin.cc`` is loaded as a true LADSPA plugin inside a DAW, ``engine.cpp`` is absent and
 the value stays at the compile-time default for the session, which is acceptable
-behaviour. If any of the four is ever promoted to a GUI control, the correct migration
+behavior. If any of the four is ever promoted to a GUI control, the correct migration
 path is to add a proper LADSPA port and remove the global.
 
 For OSC this is a smaller step than full exposure: no ``command_map.cpp``
@@ -1724,18 +1724,18 @@ SooperLooper variables whose roles are clarified here because the patch depends 
      - **[NEW]**
      - ``#define float``
      - Compile-time default for the late-hit window in milliseconds. Remains defined so it
-       can initialise ``g_late_hit_window_ms`` and appear in startup banners. Do not use
+       can initialize ``g_late_hit_window_ms`` and appear in startup banners. Do not use
        directly in runtime logic — use ``g_late_hit_window_ms``.
    * - ``LATE_HIT_MAX_QUANT_UNIT_FRACTION``
      - **[NEW]**
      - ``#define float``
      - Compile-time default for the quantize-unit fraction cap (default 100.0,
        which effectively disables the fraction cap so the ms cap always governs).
-       Initialises ``g_late_hit_max_quant_unit_fraction``.
+       Initializes ``g_late_hit_max_quant_unit_fraction``.
    * - ``g_late_hit_window_ms``
      - **[NEW]**
      - ``float`` (file-scope global)
-     - Runtime window size in milliseconds. Initialised from ``LATE_HIT_WINDOW_MS``.
+     - Runtime window size in milliseconds. Initialized from ``LATE_HIT_WINDOW_MS``.
        Overwritten by ``engine.cpp`` during session load if ``late_hit_window_ms`` is
        present in the ``<Globals>`` node of the session file. Read at buffer-processing
        time via ``effectiveLateHitWindow()``. See the comment block in ``plugin.cc`` for
@@ -1756,7 +1756,7 @@ SooperLooper variables whose roles are clarified here because the patch depends 
        ``ms_cap = g_late_hit_window_ms × 0.001 × fSampleRate`` (clamped to
        ``lInputBufSize − 1``) and ``fraction_cap = g_late_hit_max_quant_unit_fraction
        × lLastSyncPeriodSamples``. Returns the ms cap alone if
-       ``lLastSyncPeriodSamples`` is at its uninitialised sentinel (``ULONG_MAX``).
+       ``lLastSyncPeriodSamples`` is at its uninitialized sentinel (``ULONG_MAX``).
    * - ``sl_dbg_file``
      - **[NEW]**
      - ``static FILE*``
@@ -1798,7 +1798,7 @@ SooperLooper variables whose roles are clarified here because the patch depends 
    * - ``sl_load_probe``
      - **[NEW]**
      - ``static struct SL_LoadProbe``
-     - C++ static initialiser that fires when the binary is loaded (before ``main``).
+     - C++ static initializer that fires when the binary is loaded (before ``main``).
        When ``SYNCWDEBUG`` is defined, writes a ``sl_loaded.txt`` sentinel
        (under ``$HOME/.sooperlooper/logs/``, falling back to ``/tmp``)
        confirming the experimental build is running.  When ``SYNCWDEBUG`` is
@@ -1843,7 +1843,7 @@ exists per loop channel.
      - Most recently measured full-cycle sync period in samples. Seeded from
        ``fTempo`` every buffer (BLOCK 7, immune to loop-coordination pulse noise) and
        updated from pulse measurement when a pulse passes the sanity floor (BLOCK 8).
-       Used by ``effectiveLateHitWindow()`` to compute the fraction cap. Initialised to
+       Used by ``effectiveLateHitWindow()`` to compute the fraction cap. Initialized to
        ``ULONG_MAX`` (sentinel meaning "no period known yet"); reset to ``ULONG_MAX``
        by ``reset_late_hit_state()`` on sync-source change.
    * - ``bLateHitBypassed``
@@ -2083,7 +2083,7 @@ Architecture Notes
 Known Issues and Future Work
 ----------------------------
 
--  **Smart eighths and MIDI clock (stock behaviour).**  The "auto 8th"
+-  **Smart eighths and MIDI clock (stock behavior).**  The "auto 8th"
    option, on by default, doubles Eighths/Cycle whenever the tempo is
    below 60, and the tempo measured from MIDI clock starts low for a few
    beats after every Start.  Eighths/Cycle can then double, once or more,
@@ -2144,7 +2144,7 @@ Known Issues and Future Work
 
 -  **Double log lines:** each button press produces two identical log entries because
    both channel instances (0:0 and 0:1) receive the same event and log independently.
-   Expected behaviour, not a bug.
+   Expected behavior, not a bug.
 
 -  **Sync-source change:** the late-hit state (``bSyncPulseReceived``,
    ``lGlobalSamplesSinceSync``, ``lLastSyncPeriodSamples``) is reset to its initial
@@ -2253,7 +2253,7 @@ additions to support the late-hit tests:
      - Enables the sync buffer injection above.
    * - ``TestLooper::process_count`` (``volatile int``, public)
      - Incremented at the top of every ``run()`` call.  Python tests busy-wait
-       on this to synchronise with exact JACK callback counts rather than using
+       on this to synchronize with exact JACK callback counts rather than using
        ``time.sleep()``, making timing independent of JACK period size.
    * - ``TestLooper::get_buffer_size()`` (returns ``int``)
      - Returns ``_buffersize`` (JACK period size in samples).  Return type is
@@ -2375,7 +2375,7 @@ timing uses ``wait_buffers(n)`` (busy-wait on ``process_count``) rather than
 Not yet tested
 ~~~~~~~~~~~~~~
 
-The following behaviours are covered by the patch but do not yet have
+The following behaviors are covered by the patch but do not yet have
 automated tests:
 
 -  **Exact T offset after late start.**  The tests verify that ``STATE_RECORD``
@@ -2389,7 +2389,7 @@ automated tests:
 -  **Multiply-end correction** (``multStopInWindow``, guarded by
    ``LATE_HIT_MULTIPLY_CORRECTION``).
 
--  **Two-channel** ``bLateHitBypassed`` behaviour in internal sync mode.  A
+-  **Two-channel** ``bLateHitBypassed`` behavior in internal sync mode.  A
    two-channel ``TestLooper`` (``_chan_count = 2``) and a sync source pointing
    to one of the looper instances would be needed to test this.
 

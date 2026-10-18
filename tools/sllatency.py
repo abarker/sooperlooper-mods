@@ -1317,7 +1317,7 @@ examples:
             -- balancing them on the mic works -- or hold the mic right against
             a speaker playing them, or connect a cable from one of the outputs
             to the input.  With a speaker, keep the mic within a few
-            centimetres: sound takes about 3 ms per metre through the air, and
+            centimeters: sound takes about 3 ms per meter through the air, and
             that would be counted as latency.  Don't wear the headphones: the
             click level is %.2f of full scale.
 

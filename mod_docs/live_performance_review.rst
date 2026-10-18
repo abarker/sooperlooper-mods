@@ -26,7 +26,7 @@ Items are graded on three axes:
 
 - **Severity**: CRITICAL (can crash or silently corrupt loops), HIGH
   (functional incorrectness without crash), MEDIUM (degraded UX, recovery
-  required), LOW (style, structure, defence-in-depth).
+  required), LOW (style, structure, defense-in-depth).
 
 - **Live-performance impact**: 1–5 scale. 5 = will bite during a gig.
   1 = a maintenance / hygiene concern only.
@@ -38,7 +38,7 @@ An item with CRITICAL severity but live-impact 1 is unlikely to matter on
 stage; one with MEDIUM severity and impact 5 should still be addressed
 before a serious performance.
 
-The artefact's intended audience is another agent or developer iterating on
+The artifact's intended audience is another agent or developer iterating on
 this codebase.  Recommendations are stated as direction, not as code.
 
 
@@ -76,7 +76,7 @@ risk characteristics:
 
 3. **RT-safety toggles** (``ALB_RT_SAFE_COND_SIGNAL``,
    ``ALB_TEMPO_ONLY_WHEN_ROLLING``): both are net positive for xrun
-   prevention.  Behavioural trade-offs (tempo changes not propagating
+   prevention.  Behavioral trade-offs (tempo changes not propagating
    when stopped; main-loop responsiveness depends on its existing
    ``timedwait`` timeout) are documented but worth re-evaluating against
    actual session needs.
@@ -95,11 +95,11 @@ the most recent revision):
 - **C2** ✓ IMPLEMENTED (inter-channel asymmetry in internal sync mode):
   ``bLateHitBypassed`` flag set by Looper on slave channels in internal
   sync mode.  Late-hit disabled in internal sync; consistent stock
-  behaviour restored.  Zero JACK regression risk.
+  behavior restored.  Zero JACK regression risk.
 - **C3** DEFERRED (JACK client reconnect / disconnect): real-world risk
   judged low because peer applications also crash on JACK restart;
   improved error reporting deemed sufficient.
-- **C4** N/A (JACK MIDI binding-lock contention): analysed and removed
+- **C4** N/A (JACK MIDI binding-lock contention): analyzed and removed
   from active list.  Lock is never held during normal live performance;
   risk is confined to setup activities.  See C4 section for details.
 - **C5** ✓ IMPLEMENTED (lGlobalSamplesSinceSync overflow): widened to
@@ -194,7 +194,7 @@ together in a subsequent revision.
   still trigger the counter reset and ``bSyncPulseReceived`` flag,
   but do not corrupt the period.
 
-The fix is verified to leave JACK-mode behaviour unchanged when the
+The fix is verified to leave JACK-mode behavior unchanged when the
 sync checkbox is off (the entire late-hit code path is gated on
 ``fSyncMode > 0.0f``).  When the sync checkbox is on, the new fTempo
 path produces a window size that is more stable than the previous
@@ -228,7 +228,7 @@ from the pulse-measured period instead of the fTempo-derived period.
 In a well-synced setup the two values agree closely; in a poorly-synced
 setup (transport jitter, clock skew) they could disagree by a few
 percent, affecting the window size for those specific presses.  This
-is also the behavioural reason the in-source comment "fTempo > 0
+is also the behavioral reason the in-source comment "fTempo > 0
 supersedes anything written here" is technically misleading — the
 comment refers to BLOCK 7 reasserting the value on the *next* buffer,
 not within the same buffer.
@@ -236,7 +236,7 @@ not within the same buffer.
 **Direction for fix**: gate BLOCK 8's
 ``pLS->lLastSyncPeriodSamples = pLS->lGlobalSamplesSinceSync;`` on
 ``fTempo == 0.0f`` so the two paths are mutually exclusive.  Single
-additional condition wrap around an existing line; no behavioural
+additional condition wrap around an existing line; no behavioral
 change in any case BLOCK 7 already handled correctly.  Risk of new
 bug is essentially zero — the change only restricts when an overwrite
 happens, never expands it.
@@ -286,7 +286,7 @@ The three ``withinWindow`` booleans in BLOCKS 9, 10, 11 of plugin.cc
 each gain ``&& !pLS->bLateHitBypassed``.
 
 In internal sync mode: slave's late-hit correction is disabled; both
-channels take the immediate path; behaviour returns to stock
+channels take the immediate path; behavior returns to stock
 SooperLooper (which already achieves sample-accurate alignment via the
 master's ``pfSyncOutput`` pulse on ``STATE_RECORD`` entry).
 
@@ -331,7 +331,7 @@ except for reads/writes.  If the JACK server restarts (user kills it,
 PipeWire-JACK reconfigures, hardware glitch triggers a JACK
 auto-restart), the port handles become invalid.  The engine's next
 ``jack_port_get_buffer()`` call on a stale handle is undefined
-behaviour — most likely a segfault.
+behavior — most likely a segfault.
 
 The stock SooperLooper code does not register a JACK shutdown handler
 either, so a JACK restart kills the engine regardless.  But the new
@@ -364,10 +364,10 @@ For live performance, (a) is the minimum bar.
 C4: JACK MIDI events silently dropped on binding-lock contention
 ----------------------------------------------------------------
 
-**Severity**: LOW (analysed and dropped from active work).
+**Severity**: LOW (analyzed and dropped from active work).
 **Live impact**: effectively 0 in normal use.  **Confidence**: HIGH.
 
-**Status**: N/A — analysed and removed from active list; see section.
+**Status**: N/A — analyzed and removed from active list; see section.
 
 **Original concern**: ``MidiBridge::inject_midi()`` in the RT callback
 uses a ``TentativeLockMonitor`` on ``_bindings_lock``.  If the main
@@ -427,7 +427,7 @@ a multi-day rehearsal rig running continuously could hit it.  More
 concerning is that the moment of wrap is *deterministic*: if the rig
 boots and then sits idle, the wrap will happen at exactly the same
 time every session, which could surface as a mysterious "weird late-hit
-behaviour after exactly 24 hours" report.
+behavior after exactly 24 hours" report.
 
 **Direction for fix**: widen to ``unsigned long long`` (64-bit).
 ``lLastSyncPeriodSamples`` should probably be widened to match.
@@ -651,7 +651,7 @@ the ms cap is the only term that could exceed ``lInputBufSize``.
 That happens when ``g_late_hit_window_ms > 682 ms`` at 48 kHz.
 Capping ``msLimit`` at ``lInputBufSize - 1`` before the fraction
 comparison makes the constraint self-enforcing regardless of what
-the constant is set to.  No behavioural change at the default 100 ms.
+the constant is set to.  No behavioral change at the default 100 ms.
 
 ------
 
@@ -662,10 +662,10 @@ High-priority issues — JACK MIDI
 H1: MIDI Start and first Clock at the same frame offset
 -------------------------------------------------------
 
-**Severity**: N/A — not a real concern; current behaviour is correct.
+**Severity**: N/A — not a real concern; current behavior is correct.
 **Live impact**: 0.  **Confidence**: HIGH.
 
-**Status**: CLOSED — analysed and dismissed.
+**Status**: CLOSED — analyzed and dismissed.
 
 On the stopped→rolling transition, MIDI Start (0xFA) and the first
 clock tick (0xF8) are both written at offset 0 of the JACK MIDI output
@@ -675,8 +675,8 @@ order.
 **Why this is not a problem**: JACK MIDI guarantees that events at the
 same timestamp are delivered in write order.  Start is written first,
 tick second — any downstream JACK client and any physical MIDI interface
-serialising the port will always see Start then Tick in that sequence,
-which is correct MIDI spec behaviour.  A device whose firmware breaks on
+serializing the port will always see Start then Tick in that sequence,
+which is correct MIDI spec behavior.  A device whose firmware breaks on
 Start immediately followed by its first clock tick has a fundamental
 firmware bug that cannot be worked around.
 
@@ -685,7 +685,7 @@ firmware bug that cannot be worked around.
 first clock by one full tick period — approximately 20 ms at 120 BPM.
 A hardware synth or drum machine that uses the first post-Start clock to
 lock its phase would start 20 ms late.  This is a real, audible
-regression; the current behaviour is strictly better.
+regression; the current behavior is strictly better.
 
 ------
 
@@ -693,7 +693,7 @@ H2: Clock continues firing when transport is stopped
 -----------------------------------------------------
 
 **Severity**: N/A — confirmed intentional, matching ALSA.
-**Status**: analysed and closed.
+**Status**: analyzed and closed.
 
 The JACK clock path (BLOCK 9) generates ticks whenever ``_tempo > 0``,
 regardless of transport rolling state.  This was noted as a possible
@@ -709,7 +709,7 @@ thread simply continues clocking at the last known tempo — exactly
 what the JACK path does.
 
 Both paths are continuous clock when tempo is known.  The comment in
-BLOCK 9 ("matching the ALSA clock thread's behaviour") is accurate.
+BLOCK 9 ("matching the ALSA clock thread's behavior") is accurate.
 
 **One genuine JACK-only addition**: the JACK path sends MIDI Stop
 (0xFC) on transport stop transitions.  The ALSA path does not (it has
@@ -822,7 +822,7 @@ R2: ``sl_dbg_open`` data race (residual)
 
 **Status**: CLOSED — not worth fixing.
 
-The unsynchronised ``if (!sl_dbg_file) { fopen(...) }`` pattern in
+The unsynchronized ``if (!sl_dbg_file) { fopen(...) }`` pattern in
 ``sl_dbg_open()`` could in theory allow two threads to both see
 ``sl_dbg_file == NULL`` and both open the log file, producing a
 garbled log.
@@ -890,7 +890,7 @@ R4: ``ALB_TEMPO_ONLY_WHEN_ROLLING`` skips tempo updates when stopped
 **Severity**: N/A — concern does not arise in either relevant scenario.
 **Live impact**: 0.  **Confidence**: HIGH.
 
-**Status**: CLOSED — analysed and dismissed.
+**Status**: CLOSED — analyzed and dismissed.
 
 The concern was that an OSC or GUI tempo change while transport is
 stopped would not be seen by the engine until rolling began, causing
@@ -915,7 +915,7 @@ The two scenarios that matter:
   JackSync slave): the external master (Ardour, Hydrogen, etc.) owns
   the tempo.  OSC tempo commands to SL set ``_tempo`` transiently but
   are overwritten by the master on the first rolling buffer.  This is
-  correct slave behaviour; the OSC command is simply not meaningful in
+  correct slave behavior; the OSC command is simply not meaningful in
   this configuration regardless of the guard.
 
 Confirmed by test: ``oscsend localhost 9951 /sl/engine/set sf tempo
@@ -938,7 +938,7 @@ and related fields is safe because the JACK process callback is
 registered inside ``initialize()`` and the RT thread is therefore
 not running during construction.  A comment has been added to the
 constructor block documenting this lifecycle invariant and noting
-the fail-safe behaviour (silent MIDI absence, no crash) should a
+the fail-safe behavior (silent MIDI absence, no crash) should a
 future refactor change the ordering.
 
 ------
@@ -985,10 +985,10 @@ benefit.  The compile-time ``#define`` is the right mechanism.  Closed.
 D3: Rate ≠ 1.0 playback uses ``run_loops`` without SRC interpolation
 ---------------------------------------------------------------------
 
-**Severity**: LOW (stock behaviour).  **Live impact**: 1.
+**Severity**: LOW (stock behavior).  **Live impact**: 1.
 **Confidence**: HIGH.
 
-**Status**: N/A — confirmed stock behaviour; not a regression.
+**Status**: N/A — confirmed stock behavior; not a regression.
 
 **Where**: looper.cpp BLOCK 5; original stock ``Looper::run()``.
 
@@ -1017,10 +1017,10 @@ Variable-rate playback (Rate port ≠ 1.0) has always been handled
 by ``run_loops()`` using ``dCurrPos`` stepping without SRC
 anti-aliasing.
 
-An earlier audit session incorrectly labelled this a "silent
+An earlier audit session incorrectly labeled this a "silent
 regression introduced by the TriggerLatency wrapper patch" (XRUN 3
 in a previous iteration of this document).  That was wrong: BLOCK 5
-correctly preserved the stock ``run_loops()``-only behaviour; the
+correctly preserved the stock ``run_loops()``-only behavior; the
 rate-dispatch block was commented out before any of these
 modifications existed.  At one point during patching the ``/* */``
 delimiters were accidentally removed, activating the block and
@@ -1030,7 +1030,7 @@ at link time); this was subsequently corrected.
 
 **Current state**: BLOCK 5 calls ``run_loops (offset, nframes)``
 unconditionally, wrapped in the TriggerLatency save/restore.  This
-is the correct and intentional behaviour, matching stock.
+is the correct and intentional behavior, matching stock.
 
 **Direction**: if SRC-quality rate shifting is ever desired, the
 correct path is to implement and test ``run_loops_resampled`` from
@@ -1048,7 +1048,7 @@ D4: No regression test infrastructure
 
 **Status**: OPEN — future work.
 
-There are no automated tests for any of the new behaviour: late-hit,
+There are no automated tests for any of the new behavior: late-hit,
 JACK MIDI in/out, TriggerLatency zeroing, slave sync.  Each change
 has been validated by hand-testing.  This is appropriate for the
 exploratory phase but becomes a liability as the codebase grows.
@@ -1122,7 +1122,7 @@ subsequent iteration and have now been reviewed.
 **D5 is now complete across all eight modified files.**
 
 
-Prioritised improvement roadmap
+Prioritized improvement roadmap
 ================================
 
 The following ordering reflects live-performance risk.  Items earlier
@@ -1139,8 +1139,8 @@ down are appropriate for the next maintenance cycle.
    fTempo (BLOCK 7) with sanity floor in pulse path (BLOCK 8).  The
    most user-visible correctness bug actively present.
 3. **C2** ✓ COMPLETED — ``bLateHitBypassed`` flag; slave late-hit
-   disabled in internal sync mode; consistent with stock behaviour.
-4. **C4** N/A — analysed and dropped; see C4 section.
+   disabled in internal sync mode; consistent with stock behavior.
+4. **C4** N/A — analyzed and dropped; see C4 section.
 5. **C8** N/A — reclassified.  ``pushNewLoopChunk`` cannot return NULL
    at runtime; all memory is pre-allocated at startup.  The
    ``STATE_OFF`` fix is correct and sufficient.  See C8 section.
@@ -1154,11 +1154,11 @@ down are appropriate for the next maintenance cycle.
    called from ``Engine::update_sync_source()``.  Stale period data
    and pulse flags from old sync source are cleared on every
    sync-source change.
-8. **H1** N/A — JACK serialises events at the same offset in write
+8. **H1** N/A — JACK serializes events at the same offset in write
    order; Start always precedes the first tick.  The proposed fix
    (offset the first tick by one period) would introduce ~20 ms of
    phase latency at 120 BPM — a regression, not an improvement.
-   **H2** N/A — confirmed matches ALSA continuous-clock behaviour.
+   **H2** N/A — confirmed matches ALSA continuous-clock behavior.
    **H3** N/A — follows H2; no action needed.
    **R2** N/A — ``sl_dbg_open`` race cannot occur in the standalone
    build; sequential instantiation on the main thread; debug-only
@@ -1195,7 +1195,7 @@ down are appropriate for the next maintenance cycle.
     runtime tuning is wanted.
 18. **D2** N/A — runtime ``SYNCWDEBUG`` toggle not worth the complexity;
     recompile is fast enough when debug output is needed.
-19. **D3** — Rate ≠ 1.0 without SRC is stock SooperLooper behaviour,
+19. **D3** — Rate ≠ 1.0 without SRC is stock SooperLooper behavior,
     not a regression.  If SRC-quality rate shifting is wanted, it
     requires implementing ``run_loops_resampled`` from scratch.
 20. **D4** — runbook + automated tests for stable functionality.
@@ -1203,7 +1203,7 @@ down are appropriate for the next maintenance cycle.
     comments added to all modified blocks; one unguarded ``sigc::trackable``
     base-class addition in ``audio_driver.hpp`` was wrapped.  The trailing-
     space removal in ``plugin.cc`` is whitespace-only; eleven whitespace-
-    normalisation lines in ``audio_driver.hpp`` are semantic no-ops.
+    normalization lines in ``audio_driver.hpp`` are semantic no-ops.
 22. **R1** — lock-free log buffer: confirmed xrun source.  ``SL_LOG_RT``
     uses ``fprintf`` which acquires the C stdio mutex and makes a kernel
     ``write()`` syscall — both can block the RT thread.  ``fflush()`` has
@@ -1311,14 +1311,14 @@ applications similarly; improved error reporting is judged sufficient.
 
 The audit deliberately includes some low-severity items.  They are
 recorded not because they need imminent fixes but because, in
-aggregate, they form the "defence-in-depth" stance appropriate for a
+aggregate, they form the "defense-in-depth" stance appropriate for a
 tool that will be trusted with a live performance.  Choose what to
 take on based on rehearsal context and the next gig's stakes.
 
 A small follow-up item (**C1a**) was introduced when implementing C1:
 BLOCK 7 and BLOCK 8 can both write ``lLastSyncPeriodSamples`` in the
 same buffer, with BLOCK 8 winning when a sync pulse arrives.  The
-behaviour is functionally correct in steady state and self-corrects
+behavior is functionally correct in steady state and self-corrects
 within one buffer, but a one-condition refinement (gating BLOCK 8's
 period capture on ``fTempo == 0.0f``) would make the two paths cleanly
 exclusive and matches the existing in-source comment.  Risk of this

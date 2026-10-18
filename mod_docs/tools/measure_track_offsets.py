@@ -16,7 +16,7 @@ interpolation.  A positive result means the target is late.  Several
 reference files (e.g. kick and snare) are summed.
 
 The lag range must stay under half the spacing of the pattern's
-hits, or a neighbouring hit can win; the report shows the runner-up
+hits, or a neighboring hit can win; the report shows the runner-up
 peak so an ambiguous result is visible.
 
 Usage:
@@ -52,7 +52,7 @@ def onset_strength(x):
 
 
 def xcorr_peak(ref, tgt, max_lag):
-    """Lag (in onset-signal blocks) maximising sum ref[t] * tgt[t + lag]."""
+    """Lag (in onset-signal blocks) maximizing sum ref[t] * tgt[t + lag]."""
     n = 1 << int(np.ceil(np.log2(len(ref) + len(tgt))))
     c = np.fft.irfft(np.conj(np.fft.rfft(ref, n)) * np.fft.rfft(tgt, n), n)
     lags = np.arange(-max_lag, max_lag + 1)
