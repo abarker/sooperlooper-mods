@@ -572,7 +572,7 @@ def session_save_tests():
         try:
             with contextlib.redirect_stdout(out):
                 rc = sllatency.offer_apply_and_save(FakeSL(), args, interactive, 743, 743,
-                                                    608, 880, False)
+                                                    608, 880)
         finally:
             builtins.input = saved[2]
             sys.stdin = saved[3]

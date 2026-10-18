@@ -52,7 +52,7 @@ WIDTH = max(60, min(76, shutil.get_terminal_size((80, 24)).columns - 1))
 # Color only with colorama, on a terminal, and without NO_COLOR set.
 if colorama and sys.stdout.isatty() and "NO_COLOR" not in os.environ:
     _B, _F = colorama.Style.BRIGHT, colorama.Fore
-    HEAD, GOOD, FIX, BAD, ASK = (_B + _F.CYAN, _B + _F.GREEN, _B + _F.YELLOW,
+    HEAD, GOOD, FIX, BAD, ASK = (_B + _F.LIGHTBLUE_EX, _B + _F.GREEN, _B + _F.YELLOW,
                                  _B + _F.RED, _B + _F.MAGENTA)
     _RESET = colorama.Style.RESET_ALL
 else:
@@ -1068,10 +1068,10 @@ def quick_report(args, interactive, sl_ports, sr):
         print()
         say("   Within %.1f ms of the current values." % args.tolerance, GOOD)
     return offer_apply_and_save(sl, args, interactive, il, ol, jack_in, jack_out,
-                                within, what="suggested")
+                                what="suggested")
 
 
-def offer_apply_and_save(sl, args, interactive, il, ol, new_in, new_out, within,
+def offer_apply_and_save(sl, args, interactive, il, ol, new_in, new_out,
                          what="measured best"):
     """Ask (or follow --apply/--save) to apply new values to all loops and
     save them in the session file."""
@@ -1080,7 +1080,7 @@ def offer_apply_and_save(sl, args, interactive, il, ol, new_in, new_out, within,
     if interactive:
         print()
         apply_it = ask("Apply the %s values to SooperLooper now (all "
-                       "loops, autoset off)?" % what, default=not within)
+                       "loops, autoset off)?" % what)
     else:
         apply_it = args.apply
     if not apply_it:
@@ -1643,7 +1643,7 @@ examples:
         """ % blocksize)
 
     return offer_apply_and_save(sl_run.sl, args, interactive, il, ol,
-                                new_in, new_out, within)
+                                new_in, new_out)
 
 if __name__ == "__main__":
     sys.exit(main())
