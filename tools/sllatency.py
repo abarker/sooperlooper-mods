@@ -1239,7 +1239,17 @@ examples:
 
     say("sllatency: audio round-trip and SooperLooper latency check")
     heading("Setup")
-    probe = jack.Client("sllatency_probe", no_start_server=True)
+    # libjack's own lines on a failed connect only repeat the message below.
+    jack.set_error_function(lambda msg: None)
+    jack.set_info_function(lambda msg: None)
+    try:
+        probe = jack.Client("sllatency_probe", no_start_server=True)
+    except jack.JackOpenError:
+        sys.exit("sllatency: no JACK server is running; start JACK (and "
+                 "SooperLooper, to check it) first.")
+    finally:
+        jack.set_error_function(None)
+        jack.set_info_function(None)
     sr = probe.samplerate
     blocksize = probe.blocksize
     # SooperLooper's port latencies: loop 0's own ports and the common ones.
@@ -1668,3 +1678,5 @@ if __name__ == "__main__":
         else:
             say("sllatency: stopped.  SooperLooper's settings are as they were.")
         sys.exit(130)
+    except jack.JackError as e:
+        sys.exit("sllatency: lost JACK (%s); has the server stopped?" % e)
