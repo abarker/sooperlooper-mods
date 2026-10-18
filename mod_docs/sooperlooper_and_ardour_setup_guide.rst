@@ -500,7 +500,8 @@ It shows the values to set, and offers to apply them to SooperLooper and
 save them in its session file, which you choose in a file picker (a backup
 copy is kept next to it).  It needs the Python packages ``numpy`` and
 ``jack`` (on Ubuntu, ``python3-numpy`` and ``python3-jack-client``), and
-``python3-tk`` for the file picker.  Use ``sllatency --no-sl`` to check JACK alone,
+``python3-tk`` for the file picker; with ``python3-colorama``, results
+and questions are in color.  Use ``sllatency --no-sl`` to check JACK alone,
 for example for Ardour without SooperLooper.
 
 **jack_iodelay:** connect one of the interface's outputs back to one of its

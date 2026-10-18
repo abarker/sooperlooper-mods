@@ -14,7 +14,8 @@ to the sample and nothing depends on a DAW.  See "New Tool: sllatency" in
 mod_docs/late_hit_patch_summary.rst and section 2.7 of
 mod_docs/sooperlooper_and_ardour_setup_guide.rst.
 
-Requires JACK, Python 3, numpy and the Python ``jack`` module.
+Requires JACK, Python 3, numpy and the Python ``jack`` module; with
+``colorama`` installed, results and questions are shown in color.
 """
 import argparse
 import ctypes
@@ -37,22 +38,45 @@ try:
 except ImportError:
     sys.exit("sllatency: needs the Python 'jack' module (pip install JACK-Client)")
 
+try:
+    import colorama
+except ImportError:
+    colorama = None
+
 
 # ---------------------------------------------------------------- messages
 
 # Narrow enough to read comfortably even in a wide terminal.
 WIDTH = max(60, min(76, shutil.get_terminal_size((80, 24)).columns - 1))
 
+# Color only with colorama, on a terminal, and without NO_COLOR set.
+if colorama and sys.stdout.isatty() and "NO_COLOR" not in os.environ:
+    _B, _F = colorama.Style.BRIGHT, colorama.Fore
+    HEAD, GOOD, FIX, BAD, ASK = (_B + _F.CYAN, _B + _F.GREEN, _B + _F.YELLOW,
+                                 _B + _F.RED, _B + _F.MAGENTA)
+    _RESET = colorama.Style.RESET_ALL
+else:
+    HEAD = GOOD = FIX = BAD = ASK = _RESET = ""
 
-def say(msg=""):
+
+def paint(text, style):
+    """Each line of text in a style (HEAD, GOOD, FIX, BAD or ASK); plain
+    when color is off.  Wrap before painting: the codes have no width."""
+    if not style:
+        return text
+    return "\n".join(style + line + _RESET for line in text.split("\n"))
+
+
+def say(msg="", style=""):
     """Print a line, wrapped to the terminal; continuation lines keep the
     line's own indent."""
     if len(msg) <= WIDTH:
-        print(msg, flush=True)
+        print(paint(msg, style), flush=True)
         return
     indent = " " * (len(msg) - len(msg.lstrip()))
-    print(textwrap.fill(msg.strip(), WIDTH, break_on_hyphens=False, initial_indent=indent,
-                        subsequent_indent=indent), flush=True)
+    print(paint(textwrap.fill(msg.strip(), WIDTH, break_on_hyphens=False,
+                              initial_indent=indent, subsequent_indent=indent),
+                style), flush=True)
 
 
 def say_field(label, value):
@@ -62,22 +86,27 @@ def say_field(label, value):
                         subsequent_indent=" " * len(head)), flush=True)
 
 
-def explain(msg):
+def explain(msg, style=""):
     """A short explanation, reflowed to the terminal width.  Blank lines in
     the text separate paragraphs."""
     paras = textwrap.dedent(msg).strip().split("\n\n")
     for i, para in enumerate(paras):
         if i:
             print()
-        print(textwrap.fill(" ".join(para.split()), WIDTH, break_on_hyphens=False,
-                            initial_indent="   ", subsequent_indent="   "),
-              flush=True)
+        print(paint(textwrap.fill(" ".join(para.split()), WIDTH, break_on_hyphens=False,
+                                  initial_indent="   ", subsequent_indent="   "),
+                    style), flush=True)
 
 
 def heading(title):
     print()
-    print(title)
-    print("-" * len(title), flush=True)
+    print(paint(title, HEAD))
+    print(paint("-" * len(title), HEAD), flush=True)
+
+
+def prompt(text):
+    """input() with the prompt shown as a question to answer."""
+    return input(paint(text, ASK) + " ")
 
 
 # ------------------------------------------------------ JACK port latency
@@ -718,7 +747,7 @@ def choose_outputs(client, interactive, sl_dests=()):
     """ % (" -- to check SooperLooper, the ones it is heard through"
            if sl_dests else ""))
     print()
-    ans = input("   Outputs: ").strip()
+    ans = prompt("   Outputs:").strip()
     print()
     picked = [names[int(t) - 1] for t in ans.replace(",", " ").split()
               if t.isdigit() and 1 <= int(t) <= len(names)]
@@ -733,8 +762,8 @@ def ask(question, default=False):
                          initial_indent="   ", subsequent_indent="   ")
     lines = text.split("\n")
     for line in lines[:-1]:
-        print(line)
-    ans = input(lines[-1] + " ").strip().lower()
+        print(paint(line, ASK))
+    ans = prompt(lines[-1]).strip().lower()
     return default if not ans else ans.startswith("y")
 
 
@@ -790,7 +819,7 @@ CONFIG = os.path.join(os.path.expanduser("~"), ".sooperlooper", "sllatency.conf"
 def pick_session_file(initial):
     """Show a file picker for the session file, starting at `initial` (the
     file used last time) or the home folder.  Returns the chosen path, ""
-    if cancelled, or None when no picker can be shown: no tkinter
+    if canceled, or None when no picker can be shown: no tkinter
     (Ubuntu package python3-tk), or no display (e.g. over SSH).  Uses
     tkinter, which comes with Python on Windows and macOS."""
     # On Linux and other X11/Wayland systems a window needs a display;
@@ -912,11 +941,11 @@ def jack_report(js, cap, play, rt, tolerance_ms, sr):
     print()
     if abs(ms(diff)) <= tolerance_ms:
         say("   JACK: off by %+.1f samples (%+.2f ms), within %.1f ms -- nothing "
-            "to change." % (diff, ms(diff), tolerance_ms))
+            "to change." % (diff, ms(diff), tolerance_ms), GOOD)
         return
     total = int(round(diff))
     say("   JACK: off by %+.1f samples (%+.2f ms): its latency settings are %s."
-        % (diff, ms(diff), "too low" if diff > 0 else "too high"))
+        % (diff, ms(diff), "too low" if diff > 0 else "too high"), FIX)
     print()
     if have:
         new_i, new_o = ei + total // 2, eo + total - total // 2
@@ -1037,7 +1066,7 @@ def quick_report(args, interactive, sl_ports, sr):
     within = abs(ms((jack_in + jack_out) - (il + ol))) <= args.tolerance
     if within:
         print()
-        say("   Within %.1f ms of the current values." % args.tolerance)
+        say("   Within %.1f ms of the current values." % args.tolerance, GOOD)
     return offer_apply_and_save(sl, args, interactive, il, ol, jack_in, jack_out,
                                 within, what="suggested")
 
@@ -1062,10 +1091,11 @@ def offer_apply_and_save(sl, args, interactive, il, ol, new_in, new_out, within,
     time.sleep(0.3)
     got = (sl.get("input_latency", loop=0), sl.get("output_latency", loop=0))
     if got != (float(new_in), float(new_out)):
-        say("   SooperLooper reports %s after applying -- not what was set." % (got,))
+        say("   SooperLooper reports %s after applying -- not what was set." % (got,), BAD)
         return 1
     print()
-    say("   Applied: input_latency %d, output_latency %d on all loops." % (new_in, new_out))
+    say("   Applied: input_latency %d, output_latency %d on all loops." % (new_in, new_out),
+        GOOD)
 
     print()
     explain("""
@@ -1080,7 +1110,7 @@ def offer_apply_and_save(sl, args, interactive, il, ol, new_in, new_out, within,
             return 0
         path = args.session_file
         if not path:
-            say("   --save needs --session-file; nothing saved.")
+            say("   --save needs --session-file; nothing saved.", BAD)
             return 1
     else:
         print()
@@ -1096,25 +1126,25 @@ def offer_apply_and_save(sl, args, interactive, il, ol, new_in, new_out, within,
                 say("   Choose the file in the window that opens...")
                 chosen = pick_session_file(known)
             if chosen is None:
-                ans = input("   Session file%s: " % (" [%s]" % known if known else "")).strip()
+                ans = prompt("   Session file%s:" % (" [%s]" % known if known else "")).strip()
                 chosen = os.path.expanduser(ans) if ans else (known or "")
             path = chosen
         if not path:
             say("   No session file chosen; nothing saved.")
             return 0
     if not os.path.isfile(path):
-        say("   %s does not exist; nothing saved." % path)
+        say("   %s does not exist; nothing saved." % path, BAD)
         return 1
     try:
         real, backup, n = save_latency_to_session(path, new_in, new_out)
     except ValueError:
         say("   %s has no latency values to change (is it a SooperLooper session "
-            "file?); nothing saved." % path)
+            "file?); nothing saved." % path, BAD)
         return 1
     remember_session_file(path)
     say("   Saved in %s%s (%d loop%s); the old file is %s."
         % (path, "" if real == os.path.abspath(path) else " (the file it links to, %s)" % real,
-           n, "" if n == 1 else "s", backup))
+           n, "" if n == 1 else "s", backup), GOOD)
     return 0
 
 
@@ -1325,7 +1355,7 @@ examples:
         sl_run.describe()
     if interactive:
         print()
-        input("   Press Enter when ready... ")
+        prompt("   Press Enter when ready...")
 
     if len(candidates) > 1:
         heading("Finding the mic input")
@@ -1504,7 +1534,7 @@ examples:
                 after SooperLooper: its output is heard by two routes at
                 different delays, which smears or doubles the loop.  Check
                 that only one route reaches the headphones.
-            """ % (second, ms(second)))
+            """ % (second, ms(second)), BAD)
     else:
         downstream = reported_down or 0
         if probe_targets:
@@ -1513,7 +1543,7 @@ examples:
                 is not heard at this mic -- its monitoring is disconnected,
                 muted, turned down, or goes to other speakers.  Using the
                 latency JACK reports for it instead (%d samples).
-            """ % downstream)
+            """ % downstream, FIX)
         elif monitor_note:
             explain(monitor_note + "  Using the latency JACK reports for it "
                     "instead (%d samples)." % downstream)
@@ -1532,7 +1562,8 @@ examples:
     heard = e + downstream
     print()
     say("   As heard, loops play %+.1f samples (%+.2f ms) %s."
-        % (heard, ms(heard), "late" if heard > 0 else "early"))
+        % (heard, ms(heard), "late" if heard > 0 else "early"),
+        GOOD if abs(ms(heard)) <= args.tolerance else FIX)
 
     l0 = sl_run.loop0
     if not l0:
@@ -1603,7 +1634,7 @@ examples:
     within = abs(ms(heard)) <= args.tolerance
     if within:
         print()
-        say("   Within %.1f ms -- nothing needs changing." % args.tolerance)
+        say("   Within %.1f ms -- nothing needs changing." % args.tolerance, GOOD)
     print()
     if not l0.get("autoset_latency"):
         explain("""

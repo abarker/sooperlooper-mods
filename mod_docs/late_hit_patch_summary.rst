@@ -822,7 +822,9 @@ script and needs ``numpy`` and the Python ``jack`` module (Ubuntu packages
 ``python3-numpy`` and ``python3-jack-client``; or ``pip install numpy
 JACK-Client``).  Choosing the session file in a file picker also needs
 tkinter (Ubuntu package ``python3-tk``; included with Python on Windows and
-macOS); without it the file name is typed instead.  The source is
+macOS); without it the file name is typed instead.  With ``colorama``
+installed (``python3-colorama``), results and the questions to answer are
+shown in color on a terminal (not when ``NO_COLOR`` is set).  The source is
 ``tools/sllatency.py``.
 
 **Running it.**  Start JACK and SooperLooper with the usual session, and
