@@ -23,6 +23,7 @@ import ctypes.util
 import os
 import re
 import shutil
+import signal as _signal   # "signal" is the click signal in main()
 import socket
 import subprocess
 import struct
@@ -107,6 +108,10 @@ def heading(title):
 def prompt(text):
     """input() with the prompt shown as a question to answer."""
     return input(paint(text, ASK) + " ")
+
+
+# Latencies applied to the running SooperLooper, for the message on Ctrl-C.
+_applied = None
 
 
 # ------------------------------------------------------ JACK port latency
@@ -1096,6 +1101,8 @@ def offer_apply_and_save(sl, args, interactive, il, ol, new_in, new_out,
     print()
     say("   Applied: input_latency %d, output_latency %d on all loops." % (new_in, new_out),
         GOOD)
+    global _applied
+    _applied = (new_in, new_out)
 
     print()
     explain("""
@@ -1421,7 +1428,12 @@ examples:
             loop_len = sl_run.sl.get("loop_len", loop=sl_run.index)
     finally:
         if sl_run:
-            sl_run.restore()
+            # A second Ctrl-C must not cut the restore short.
+            old = _signal.signal(_signal.SIGINT, _signal.SIG_IGN)
+            try:
+                sl_run.restore()
+            finally:
+                _signal.signal(_signal.SIGINT, old)
 
     ms = lambda f: f * 1000.0 / sr
     heading("Result: audio interface" if hardware else "Result: delay through the chain")
@@ -1646,4 +1658,13 @@ examples:
                                 new_in, new_out)
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print()
+        if _applied:
+            say("sllatency: stopped.  SooperLooper keeps the applied latencies "
+                "(input %d, output %d) until it restarts; nothing was saved." % _applied)
+        else:
+            say("sllatency: stopped.  SooperLooper's settings are as they were.")
+        sys.exit(130)
