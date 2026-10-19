@@ -545,7 +545,11 @@ leave that out when working out what to enter here.
 
 **Using sllatency:** leave the fields as they are and run it.  It shows
 JACK's current values beside the measured round trip and, if they
-disagree, the new values to enter in these two fields.
+disagree, the new values to enter in these two fields -- the values
+themselves, not amounts to add.  It can read the current values only
+when JACK is started through jackdbus.  Otherwise it gives the total change instead, as a signed number of
+samples: add it to the current input and output values, shared between
+the two.
 
 **Using jack_iodelay:** set both fields to zero first, then connect a patch
 cable from an output back to an input and run ``jack_iodelay``. It measures
