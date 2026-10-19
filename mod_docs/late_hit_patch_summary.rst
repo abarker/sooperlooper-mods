@@ -1679,10 +1679,10 @@ downbeat played to the drums you hear is recorded later than that.
 Without sync, about the first 15 ms of the loop's opening is cut.  It is
 the same trade SooperLooper already makes after a record.
 
-**Not covered** (probably the same bug, left for later): playback-sync
+**Not covered** (the same bug, left for later): playback-sync
 re-alignment (``playback_sync``), which snaps a playing loop to the top
-of its buffer at a sync point.  Its check for being near the loop start
-compares buffer positions too, so it needs measuring before a fix.
+of its buffer at a sync point.  Measured: with it on, loops play the
+input plus output latency behind the beat (see `Known Issues and Future Work`_).
 
 **Guarded by a compile-time flag.**  ``RESTART_POSITION_FIX``
 (``plugin.cc``, default ``1``).  Set it to ``0`` and rebuild to revert to
@@ -2182,13 +2182,13 @@ Known Issues and Future Work
    change doesn't realign, so neither helps.  A fix is designed but not
    built.
 
--  **Playback sync may play loops late (likely stock, not measured).**
+-  **Playback sync plays loops late (stock bug, not fixed yet).**
    With ``playback_sync`` on, SooperLooper snaps a playing loop to the top
    of its buffer at a sync point, without the input plus output latency
    offset that the restart fix adds (see `Restarts Now Play in Time`_).
-   If so, the loop sits that far behind the beat after each snap.  Not
-   yet measured; its check for being near the loop start compares buffer
-   positions too, so it needs a probe before a fix.
+   Measured on stock and on this fork: every loop then plays exactly the
+   input plus output latency behind the beat (31 ms at 743/743), from its
+   first repeat on.  Leave ``playback_sync`` off until it is fixed.
 
 -  **Only tested on Ubuntu 24.04:** no other environments yet tested.
 
