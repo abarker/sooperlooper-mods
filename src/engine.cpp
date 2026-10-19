@@ -1038,10 +1038,16 @@ Engine::process (nframes_t nframes)
 	// it to split the audio buffer at the exact sample of the command —
 	// giving sample-accurate trigger timing for JACK MIDI clients.
 	//
-	// Thread-safety note: on a correctly configured RT Linux system the
-	// process() callback runs at SCHED_FIFO priority and cannot be preempted
-	// by the non-RT ALSA MIDI thread, so there is at most one writer to
-	// _midi_event_queue at any given moment during this call.
+	// Thread-safety note: the ALSA MIDI thread writes _midi_event_queue too,
+	// and the two can run at once (other cores, or this callback preempting
+	// it mid-write), so priority does not keep them apart.  What does, in
+	// stock 1.7.9: MidiBridge::queue_midi() holds a try-lock on its bindings
+	// (_bindings_lock) for the whole lookup and push, so there is at most one
+	// writer at a time.  An event that finds the lock taken is dropped, so
+	// it never blocks here: of two arriving on both inputs within the same
+	// few microseconds, one is lost, and so is any arriving while the engine
+	// thread holds the lock to learn, add, remove, load, save or list
+	// bindings (the GUI's MIDI bindings window lists them).
 	if (_jack_midi_in_port && _midi_bridge) {
 		void * midi_buf = jack_port_get_buffer(_jack_midi_in_port, nframes);
 		if (midi_buf) {
