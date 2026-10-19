@@ -696,17 +696,6 @@ def output_feeds(client):
             for p in client.get_ports(is_physical=True, is_audio=True, is_input=True)}
 
 
-def suggest_outputs(feeds):
-    """Guess the outputs the performer hears: those a DAW's master bus
-    feeds, else the (up to two) most-fed outputs, else the first two."""
-    names = list(feeds)
-    master = [n for n in names if any("master" in f.lower() for f in feeds[n])]
-    if master:
-        return master
-    busy = [n for n in sorted(names, key=lambda n: -len(feeds[n])) if feeds[n]][:2]
-    return sorted(busy, key=names.index) if busy else names[:2]
-
-
 def sl_heard_outputs(feeds, sl_dests):
     """The physical outputs SooperLooper's loop is heard through: those its
     output feeds directly, or through a DAW bus -- a destination named
@@ -722,19 +711,17 @@ def sl_heard_outputs(feeds, sl_dests):
 
 
 def choose_outputs(client, interactive, sl_dests=()):
+    """The outputs to play the click on.  The default (marked *) is only
+    ever the outputs SooperLooper's loop 1 is traced to; when it can't be
+    traced there is no default, rather than a guess."""
     feeds = output_feeds(client)
     names = list(feeds)
-    sl_heard = sl_heard_outputs(feeds, sl_dests) if sl_dests else []
-    guess = sl_heard or suggest_outputs(feeds)
-    if sl_heard:
+    guess = sl_heard_outputs(feeds, sl_dests) if sl_dests else []
+    if guess:
         say("   Physical outputs, and what feeds each (* = the ones SooperLooper's "
             "loop 1 is heard through):")
-    elif sl_dests:
-        say("   Physical outputs, and what feeds each (* = suggested: where "
-            "SooperLooper's loop 1 is heard could not be traced through JACK, so "
-            "these are a guess -- what a DAW's master feeds, else the busiest):")
     else:
-        say("   Physical outputs, and what feeds each (* = suggested for the click):")
+        say("   Physical outputs, and what feeds each:")
     print()
     for i, n in enumerate(names, 1):
         say("   %s %d  %s" % ("*" if n in guess else " ", i, n))
@@ -743,20 +730,34 @@ def choose_outputs(client, interactive, sl_dests=()):
                             initial_indent="          <- " if f else "          ",
                             subsequent_indent="             "), flush=True)
     if not interactive:
+        if not guess:
+            sys.exit("sllatency: no default outputs (%s); give --out"
+                     % ("SooperLooper's loop 1 could not be traced to an output"
+                        if sl_dests else "nothing to trace them from"))
         return guess
     print()
+    if guess:
+        how = "Press Enter for the * outputs, or type numbers (for example: 3 4)."
+    elif sl_dests:
+        how = ("Where SooperLooper's loop 1 is heard could not be traced through "
+               "JACK (it follows direct connections and Ardour-style buses), so "
+               "there is no default: type numbers (for example: 3 4).")
+    else:
+        how = "Type numbers (for example: 3 4)."
     explain("""
         The click is played on these outputs and picked up by the mic, so
-        choose outputs the headphones or speaker by the mic play%s.  Press
-        Enter for the * outputs, or type numbers (for example: 3 4).
+        choose outputs the headphones or speaker by the mic play%s.  %s
     """ % (" -- to check SooperLooper, the ones it is heard through"
-           if sl_dests else ""))
-    print()
-    ans = prompt("   Outputs:").strip()
-    print()
-    picked = [names[int(t) - 1] for t in ans.replace(",", " ").split()
-              if t.isdigit() and 1 <= int(t) <= len(names)]
-    return picked or guess
+           if sl_dests else "", how))
+    while True:
+        print()
+        ans = prompt("   Outputs:").strip()
+        picked = [names[int(t) - 1] for t in ans.replace(",", " ").split()
+                  if t.isdigit() and 1 <= int(t) <= len(names)]
+        if picked or guess:
+            print()
+            return picked or guess
+        say("   Type the numbers of one or more outputs from the list.", FIX)
 
 
 def ask(question, default=False):
@@ -1188,7 +1189,9 @@ examples:
   sllatency --yes --out system:playback_1     no questions, report only""")
     ap.add_argument("--out", action="append", metavar="PORT",
                     help="JACK port to play the click to (repeatable).  Default: "
-                         "ask, suggesting the outputs a DAW's master feeds.")
+                         "ask, suggesting the outputs SooperLooper's loop 1 is "
+                         "traced to (directly or through an Ardour-style bus); "
+                         "if it can't be traced there is no suggestion.")
     ap.add_argument("--in", dest="inp", metavar="PORT",
                     help="JACK port the click comes back on.  Default: the "
                          "capture port feeding SooperLooper's loop 1 -- if "
@@ -1227,8 +1230,9 @@ examples:
     ap.add_argument("--no-sl", action="store_true",
                     help="measure the round trip only; leave SooperLooper alone")
     ap.add_argument("--yes", action="store_true",
-                    help="no questions: use the suggested outputs, and apply or "
-                         "save only if --apply / --save are given")
+                    help="no questions: use the suggested outputs (give --out if "
+                         "there are none), and apply or save only if --apply / "
+                         "--save are given")
     ap.add_argument("--apply", action="store_true",
                     help="with --yes: apply the recommended SooperLooper values")
     ap.add_argument("--save", action="store_true",

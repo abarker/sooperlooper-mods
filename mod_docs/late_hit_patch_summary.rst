@@ -835,8 +835,9 @@ muted.  Then run ``sllatency`` and follow the prompts:
    play the click on.  The suggested ones (marked ``*``) are the outputs
    SooperLooper's loop 1 is heard through: connected directly, or through
    a DAW bus named in Ardour's style (``BUS/audio_in N`` to
-   ``BUS/audio_out N``).  If that cannot be traced, it suggests what a
-   DAW's master bus feeds, and says the suggestion is a guess.
+   ``BUS/audio_out N``).  If that cannot be traced -- for example with
+   ``--no-sl``, with loop 1 unconnected, or with a DAW that names its
+   ports differently -- nothing is suggested, and you type the numbers.
 2. Put the headphones fed by those outputs on or right next to the mic
    loop 1 records from -- balancing them on the mic works -- or hold the
    mic right against a speaker, or connect a cable from an output to that
@@ -968,8 +969,9 @@ a starting point, not a measurement.
    * - ``--no-sl``
      - Measure the round trip only; leave SooperLooper alone.
    * - ``--yes``
-     - No questions: use the suggested outputs; apply or save only with
-       ``--apply`` / ``--save``.
+     - No questions: use the suggested outputs (give ``--out`` when there
+       are none, or it stops); apply or save only with ``--apply`` /
+       ``--save``.
    * - ``--apply``, ``--save``
      - With ``--yes``: apply the measured-best values; with ``--save`` and
        ``--session-file`` too, also save them in that session file.

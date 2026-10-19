@@ -712,26 +712,8 @@ def jack_report_tests():
 
 def suggest_tests():
     """Output suggestion, from JACK's routing (no server needed)."""
-    rig = {  # this rig's routing, 2026-09-24
-        "system:playback_1": ["PipeWire:playback_FL", "ardour:Master/audio_out 1",
-                              "ardour:voc_mon/audio_out 1"],
-        "system:playback_2": ["PipeWire:playback_FR", "ardour:Master/audio_out 2",
-                              "ardour:voc_mon/audio_out 2"],
-        "system:playback_3": [],
-        "system:playback_4": ["ardour:SL_vol_mon/audio_out 1", "ardour:SL_vol_mon/audio_out 2"],
-    }
-    no_master = {"system:playback_1": [], "system:playback_2": ["hydrogen:out_L"],
-                 "system:playback_3": ["hydrogen:out_R", "x:y"], "system:playback_4": []}
-    nothing = {"system:playback_1": [], "system:playback_2": [], "system:playback_3": []}
-    cases = [(rig, ["system:playback_1", "system:playback_2"]),
-             (no_master, ["system:playback_2", "system:playback_3"]),
-             (nothing, ["system:playback_1", "system:playback_2"])]
+    import io, contextlib
     fails = 0
-    for feeds, want in cases:
-        got = sllatency.suggest_outputs(feeds)
-        ok = got == want
-        fails += not ok
-        print("%s output suggestion: %s" % ("PASS" if ok else "FAIL", got))
     # Checking SooperLooper: suggest the outputs its loop is heard through,
     # followed through a DAW bus (this rig, 2026-09-26) or wired directly.
     rig2 = {"system:playback_1": ["ardour:Master/audio_out 1"],
@@ -749,6 +731,26 @@ def suggest_tests():
         ok = got == want
         fails += not ok
         print("%s outputs SooperLooper is heard through: %s" % ("PASS" if ok else "FAIL", got))
+    # No questions: the traced outputs, or no default at all (exit asking
+    # for --out) -- never a guess from a master bus or the busiest outputs.
+    real = sllatency.output_feeds
+    try:
+        for feeds, d, want in ((rig2, dests, ["system:playback_3", "system:playback_4"]),
+                               (rig2, ["ardour:elsewhere/audio_in 1"], SystemExit),
+                               (rig2, [], SystemExit)):
+            sllatency.output_feeds = lambda client, f=feeds: f
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    got = sllatency.choose_outputs(None, False, d)
+            except SystemExit as e:
+                got = SystemExit
+                msg = str(e)
+            ok = got == want and (got != SystemExit or "--out" in msg)
+            fails += not ok
+            print("%s outputs with no questions: %s" % ("PASS" if ok else "FAIL",
+                  "exit asking for --out" if got == SystemExit else got))
+    finally:
+        sllatency.output_feeds = real
     return fails
 
 

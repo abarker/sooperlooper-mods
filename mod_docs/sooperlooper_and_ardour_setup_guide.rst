@@ -488,7 +488,8 @@ The easiest is this fork's ``sllatency`` tool; the other two are manual.
 **The sllatency tool:** installed with SooperLooper (``make install``).
 Start JACK, SooperLooper and Ardour as usual, leave loop 1 empty or muted,
 and run ``sllatency`` in a terminal.  It asks which outputs to play a click
-on -- suggesting the ones SooperLooper is heard through -- and then asks
+on, marking the ones SooperLooper is heard through when it can trace them
+(with another DAW it may not, and you type the numbers), and then asks
 you to balance the headphones on the mic loop 1 records from (or hold the
 mic right against a speaker, or connect a cable from an output to that
 input).  Keep the room quiet while it runs -- turn down or switch off the
