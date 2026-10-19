@@ -137,11 +137,12 @@ item links to its full description.
   See `Quantized Pause from Muted Now Resolves to Paused`_ in the appendix.
 
 - **Restart timing fix.** A restart (``trigger``, or ``mute_trigger``
-  from Mute) or a oneshot (``once``) now plays the loop in time.  Stock 1.7.9 restarts it late by
-  the input plus output latency (31 ms at 743/743), with sync on too, so
-  the loop then sits that far behind the drums until the next restart.
-  Controlled by the ``TRIGGER_LATENCY_FIX`` build flag (on).  See
-  `Restarts Now Play in Time`_ in the appendix.
+  from Mute) or a oneshot (``once``) now plays the loop in time.  Stock
+  1.7.9 starts it late by the input plus output latency (31 ms at
+  743/743), with sync on too, so the loop then sits that far behind the
+  drums until the next restart.  Controlled by the
+  ``TRIGGER_LATENCY_FIX`` build flag (on).  See `Restarts Now Play in
+  Time`_ in the appendix.
 
 - **Adjustable window.** How late a press can be and still count as on
   time is set in milliseconds, optionally also capped at a fraction of the
@@ -2176,6 +2177,14 @@ Known Issues and Future Work
    stay off, so re-record them.  Pause doesn't relocate, and a tempo
    change doesn't realign, so neither helps.  A fix is designed but not
    built.
+
+-  **Playback sync may play loops late (likely stock, not measured).**
+   With ``playback_sync`` on, SooperLooper snaps a playing loop to the top
+   of its buffer at a sync point, without the input plus output latency
+   offset that the restart fix adds (see `Restarts Now Play in Time`_).
+   If so, the loop sits that far behind the beat after each snap.  Not
+   yet measured; its check for being near the loop start compares buffer
+   positions too, so it needs a probe before a fix.
 
 -  **Only tested on Ubuntu 24.04:** no other environments yet tested.
 

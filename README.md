@@ -3,8 +3,8 @@
 This is a modified version of SooperLooper which adds late-hit correction
 for record, mute/unmute, and multiply operations, two new commands around
 recording safety, direct JACK MIDI ports, JACK sync that stays on the
-beat through tempo changes, and a standalone at-a-distance loop-state
-display.
+beat through tempo changes, a fix for restarts that play late, and a
+standalone at-a-distance loop-state display.
 
 **Late-hit correction.** When sync is active, a press that lands within a
 configurable window after a sync boundary is corrected back to that
@@ -13,6 +13,12 @@ Mute/Unmute, and Multiply end. The window defaults to 100ms, narrowable to
 a fraction of the current quantize cycle, and is configurable via the
 session file or live over OSC. Also fixes a stock 1.7.9 bug where a
 quantized Pause press while Muted resolved to Playing instead of Paused.
+
+**Restarts in time.**  Fixes a stock 1.7.9 bug: a restart (`trigger`, or
+`mute_trigger` from Mute) or a oneshot (`once`) started the loop late by
+SooperLooper's input plus output latency (31 ms at 743/743), with sync on
+too, leaving it that far behind the drums until the next restart.  They
+now start in time, as playback after a record already does.
 
 **`cancel_record_mute`, `cancel_overdub_undo` and record failsafe.**  Plain `record` already
 carries a loop from recording into play on its own — that part needs
