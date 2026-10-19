@@ -6,6 +6,8 @@ more precise:
 
 - a Record start or stop, Mute or Unmute, or Multiply-end press that lands a
   moment after the beat counts as on time, instead of waiting a whole cycle;
+- a restart (``trigger``, or ``mute_trigger`` from Mute) plays the loop in
+  time, where stock restarts it late by the input plus output latency;
 - when synced to JACK transport, loops stay on the transport master's beat
   through tempo changes;
 - SooperLooper can take commands, and send MIDI clock, over JACK MIDI
