@@ -8,7 +8,9 @@ that what is heard lines up with what was played; stock added nothing on
 a restart, so a restarted loop played IL + OL behind.  With the fix, every
 trigger into play starts at IL + OL -- immediate, in the relative-sync
 slack window, or after waiting for a sync pulse -- except from Record and
-TrigStop, where MULTI_TRIGGER already adds it (must not be doubled).
+TrigStop, where MULTI_TRIGGER already adds it (must not be doubled).  A
+oneshot had the same bug and gets the same offset, immediate or synced,
+and must still end Muted after one pass.
 
 Positions are read from the LoopPosition control (dCurrPos / sample rate,
 updated every buffer).  A command acts at the start of the next buffer, so
@@ -173,6 +175,45 @@ class TestTriggerLatency(TriggerLatencyTestCase):
         self.wait_buffers(1)
         self.assertState("Playing")
         self.assertStartsAt(IL + OL, 3, "trigger ending a record")
+
+    def testOneShotFromMute_StartsAtLatency(self):
+        """Immediate oneshot (sync off) from Mute starts at IL + OL."""
+        self.mute_it()
+        self.engine.request("ONESHOT")
+        self.wait_buffers(1)
+        self.assertState("OneShot")
+        self.assertStartsAt(IL + OL, 3, "oneshot from Mute")
+
+    def testSyncedOneShot_StartsAtLatencyOnPulse(self):
+        """A synced oneshot waits for the pulse, then starts at IL + OL."""
+        self.mute_it()
+        self.looper.set_port(test_engine.Sync, 1.0)
+        self.wait_buffers(2)
+        self.engine.request("ONESHOT")
+        self.wait_buffers(4)
+        self.assertState("Muted", "synced oneshot should wait for the pulse")
+        self.prime_pulse()
+        self.assertState("OneShot")
+        self.assertStartsAt(IL + OL, self.PULSE_BUFS + 2, "synced oneshot at the pulse")
+
+    def testOneShot_StillEndsMuted(self):
+        """Starting IL + OL in, a oneshot still plays to the loop's end and
+        then mutes."""
+        self.mute_it()
+        self.engine.request("ONESHOT")
+        self.wait_buffers(self.record_bufs() + 10)
+        self.assertState("Muted", "oneshot should end Muted after one pass")
+
+    def testOneShotEndingRecord_NotDoubled(self):
+        """A oneshot that ends a record keeps the stock offset (IL + OL
+        once), not twice."""
+        self.looper.input_inject_value = 0.5
+        self.engine.request("RECORD")
+        self.wait_buffers(self.record_bufs())
+        self.engine.request("ONESHOT")
+        self.wait_buffers(1)
+        self.assertState("OneShot")
+        self.assertStartsAt(IL + OL, 3, "oneshot ending a record")
 
     def testZeroLatency_StartsAtTop(self):
         """With IL = OL = 0 a restart starts at the top, as stock."""

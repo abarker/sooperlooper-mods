@@ -6,8 +6,9 @@ more precise:
 
 - a Record start or stop, Mute or Unmute, or Multiply-end press that lands a
   moment after the beat counts as on time, instead of waiting a whole cycle;
-- a restart (``trigger``, or ``mute_trigger`` from Mute) plays the loop in
-  time, where stock restarts it late by the input plus output latency;
+- a restart (``trigger``, or ``mute_trigger`` from Mute) or a oneshot plays
+  the loop in time, where stock starts it late by the input plus output
+  latency;
 - when synced to JACK transport, loops stay on the transport master's beat
   through tempo changes;
 - SooperLooper can take commands, and send MIDI clock, over JACK MIDI
@@ -136,7 +137,7 @@ item links to its full description.
   See `Quantized Pause from Muted Now Resolves to Paused`_ in the appendix.
 
 - **Restart timing fix.** A restart (``trigger``, or ``mute_trigger``
-  from Mute) now plays the loop in time.  Stock 1.7.9 restarts it late by
+  from Mute) or a oneshot (``once``) now plays the loop in time.  Stock 1.7.9 restarts it late by
   the input plus output latency (31 ms at 743/743), with sync on too, so
   the loop then sits that far behind the drums until the next restart.
   Controlled by the ``TRIGGER_LATENCY_FIX`` build flag (on).  See
@@ -1089,8 +1090,8 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
      - ``plugin.cc``
      - ``1``
      - When 1 (default), a stock 1.7.9 bug fix is active: a trigger into
-       play starts input + output latency into the loop, as playback
-       after a record does, so a restart is heard in time (see `Restarts
+       play or a oneshot starts input + output latency into the loop, as
+       playback after a record does, so it is heard in time (see `Restarts
        Now Play in Time`_ in the appendix).  Set to 0 to revert to stock
        behavior.  A bug fix with an escape hatch, not a tunable: no
        session-file or OSC equivalent.
@@ -1661,7 +1662,11 @@ one -- goes through one case in ``transitionToNext()``
 adds IL + OL, scaled by the playback rate (so reverse subtracts), unless
 the previous state was Record or TrigStop: from those, ``MULTI_TRIGGER``
 already adds the offset itself, and adding it there too would double it.
-About ten lines.
+A oneshot (``once``, which plays the loop once from the top and then
+mutes) had the same bug and gets the same offset in its own two places:
+the immediate ``MULTI_ONESHOT`` branch, which sets the position itself,
+and the ``STATE_ONESHOT`` case for a synced one.  It still stops at the
+end of the loop.  About twenty lines in all.
 
 **What you hear.**  A restart skips the first IL + OL samples of the
 loop's buffer.  With sync on, that is material from before the beat: a
@@ -1669,15 +1674,17 @@ downbeat played to the drums you hear is recorded later than that.
 Without sync, about the first 15 ms of the loop's opening is cut.  It is
 the same trade SooperLooper already makes after a record.
 
-**Not covered** (the same bug, left for later): oneshot (``once``), and
-playback-sync re-alignment (``playback_sync``), which set the start
-position on their own paths.
+**Not covered** (probably the same bug, left for later): playback-sync
+re-alignment (``playback_sync``), which snaps a playing loop to the top
+of its buffer at a sync point.  Its check for being near the loop start
+compares buffer positions too, so it needs measuring before a fix.
 
 **Guarded by a compile-time flag.**  ``TRIGGER_LATENCY_FIX``
 (``plugin.cc``, default ``1``).  Set it to ``0`` and rebuild to revert to
-stock behavior.  Regression tests: ``testdef_trigger_latency.py`` (five
-of its seven tests fail with the flag at 0; the other two guard the
-record-ending trigger and zero latency).
+stock behavior.  Regression tests: ``testdef_trigger_latency.py`` (seven
+of its eleven tests fail with the flag at 0; the other four guard a
+trigger or oneshot that ends a record, a oneshot still ending Muted, and
+zero latency).
 
 Why Not a LADSPA Port
 ~~~~~~~~~~~~~~~~~~~~~

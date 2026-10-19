@@ -327,8 +327,8 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 // TRIGGER_LATENCY_FIX: compile-time safety switch for a STOCK bug
 // (stock 1.7.9 behaves identically; checked on a dummy server).
 //
-// The bug: a trigger into play (trigger, or mute_trigger from Mute)
-// restarts the loop at the top of its buffer, index 0.  In normal play
+// The bug: a trigger into play (trigger, or mute_trigger from Mute),
+// or a oneshot, starts the loop at the top of its buffer, index 0.  In normal play
 // the loop runs input + output latency ahead in the buffer -- playback
 // after a record starts at index IL + OL (MULTI_TRIGGER and the
 // record-end paths add it) -- so that what is heard lines up with what
@@ -341,7 +341,10 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 // immediate ones from MULTI_TRIGGER and synced ones from the
 // waitingForSync sites in run().  Record and TrigStop are excluded,
 // because MULTI_TRIGGER already adds the offset after the transition
-// for them.  Not covered (same bug, unused on the rig): oneshot, and
+// for them.  Oneshot gets the same in its two places: MULTI_ONESHOT's
+// immediate branch (which sets the position itself and already adds
+// the offset from Record and TrigStop) and the STATE_ONESHOT case for
+// synced ones.  Not covered (same bug, unused on the rig):
 // playback-sync re-alignment.  See ROADMAP entry 26.
 // Regression tests: testdef_trigger_latency.py.
 //
@@ -2246,6 +2249,12 @@ static LoopChunk * transitionToNext(SooperLooperI *pLS, LoopChunk *loop, int nex
 	      pLS->fFeedSrcFadeDelta = 1.0f / xfadeSamples;
 	      if (loop) {
 		      DBG(fprintf(stderr,"%u:%u  Starting ONESHOT state\n", pLS->lLoopIndex, pLS->lChannelIndex));
+		      //------ albBegin ----------------------------------
+		      // TRIGGER_LATENCY_FIX: the state before this transition
+		      // (overwritten on the next line).
+		      const int prevstate = pLS->state;
+		      (void) prevstate;
+		      //------ albEnd ----------------------------------
 		      pLS->state = STATE_ONESHOT;
 		      if (pLS->fCurrRate > 0) {
 			      loop->dCurrPos = (loop->lLoopLength - loop->lSyncPos) + *pLS->pfSyncOffsetSamples;
@@ -2268,6 +2277,16 @@ static LoopChunk * transitionToNext(SooperLooperI *pLS, LoopChunk *loop, int nex
 
 		      // wrap
 		      loop->dCurrPos = fmod(loop->dCurrPos, loop->lLoopLength);
+		      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_FIX
+		      // Start IL + OL in, as in the STATE_TRIGGER_PLAY case above.
+		      // Record and TrigStop are left as stock.
+		      if (prevstate != STATE_RECORD && prevstate != STATE_TRIG_STOP) {
+			      loop->dCurrPos += ((long) *pLS->pfInputLatency
+						 + (long) *pLS->pfOutputLatency) * pLS->fCurrRate;
+		      }
+#endif
+		      //------ albEnd ----------------------------------
 
 		      DBG(fprintf(stderr,"%u:%u  Starting ONESHOT state, currpos now: %g\n", pLS->lLoopIndex, pLS->lChannelIndex, loop->dCurrPos));
 	      }
@@ -4505,6 +4524,15 @@ runSooperLooper(LADSPA_Handle Instance,
 					      DBG(fprintf(stderr,"from rec Entering ONCE state at %g\n", loop->dCurrPos));
 					      pLS->lFramesUntilFilled = lOutputLatency + lInputLatency;
 				      }
+				      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_FIX
+				      // From any other state, the same IL + OL, so the oneshot
+				      // is heard in time (see TRIGGER_LATENCY_FIX).
+				      else {
+					      loop->dCurrPos += ( lOutputLatency + lInputLatency) * fRate;
+				      }
+#endif
+				      //------ albEnd ----------------------------------
 				      
 				      // then send out a sync here for any slaves
 				      pfSyncOutput[0] = 2.0f;
