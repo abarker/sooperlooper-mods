@@ -47,6 +47,7 @@ TestLooper::TestLooper (jack_client_t* j, unsigned int index, unsigned int chan_
 	request_pending = false;
 	sync_inject_value   = 1.0f;
 	sync_inject_enabled = false;
+	sync_inject_single  = false;
 	process_count       = 0;
 	//------ albBegin ----------------------------------
 	/* -0.7 is the value run() used to hardcode; keep it as the default so
@@ -254,7 +255,8 @@ TestLooper::run (jack_nframes_t offset, jack_nframes_t nframes)
 			/* Late-hit test support: fill sync input buffer before connecting. */
 			if (sync_inject_enabled && _our_syncin_buf) {
 				for (nframes_t n = 0; n < _buffersize; ++n)
-					_our_syncin_buf[n] = sync_inject_value;
+					_our_syncin_buf[n] = (sync_inject_single && n > 0)
+						? 0.0f : sync_inject_value;
 			}
 			descriptor->connect_port (_instances[i], SyncInputPort, (LADSPA_Data*) _use_sync_buf + offset);
 			descriptor->connect_port (_instances[i], SyncOutputPort, (LADSPA_Data*) _our_syncout_buf + offset);

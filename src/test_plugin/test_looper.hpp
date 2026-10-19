@@ -65,6 +65,13 @@ class TestLooper
 	 * the same single-float race as ports[], acceptable for test code. */
 	float sync_inject_value;
 	bool  sync_inject_enabled;
+	//------ albBegin ----------------------------------
+	/* When true, the injected value goes on each buffer's first sample only
+	 * and the rest are 0: one single-sample pulse per buffer at a known
+	 * frame, as a real sync source gives, instead of a pulse on every
+	 * sample.  Exact loop lengths can then be checked against it. */
+	bool  sync_inject_single;
+	//------ albEnd ----------------------------------
 
 	/* Incremented at the top of every run() call.  Python tests busy-wait
 	 * on this to synchronise with exact JACK callback counts rather than

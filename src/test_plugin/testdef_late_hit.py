@@ -372,5 +372,112 @@ class TestSyncSourceReset(LateHitTestCase):
                       "After sync toggle, state must be WaitStart or Recording")
 
 
+# ======================================================================
+# Exact lengths and fades
+# ======================================================================
+
+class TestLateHitExact(LateHitTestCase):
+    """A late-hit take must equal an on-time one: the same length and the
+    same fades.  Pulses here are single samples at buffer starts
+    (sync_inject_single), so a loop from pulse to pulse is a whole number
+    of buffers, however the presses fall.  The input is a constant level,
+    so a loop with its fades in the right places plays back flat: a fade
+    left inside the loop dips toward 0, an overlay rises toward 2x."""
+
+    IL, OL = 300, 500
+    LEVEL = 0.5
+
+    def setUp(self):
+        super().setUp()
+        self._set_window(self.WITHIN_BUFS + 3)   # margin for request timing
+        self.looper.sync_inject_single = True
+        self.looper.input_inject_value = self.LEVEL
+        self.looper.set_port(test_engine.DryLevel, 0.0)
+        self.looper.set_port(test_engine.WetLevel, 1.0)
+        self.looper.set_port(test_engine.InputLatency, float(self.IL))
+        self.looper.set_port(test_engine.OutputLatency, float(self.OL))
+        self.looper.set_port(test_engine.FadeSamples, 64.0)
+
+    def rec_bufs(self):
+        """A loop several times longer than IL + OL."""
+        return max(self.RECORD_BUFS, 4 * (self.IL + self.OL) // self.buf + 1)
+
+    def loop_len(self):
+        return int(round(self.looper.get_control_value(test_engine.LoopLength) * self.sr))
+
+    def start(self, late, extra_bufs=0):
+        if late:
+            self.prime_pulse()
+            self.wait_buffers(self.WITHIN_BUFS + extra_bufs)
+            self.engine.request("RECORD")
+        else:
+            self.engine.request("RECORD")
+            self.wait_buffers(1)
+            self.assertState("WaitStart")
+            self.prime_pulse()
+        self.wait_buffers(1)
+        self.assertState("Recording")
+        self.wait_buffers(self.rec_bufs())
+
+    def stop(self, late, extra_bufs=0):
+        if late:
+            self.prime_pulse()
+            self.wait_buffers(self.WITHIN_BUFS + extra_bufs)
+            self.engine.request("RECORD")
+        else:
+            self.engine.request("RECORD")
+            self.wait_buffers(1)
+            self.assertState("WaitStop")
+            self.prime_pulse()
+        self.wait_buffers(1)
+        self.assertState("Playing")
+
+    def assertTake(self, what):
+        L = self.loop_len()
+        self.assertEqual(L % self.buf, 0,
+                         f"{what}: loop length {L} is not a whole number of "
+                         f"{self.buf}-sample buffers (pulse to pulse); one off is "
+                         "the late-hit off-by-one")
+        fade = int(self.looper.get_control_value(test_engine.FadeSamples))
+        self.wait_buffers(3 + fade // self.buf)   # past the play fade-in
+        self.looper.reset_output_stats()
+        self.wait_buffers(L // self.buf + 3)      # one full pass and more
+        lo, hi = self.looper.output_min, self.looper.output_max
+        self.assertTrue(0.9 * self.LEVEL <= lo and hi <= 1.1 * self.LEVEL,
+                        f"{what}: playback ranges {lo:.3f}..{hi:.3f}, expected a flat "
+                        f"{self.LEVEL} (a misplaced record fade dips or overlays)")
+
+    def testOnTime_Reference(self):
+        """Control: on-time start and stop give a whole number of buffers, flat."""
+        self.start(late=False)
+        self.stop(late=False)
+        self.assertTake("on-time start and stop")
+
+    def testLateStart_SameAsOnTime(self):
+        """Late start: backfill from the pulse sample itself, fade at index 0."""
+        self.start(late=True)
+        self.stop(late=False)
+        self.assertTake("late start")
+
+    def testLateStop_SameAsOnTime(self):
+        """Late stop: trim back to just before the pulse sample; the seam
+        crossfade at index 0, not where playback took over."""
+        self.start(late=False)
+        self.stop(late=True)
+        self.assertTake("late stop")
+
+    def testLateStartAndStop_FadeLongerThanLateness(self):
+        """Both late, with a fade longer than the lateness, so both fades
+        are split between the late-hit code and the normal state code.  The
+        stop is a buffer later than the start: equally late, the old code's
+        misplaced fade-in and fade-out landed on the same index and
+        cancelled, as did its two length errors."""
+        self.looper.set_port(test_engine.FadeSamples,
+                             float((self.WITHIN_BUFS + 4) * self.buf))
+        self.start(late=True)
+        self.stop(late=True, extra_bufs=1)
+        self.assertTake("late start and stop, long fade")
+
+
 if __name__ == "__main__":
     unittest.main()

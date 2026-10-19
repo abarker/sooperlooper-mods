@@ -3108,11 +3108,16 @@ runSooperLooper(LADSPA_Handle Instance,
 					  loop ? loop->dCurrPos : -1.0));
 
 			      if (stopWithinWindow) {
-				      // trim T samples from the loop end and finalize immediately.
+				      // trim from the loop end and finalize immediately.
+				      // T reads one less than the samples since the pulse sample
+				      // (the counter resets after that sample's own increment), and a
+				      // normal stop ends the loop just before the pulse sample, so the
+				      // trim is T + 1.  Trimming T left the loop one sample long.
+				      const unsigned long lateSamples = T + 1;
 				      // guard against underflow — require at least xfadeSamples.
 				      unsigned long trimmedLength = 0;
-				      if ((unsigned long)loop->dCurrPos > T + (unsigned long)xfadeSamples)
-					      trimmedLength = (unsigned long)(loop->dCurrPos - T);
+				      if ((unsigned long)loop->dCurrPos > lateSamples + (unsigned long)xfadeSamples)
+					      trimmedLength = (unsigned long)(loop->dCurrPos - lateSamples);
 				      else {
 					      // too close to trim safely — fall through to normal path
 					      pLS->state = STATE_TRIG_STOP;
@@ -3136,8 +3141,24 @@ runSooperLooper(LADSPA_Handle Instance,
 				          T, T * 1000.0f / pLS->fSampleRate,
 				          loop->lLoopLength));
 
+				      // The seam crossfade.  After a normal stop, STATE_PLAY writes
+				      // the input that follows the pulse into the loop's start
+				      // (through rCurrPos), fading it out: index i gets gain
+				      // 1 - (i + 1) / xfadeSamples.  Here the first lateSamples of
+				      // that input are already in the buffer just past the trimmed
+				      // end, so fade them in now, and let STATE_PLAY carry the fade
+				      // on from index lateSamples (its first rCurrPos below).
+				      // Without this the fade-out started at full level at index
+				      // lateSamples, laid over the take, and the seam had none.
+				      for (unsigned long i = 0; i < lateSamples && i + 1 < (unsigned long) xfadeSamples; ++i) {
+					      const float fGain = 1.0f - (float) (i + 1) / xfadeSamples;
+					      pLS->pSampleBuf[(loop->lLoopStart + i) & pLS->lBufferSizeMask] +=
+						      fGain * pLS->pSampleBuf[(loop->lLoopStart + trimmedLength + i) & pLS->lBufferSizeMask];
+				      }
+
 				      pLS->state = STATE_PLAY;
 				      pLS->wasMuted = false;
+				      pLS->fLoopFadeAtten   = LIMIT_BETWEEN_0_AND_1 (1.0f - (float) lateSamples / xfadeSamples);
 				      pLS->fLoopFadeDelta   = -1.0f / xfadeSamples;
 				      pLS->fPlayFadeDelta   =  1.0f / xfadeSamples;
 				      pLS->fLoopSrcFadeDelta = -1.0f / xfadeSamples;
@@ -3146,15 +3167,15 @@ runSooperLooper(LADSPA_Handle Instance,
 				      pfSyncOutput[0] = 2.0f;
 
 				      // mirror STATE_TRIG_STOP latency compensation exactly,
-				      // then advance by T to compensate for entering STATE_PLAY
-				      // T_e samples late.  This shifts the first play T_e positions
-				      // ahead in content, exactly cancelling the T_e-late real-time
-				      // entry.  After the first natural wrap, position 0 plays at
-				      // exactly the same real time as a normal on-time loop — no
-				      // No rewind needed; the +T advance in dCurrPos fully corrects alignment.
+				      // then advance by lateSamples to compensate for entering
+				      // STATE_PLAY that many samples after the pulse sample, where a
+				      // normal stop enters it.  This shifts the first play ahead in
+				      // content, exactly cancelling the late real-time entry.  After
+				      // the first natural wrap, position 0 plays at exactly the same
+				      // real time as a normal on-time loop; no rewind needed.
 				      loop->dCurrPos = (double)loop->lLoopLength;
 				      loop->dCurrPos += (lOutputLatency + lInputLatency) * fRate;
-				      loop->dCurrPos += (double)T;
+				      loop->dCurrPos += (double)lateSamples;
 				      pLS->lFramesUntilFilled = lOutputLatency + lInputLatency;
 
 			      } else {
@@ -3270,8 +3291,11 @@ runSooperLooper(LADSPA_Handle Instance,
 		 // point; moving the start back to the pulse would defeat that.
 		 // C2 fix: bLateHitBypassed prevents late-hit firing on slave
 		 // channels in internal sync mode; see Looper::run() BLOCK 5.
+		 // The backfill reads T + 1 samples back from this block in the
+		 // input ring, which this block has already partly overwritten.
 		 bool withinWindow = (T > 0
 		                      && T <= shiftSamples
+		                      && T + 1 + SampleCount <= pLS->lInputBufSize
 		                      && fSyncMode == 1.0f
 		                      && pLS->bSyncPulseReceived
 		                      && !pLS->bLateHitBypassed);
@@ -3325,28 +3349,36 @@ runSooperLooper(LADSPA_Handle Instance,
 				 //   pfInputLatencyBuf[(lInputBufWritePos + m) & mask]
 				 //       == physical audio at JACK time (T_now - lInputLatency + m)
 				 //
-				 // Normal recording from the sync boundary (T_sync = T_now - T)
+				 // The pulse sample is M = T + 1 samples before this block: the
+				 // counter is reset after the pulse sample's own increment, so it
+				 // reads one less than the samples since then.  A normal start
+				 // records the pulse sample first (STATE_TRIG_START enters RECORD
+				 // on it), so the backfill starts there too.  (Backfilling T
+				 // started the loop one sample late and one sample short.)
+				 //
+				 // Normal recording from the sync boundary (T_sync = T_now - M)
 				 // would have written:
 				 //
 				 //   loop[i] = pfInput at T_sync + i
 				 //           = physical audio at T_sync - lInputLatency + i
-				 //           = physical audio at T_now  - lInputLatency + (i - T)
-				 //           = pfInputLatencyBuf[lInputBufWritePos + (i - T)]
-				 //           = pfInputLatencyBuf[lInputBufWritePos - T + i]
+				 //           = physical audio at T_now  - lInputLatency + (i - M)
+				 //           = pfInputLatencyBuf[lInputBufWritePos + (i - M)]
+				 //           = pfInputLatencyBuf[lInputBufWritePos - M + i]
 				 //
-				 // Therefore:  readPos = lInputBufWritePos - T   (no lInputLatency term)
+				 // Therefore:  readPos = lInputBufWritePos - M   (no lInputLatency term)
 				 //
-				 // Continuity check: the last backfill sample (i = T-1) reads from
+				 // Continuity check: the last backfill sample (i = M-1) reads from
 				 // lInputBufWritePos - 1, which is pfInput[SampleCount-1] of the
 				 // previous block = physical audio at T_now - lInputLatency - 1.
 				 // Live recording begins at pfInput[0] of the current block =
 				 // physical audio at T_now - lInputLatency.  The two streams are
 				 // perfectly adjacent with no gap or overlap.
 				 //
-				 // Constraint: T must be < lInputBufSize (32768).  With the default
-				 // 100 ms window, T <= ~4800 samples at 48 kHz.  The modular
-				 // arithmetic below handles ring-buffer wrap-around correctly.
-				 unsigned long backfillOffset = T;
+				 // Constraint: M plus this block must fit in lInputBufSize (32768),
+				 // checked in withinWindow.  With the default 100 ms window,
+				 // M <= ~4800 samples at 48 kHz.  The modular arithmetic below
+				 // handles ring-buffer wrap-around correctly.
+				 unsigned long backfillOffset = T + 1;
 				 unsigned long readPos = (pLS->lInputBufWritePos >= backfillOffset)
 					 ? (pLS->lInputBufWritePos - backfillOffset)
 					 : (pLS->lInputBufSize - (backfillOffset - pLS->lInputBufWritePos));
@@ -3364,24 +3396,33 @@ runSooperLooper(LADSPA_Handle Instance,
 				 //   so the destination write is safe.
 				 //   lBufferSize is always a power of two (see instantiate()), so
 				 //   lBufferSizeMask = lBufferSize - 1 is a valid wrap mask.
-				 //   T <= effectiveLateHitWindow() which is capped at
-				 //   lInputBufSize - 1 (see the cap in effectiveLateHitWindow()),
-				 //   so the source read from pfInputLatencyBuf never reaches a
-				 //   previous wrap regardless of g_late_hit_window_ms.
-				 for (unsigned long i = 0; i < T; ++i) {
+				 //   withinWindow requires M + SampleCount <= lInputBufSize, so
+				 //   the source read from pfInputLatencyBuf never reaches this
+				 //   block's samples (already written over the oldest ones)
+				 //   regardless of g_late_hit_window_ms.
+				 //
+				 // The record fade-in goes on the backfill, at the loop's start,
+				 // with the gain a normal start gives index i: (i + 1) / xfade.
+				 // (It used to start where live recording takes over, leaving a
+				 // fade from silence at index T, inside the loop, on every pass.)
+				 for (unsigned long i = 0; i < backfillOffset; ++i) {
+					 const float fGain = (i + 1 < (unsigned long) xfadeSamples)
+						 ? (float) (i + 1) / xfadeSamples : 1.0f;
 					 pLS->pSampleBuf[(loop->lLoopStart + i) & pLS->lBufferSizeMask] =
-						 pfInputLatencyBuf[(readPos + i) & pLS->lInputBufMask];
+						 fGain * pfInputLatencyBuf[(readPos + i) & pLS->lInputBufMask];
 				 }
 
-				 // Start recording from position T: backfill covers [0..T), live
-				 // recording continues from T onward to the next sync boundary.
+				 // Start recording from position M: backfill covers [0..M), live
+				 // recording continues from M onward to the next sync boundary.
 				 // The loop content is now identical to what an on-time press would
 				 // have produced, so the standard TRIG_STOP latency formula
 				 // (dCurrPos += lOutputLatency + lInputLatency) applies unchanged.
-				 loop->dCurrPos = (double)T;
+				 loop->dCurrPos = (double)backfillOffset;
 
-				 // fade setup (mirrors STATE_TRIG_START transition)
-				 pLS->fLoopFadeAtten = 0.0f;
+				 // fade setup (mirrors STATE_TRIG_START transition), except that
+				 // the input-to-loop fade-in carries on from where the backfill
+				 // left it (STATE_RECORD steps the gain before each sample)
+				 pLS->fLoopFadeAtten = LIMIT_BETWEEN_0_AND_1 ((float) backfillOffset / xfadeSamples);
 				 pLS->fLoopFadeDelta = 1.0f / xfadeSamples;
 				 pLS->fPlayFadeDelta = -1.0f / xfadeSamples;
 				 pLS->fLoopSrcFadeDelta = 1.0f / xfadeSamples;
