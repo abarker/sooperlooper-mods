@@ -1232,10 +1232,9 @@ Where the Changes Are in the Source
 | their own sections: ``src/big_state_display/`` in `New Tool: slbigstate`_,
 | ``src/beat_tracker.hpp`` in `JackSync Beat Tracking`_, new test files in
 | `Test Suite`_.
-| **All new code sections** are bracketed with ``albBegin`` / ``albEnd`` markers:
-| ``//------ albBegin`` / ``//------ albEnd``, and in ``plugin.cc`` also
-| ``//====== albBegin`` / ``//====== albEnd``.  Search for
-| ``albBegin`` to locate every changed block.
+| **All new code sections** are bracketed with ``albBegin`` / ``albEnd`` markers,
+| ``//------ albBegin`` / ``//------ albEnd``.  Search for ``albBegin`` to
+| locate every changed block.
 
 Late-Hit Record Start and Stop: Implementation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

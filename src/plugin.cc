@@ -44,7 +44,7 @@ using namespace std;
 
 using namespace SooperLooper;
 
-//====== albBegin ==================================================================================
+//------ albBegin ----------------------------------
 // Late-hit record window: constants, load probe, and debug logging
 // infrastructure added to support the late-hit correction feature.
 //
@@ -390,7 +390,7 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 #define MULTIPLY_END_FIX 1
 //------ albEnd ----------------------------------
 
-//====== albBegin ==================================================================================
+//------ albBegin ----------------------------------
 // SYNCWDEBUG: master switch for ALL debug output in this file.
 // When defined:
 //   - a sentinel file is written at binary-load time.
@@ -423,7 +423,7 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 #else
 #define SYNCWDBG(x)
 #endif
-//====== albEnd ====================================================================================
+//------ albEnd ----------------------------------
 
 /*****************************************************************************/
 // Resolves (creating if necessary) $HOME/.sooperlooper/logs/<name>,
@@ -544,7 +544,7 @@ static void sl_dbg_open() {
 #define SL_LOG(...)    do { } while(0)
 #define SL_LOG_RT(...) do { } while(0)
 #endif // SYNCWDEBUG
-//====== albEnd ====================================================================================
+//------ albEnd ----------------------------------
 
 
 /*****************************************************************************/
@@ -556,7 +556,7 @@ static void sl_dbg_open() {
 #define DBG(x)
 #endif
 
-//====== albBegin ==================================================================================
+//------ albBegin ----------------------------------
 // effectiveLateHitWindow(): compute the late-hit window in samples.
 //
 // Always evaluates both limits and returns the smaller:
@@ -596,7 +596,7 @@ static inline unsigned long effectiveLateHitWindow(const SooperLooperI *pLS,
     if (fractionLimit >= (double)msLimit) return msLimit;
     return (unsigned long)fractionLimit;
 }
-//====== albEnd ====================================================================================
+//------ albEnd ----------------------------------
 
 
 
@@ -689,7 +689,7 @@ static inline unsigned long effectiveLateHitWindow(const SooperLooperI *pLS,
 #define MULTI_RECORD_OVERDUB_END Event::RECORD_OVERDUB_END_SOLO
 #define MULTI_UNDO_TWICE     Event::UNDO_TWICE
 
-//====== albBegin ==================================================================================
+//------ albBegin ----------------------------------
 // Symbolic, never a literal: the numeric block above (0-23) mirrors the
 // first 24 Event::command_t values by hand, and CANCEL_RECORD_MUTE is
 // appended at the end of that enum where its ordinal is not fixed.
@@ -711,7 +711,7 @@ static_assert((int) Event::MUTE      == MULTI_MUTE,      "Event::command_t drift
 static_assert((int) Event::UNDO_ALL  == MULTI_UNDO_ALL,  "Event::command_t drifted from the MULTI_* literals (at/before UNDO_ALL)");
 static_assert((int) Event::MUTE_ON   == MULTI_MUTE_ON,   "Event::command_t drifted from the MULTI_* literals (at/before MUTE_ON)");
 static_assert((int) Event::PAUSE_OFF == MULTI_PAUSE_OFF, "Event::command_t drifted from the MULTI_* literals (at/before PAUSE_OFF)");
-//====== albEnd ====================================================================================
+//------ albEnd ----------------------------------
 
 
 /*****************************************************************************/
@@ -1154,7 +1154,7 @@ instantiateSooperLooper(const LADSPA_Descriptor * Descriptor,
    pLS->wasMuted = false;
    pLS->recSyncEnded = false;
 
-   //====== albBegin ==================================================================================
+   //------ albBegin ----------------------------------
    // Startup banner: always logged to confirm this is the experimental build.
    // Appears once per loop instance during instantiation.
    SL_LOG("SooperLooper [EXPERIMENTAL] instantiated -- late-hit patch active\n");
@@ -1162,7 +1162,7 @@ instantiateSooperLooper(const LADSPA_Descriptor * Descriptor,
    // make the fraction term evaluate to 0 before the first sync period is
    // measured).  activate() also resets it to ULONG_MAX on each reset.
    pLS->lLastSyncPeriodSamples = ULONG_MAX;
-   //====== albEnd ====================================================================================
+   //------ albEnd ----------------------------------
    
    DBG(fprintf(stderr,"%u:%u  instantiated with buffersize: %lu\n", pLS->lLoopIndex, pLS->lChannelIndex, pLS->lBufferSize));
 
@@ -1228,12 +1228,12 @@ activateSooperLooper(LADSPA_Handle Instance) {
   pLS->lLastOverdubFrom = -1;   // cancel_overdub_undo bookkeeping
   //------ albEnd ----------------------------------
 
-  //====== albBegin ==================================================================================
+  //------ albBegin ----------------------------------
   // Activation banner: always logged to confirm experimental build is active.
   // Appears once per loop instance during activation.
   SL_LOG("SooperLooper [EXPERIMENTAL] activating loop %u:%u -- late-hit patch active\n",
       pLS->lLoopIndex, pLS->lChannelIndex);
-  //====== albEnd ====================================================================================
+  //------ albEnd ----------------------------------
 
   pLS->lScratchSamples = 0;
   pLS->lTapTrigSamples = 0;
@@ -1289,7 +1289,7 @@ activateSooperLooper(LADSPA_Handle Instance) {
   pLS->lFramesUntilInput = 0;
   pLS->lFramesUntilFilled = 0;
   memset (pLS->pInputBuf, 0, pLS->lInputBufSize * sizeof(LADSPA_Data));
-  //====== albBegin ======
+  //------ albBegin ----------------------------------
   pLS->lGlobalSamplesSinceSync = 0;
   pLS->bSyncPulseReceived = false;
   pLS->lLastSyncPeriodSamples = ULONG_MAX; // sentinel: no period measured yet
@@ -1301,7 +1301,7 @@ activateSooperLooper(LADSPA_Handle Instance) {
   // meaningful only for a real, later toggle). See its comment block
   // near the top of run() for the full writeup.
   pLS->fSyncModeLastBuffer = 1.0f;
-  //====== albEnd ========
+  //------ albEnd ----------------------------------
   
   clearLoopChunks(pLS);
 
@@ -2515,7 +2515,7 @@ runSooperLooper(LADSPA_Handle Instance,
 
   }
 
-  //====== albBegin ==================================================================================
+  //------ albBegin ----------------------------------
   // Seed lLastSyncPeriodSamples from the tempo-derived syncSamples whenever no
   // real inter-pulse measurement has been taken yet (sentinel == ULONG_MAX).
   // syncSamples is > 0 only when fTempo > 0 and the quantize mode is
@@ -2550,7 +2550,7 @@ runSooperLooper(LADSPA_Handle Instance,
       pLS->lLastSyncPeriodSamples =
           (unsigned long)(pLS->fSampleRate * 30.0f / fTempo * (float)eighthPerCycle);
   }
-  //====== albEnd ====================================================================================
+  //------ albEnd ----------------------------------
 
   lMultiCtrl = (int) *(pLS->pfMultiCtrl);
 
@@ -2570,7 +2570,7 @@ runSooperLooper(LADSPA_Handle Instance,
      pLS->lLastMultiCtrl = lMultiCtrl;
   }
 
-  //====== albBegin ==================================================================================
+  //------ albBegin ----------------------------------
   // RECORD_FAILSAFE -- auto-fire CANCEL_RECORD_MUTE if a record has been
   // left running in STATE_RECORD longer than g_record_failsafe_seconds,
   // instead of leaving it recording indefinitely because the performer
@@ -2611,7 +2611,7 @@ runSooperLooper(LADSPA_Handle Instance,
       g_record_failsafe_seconds > 0.0f &&
       pLS->lRecordFailsafeSamples >
           (unsigned long)(g_record_failsafe_seconds * pLS->fSampleRate);
-  //====== albEnd ====================================================================================
+  //------ albEnd ----------------------------------
 
   // force use delay
   if (lMultiCtrl == MULTI_REDO && *pLS->pfRedoTapMode != 0)
@@ -2645,7 +2645,7 @@ runSooperLooper(LADSPA_Handle Instance,
 		  lMultiCtrl = MULTI_TRIGGER;
 	  }
   }
-  //====== albBegin ==================================================================================
+  //------ albBegin ----------------------------------
   // CANCEL_RECORD_MUTE -- cancel an in-progress or pending record, keep the
   // prior take, and mute only if audio was actually captured.  No-op in every
   // other state.  See "New Command: cancel_record_mute" in
@@ -2803,8 +2803,8 @@ runSooperLooper(LADSPA_Handle Instance,
 		  lMultiCtrl = -1;
 	  }
   }
-  //====== albEnd ====================================================================================
-  //====== albBegin ==================================================================================
+  //------ albEnd ----------------------------------
+  //------ albBegin ----------------------------------
   // CANCEL_OVERDUB_UNDO -- the overdub button's long/double-press companion:
   // undo, as if the eager overdub press just before it had not happened.
   // Acts only when the command immediately before it was an overdub press
@@ -2897,7 +2897,7 @@ runSooperLooper(LADSPA_Handle Instance,
 	  // Anything else -- another origin, or the state has moved on in a
 	  // way these cases do not cover -- is left alone.
   }
-  //====== albEnd ====================================================================================
+  //------ albEnd ----------------------------------
   else if (lMultiCtrl == MULTI_RECORD_OR_OVERDUB) {
 	  if (!pLS->headLoopChunk || pLS->state == STATE_OFF || pLS->state == STATE_OFF_MUTE || pLS->state == STATE_RECORD 
 	      || pLS->state == STATE_TRIG_START || pLS->state == STATE_TRIG_STOP 
@@ -3018,7 +3018,7 @@ runSooperLooper(LADSPA_Handle Instance,
 	  : (pLS->lInputBufSize - (lInputLatency - pLS->lInputBufWritePos)) ;
   
 	  
-  //====== albBegin ==================================================================================
+  //------ albBegin ----------------------------------
   // Global sync counter: lGlobalSamplesSinceSync increments every sample in
   // ALL states (including STATE_OFF and STATE_TRIG_START) and resets on each
   // incoming sync pulse.  Unlike the existing lSamplesSinceSync, it is
@@ -3057,7 +3057,7 @@ runSooperLooper(LADSPA_Handle Instance,
 		  }
 	  }
   }
-  //====== albEnd ====================================================================================
+  //------ albEnd ----------------------------------
 
   // transitions due to control triggering
   
@@ -3121,7 +3121,7 @@ runSooperLooper(LADSPA_Handle Instance,
 
 		      }
 		      else {
-			      //====== albBegin ==================================================================================
+			      //------ albBegin ----------------------------------
 			      // STOCK (sooperlooper 1.7.9) — original else branch for sync-mode stop:
 			      //   } else {
 			      //     pLS->state = STATE_TRIG_STOP;
@@ -3246,7 +3246,7 @@ runSooperLooper(LADSPA_Handle Instance,
 				      pLS->nextState = STATE_PLAY;
 				      DBG(fprintf(stderr,"%u:%u  Entering TRIG_STOP state\n", pLS->lLoopIndex, pLS->lChannelIndex));
 			      }
-      		      //====== albEnd ====================================================================================
+      		      //------ albEnd ----------------------------------
 		      }
 		      break;
 
@@ -3318,7 +3318,7 @@ runSooperLooper(LADSPA_Handle Instance,
 		 // fall through to default for late-hit / normal handling
 		 
 	      default:
-		 //====== albBegin ==================================================================================
+		 //------ albBegin ----------------------------------
 		 // STOCK (sooperlooper 1.7.9) — original default case in MULTI_RECORD state switch:
 		 //   default:
 		 //     pLS->state = STATE_TRIG_START;
@@ -3513,7 +3513,7 @@ runSooperLooper(LADSPA_Handle Instance,
 			             pLS->lLoopIndex, pLS->lChannelIndex));
 		 }
 		 }
-		 //====== albEnd ====================================================================================
+		 //------ albEnd ----------------------------------
 	   }
 	} break;
 
@@ -3651,7 +3651,8 @@ runSooperLooper(LADSPA_Handle Instance,
 				      else {
 					      loop->mult_out = loop->lCycles;
 					      //fprintf(stderr, "mult out initiated\n");
-					      //====== albBegin -- multiply-end late-hit correction =============
+					      //------ albBegin ----------------------------------
+					      // Multiply-end late-hit correction
 #if LATE_HIT_MULTIPLY_CORRECTION
 					      // T: samples elapsed since last sync pulse (same variable as
 					      // in the MULTI_RECORD paths; declared locally here because each
@@ -3725,7 +3726,7 @@ runSooperLooper(LADSPA_Handle Instance,
 						      }
 					      }
 #endif
-					      //====== albEnd =====================================================
+					      //------ albEnd ----------------------------------
 					      // loop = endMultiply(pLS, loop, STATE_PLAY);
 					      
 					      DBG(fprintf(stderr, "%u:%u  waiting for sync multi end\n", pLS->lLoopIndex, pLS->lChannelIndex));
@@ -5061,7 +5062,8 @@ runSooperLooper(LADSPA_Handle Instance,
 
 		      loop = transitionToNext (pLS, loop, pLS->nextState);
 		      pLS->waitingForSync = 0;
-		      //====== albBegin -- TRIG_STOP playback-start offset ==============
+		      //------ albBegin ----------------------------------
+		      // TRIG_STOP playback-start offset
 		      // Advance dCurrPos so that rCurrPos starts at 0 on the first
 		      // STATE_PLAY sample.
 		      //
@@ -5086,7 +5088,7 @@ runSooperLooper(LADSPA_Handle Instance,
 		      // hardware latency combination.
 		      loop->dCurrPos = loop->dCurrPos + ( lOutputLatency + lInputLatency ) * fRate;
 		      pLS->lFramesUntilFilled = lOutputLatency + lInputLatency;
-		      //====== albEnd ===================================================
+		      //------ albEnd ----------------------------------
 		      
 		      pLS->fLoopSrcFadeDelta = -1.0f / xfadeSamples;
 		      
