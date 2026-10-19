@@ -3,8 +3,9 @@
 This is a modified version of SooperLooper which adds late-hit correction
 for record, mute/unmute, and multiply operations, two new commands around
 recording safety, direct JACK MIDI ports, JACK sync that stays on the
-beat through tempo changes, a fix for restarts that play late, and a
-standalone at-a-distance loop-state display.
+beat through tempo changes, fixes for restarts that play late and for
+multiplied loops that drop out at their end, and a standalone
+at-a-distance loop-state display.
 
 **Late-hit correction.** When sync is active, a press that lands within a
 configurable window after a sync boundary is corrected back to that
@@ -20,6 +21,13 @@ quantized Pause press while Muted resolved to Playing instead of Paused.
 SooperLooper's input plus output latency (31 ms at 743/743), with sync on
 too, leaving it that far behind the drums until the next restart.  They
 now start in time, as playback after a record already does.
+
+**Multiply ends cleanly.**  Fixes a stock 1.7.9 bug: a Multiply that
+ended at the end of the new loop (with Round on, or waiting for a sync
+boundary) left that loop's last input plus output latency (31 ms at
+743/743) unrecorded, so it dropped out there on every pass.  The loop is
+now recorded to its end and plays in time, after an on-time or late
+Multiply end, and so does the original take after an Undo.
 
 **`cancel_record_mute`, `cancel_overdub_undo` and record failsafe.**  Plain `record` already
 carries a loop from recording into play on its own — that part needs

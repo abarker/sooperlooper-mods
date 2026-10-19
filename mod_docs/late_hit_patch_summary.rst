@@ -9,6 +9,8 @@ more precise:
 - a restart (``trigger``, or ``mute_trigger`` from Mute) or a oneshot plays
   the loop in time, where stock starts it late by the input plus output
   latency;
+- a multiplied loop is recorded to its end, where stock leaves its last
+  input plus output latency unrecorded, a dropout on every pass;
 - when synced to JACK transport, loops stay on the transport master's beat
   through tempo changes;
 - SooperLooper can take commands, and send MIDI clock, over JACK MIDI
@@ -143,6 +145,13 @@ item links to its full description.
   drums until the next restart.  Controlled by the
   ``RESTART_POSITION_FIX`` build flag (on).  See `Restarts Now Play in
   Time`_ in the appendix.
+
+- **Multiply end fix.** A multiplied loop no longer drops out just before
+  its start on every pass: stock 1.7.9 leaves the last input plus output
+  latency of the new loop (31 ms at 743/743) unrecorded.  The loop also
+  plays in time after a late Multiply end, which this fork's correction
+  had left late.  Controlled by the ``MULTIPLY_END_FIX`` build flag (on).
+  See `Multiplied Loops Now End Cleanly`_ in the appendix.
 
 - **Adjustable window.** How late a press can be and still count as on
   time is set in milliseconds, optionally also capped at a fraction of the
@@ -1100,6 +1109,17 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        behavior.  A bug fix with an escape hatch, not a tunable: no
        session-file or OSC equivalent.  Unrelated to the
        ``trigger_latency`` setting.
+   * - ``MULTIPLY_END_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: a Multiply end
+       finishes when recording, not playback, reaches the loop's end, so
+       the new loop is recorded to its end, and playback carries on in
+       time (see `Multiplied Loops Now End Cleanly`_ in the appendix).
+       It also corrects this fork's late Multiply end, which played late.
+       Set to 0 to revert to stock behavior, and to the old late Multiply
+       end.  A bug fix with an escape hatch, not a tunable: no
+       session-file or OSC equivalent.
    * - ``SYNCWDEBUG``
      - ``plugin.cc``
      - *(commented out)*
@@ -1212,10 +1232,10 @@ Where the Changes Are in the Source
 | their own sections: ``src/big_state_display/`` in `New Tool: slbigstate`_,
 | ``src/beat_tracker.hpp`` in `JackSync Beat Tracking`_, new test files in
 | `Test Suite`_.
-| **All new code sections** are bracketed with ``albBegin`` / ``albEnd`` markers.
-| In ``plugin.cc`` and ``plugin.hpp`` the markers are ``//====== albBegin`` /
-| ``//====== albEnd``; in all other files they are ``//------ albBegin`` /
-| ``//------ albEnd``. Search for ``albBegin`` to locate every changed block.
+| **All new code sections** are bracketed with ``albBegin`` / ``albEnd`` markers:
+| ``//------ albBegin`` / ``//------ albEnd``, and in ``plugin.cc`` also
+| ``//====== albBegin`` / ``//====== albEnd``.  Search for
+| ``albBegin`` to locate every changed block.
 
 Late-Hit Record Start and Stop: Implementation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1741,6 +1761,65 @@ cause.
 tests: ``TestLateHitExact`` in ``testdef_late_hit.py``, three of whose four
 tests fail on the old code.  The harness gained an option for
 single-sample sync pulses (``sync_inject_single``) for them.
+
+Multiplied Loops Now End Cleanly
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**A stock SooperLooper 1.7.9 bug, with a form of it in this fork's late
+Multiply end** -- stock 1.7.9 and this fork with the fix switched off
+behaved identically for the stock part, measured on a dummy JACK server.
+
+**The bug.**  While multiplying, SooperLooper records input plus output
+latency (IL + OL) behind the play position, as it does after a record (see
+`Restarts Now Play in Time`_).  A Multiply end that finishes at the end of
+the new loop -- with Round on, or when the end waits for a sync boundary
+-- finished when the play position got there, with recording still IL +
+OL short of it.  So:
+
+- the last IL + OL samples of the new loop (31 ms at 743/743) were never
+  recorded, and the loop dropped out there on every pass, just before its
+  start;
+- the finish came after that sample's play position had moved on, and the
+  next state played the same sample again from the loop's start, so the
+  multiplied loop played one sample early;
+- this fork's late Multiply end cuts the loop back to the boundary just
+  passed, but restarted it from the top as well, so the loop played late by
+  IL + OL plus the press's lateness: 81 ms for a press 50 ms late, at
+  743/743.
+
+An Undo carries the play position over to the loop underneath, so after
+one the original take kept that timing too, early or late, until the next
+restart.
+
+**The fix.**  A Multiply end that finishes at the loop's end now keeps
+multiplying, without adding a cycle, until recording reaches the end too.
+Then it finishes with the play position carried on past the end, instead
+of restarted, and the next state starts on the next sample.  A Multiply
+started part way into the loop leaves the start of the new loop to be
+filled from the original as playback passes it; playback now skips that
+stretch, so the finish fills it.  A late Multiply end finishes at once,
+since recording is already past the boundary, and the input that followed
+the boundary is faded into the loop's start, as after a late Record stop
+(see `Late-Hit Takes Now Match On-Time Ones`_).  The finish is one small
+function, ``finishRoundedMultiply()``, used by both.
+
+**What you hear.**  No dropout at the end of a multiplied loop, and the
+loop plays in time after an on-time or late Multiply end, as does the
+take after an Undo.  Loop lengths are unchanged.
+
+**Tested** on a dummy JACK server against the build with the fix switched
+off: a Multiply started on the take's boundary or part way in; Round on
+and off; ended by Multiply or by Overdub, on time and late; both channels
+of a stereo loop; and Undo and Redo afterwards.  Not yet covered: reverse
+playback, internal sync, and a Multiply ended by Record, Insert, Replace
+or Substitute.
+
+**Guarded by a compile-time flag.**  ``MULTIPLY_END_FIX`` (``plugin.cc``,
+default ``1``).  Set it to ``0`` and rebuild to revert to stock behavior,
+and to the old late Multiply end.  Regression tests:
+``testdef_multiply_end.py`` (three of its four tests fail with the flag at
+0; the fourth guards an end by Overdub).  They cover on-time ends; the
+late end is covered by the dummy-server probes only.
 
 Why Not a LADSPA Port
 ~~~~~~~~~~~~~~~~~~~~~
@@ -2268,8 +2347,10 @@ Known Issues and Future Work
    window condition from evaluating until at least one real sync pulse has arrived, so a
    press shortly after startup cannot trigger a spurious correction.
 
--  **Multiply end:** correction is implemented and pending test confirmation (disable
-   with ``LATE_HIT_MULTIPLY_CORRECTION 0`` if regressions appear).
+-  **Multiply end:** the late-hit correction is tested on a dummy JACK server,
+   together with the ``MULTIPLY_END_FIX`` fix (see `Multiplied Loops Now End
+   Cleanly`_), but not yet on the rig (disable with
+   ``LATE_HIT_MULTIPLY_CORRECTION 0`` if regressions appear).
 
 -  **Multiply start:** deferred. The frontfill machinery in ``beginMultiply()`` makes the
    position adjustment more involved; low priority since Multiply start snaps to the
@@ -2527,7 +2608,9 @@ automated tests:
    each copied sample against its source.
 
 -  **Multiply-end correction** (``multStopInWindow``, guarded by
-   ``LATE_HIT_MULTIPLY_CORRECTION``).
+   ``LATE_HIT_MULTIPLY_CORRECTION``).  ``testdef_multiply_end.py`` covers
+   on-time Multiply ends only; the late end is covered by dummy-server
+   probes, outside the harness.
 
 -  **Two-channel** ``bLateHitBypassed`` behavior in internal sync mode.  A
    two-channel ``TestLooper`` (``_chan_count = 2``) and a sync source pointing
