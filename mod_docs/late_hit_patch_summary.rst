@@ -988,7 +988,10 @@ a starting point, not a measurement.
        ``--session-file`` too, also save them in that session file.
 
 **Limits.**  It measures loop 1 and applies the result to every loop, so
-it assumes all loops are recorded and monitored the same way.  The click
+it assumes all loops are recorded and monitored the same way.  Its target,
+loops landing where they were played as heard, also assumes you hear your
+own playing without delay (zero-latency monitoring); with software
+monitoring, see section 2.6 of the setup guide.  The click
 must come back on the same audio interface it was played from; two
 separately clocked devices drift against each other.  It tests a
 quantized recording, not the timing of a live pedal press (trigger

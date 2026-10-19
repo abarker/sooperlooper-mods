@@ -618,6 +618,16 @@ As a practical guide when calibrating: **increasing** either latency value
 moves the newly-recorded material to the **left** (earlier in time);
 **decreasing** it moves material to the **right** (later in time).
 
+**This assumes you hear your own playing without delay,** through the
+interface's zero-latency path (section 1.1).  If you monitor your guitar
+or voice through the computer instead -- through Ardour, or through
+SooperLooper's own input monitoring (its dry level) -- you hear yourself a
+round trip late: about 31 ms with this setup's buffers, more with larger
+ones.  If you play to the feel of your hands, your loops still land where
+they should.  If you line the delayed sound up with the drums, you play
+early, and your loops land early by up to that much.  Zero-latency
+monitoring avoids the question.
+
 .. note::
 
    Setting these values from a measurement -- with ``sllatency`` (section
