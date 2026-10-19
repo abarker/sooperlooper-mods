@@ -9,7 +9,8 @@ standalone at-a-distance loop-state display.
 **Late-hit correction.** When sync is active, a press that lands within a
 configurable window after a sync boundary is corrected back to that
 boundary instead of waiting for the next one — covering Record start/end,
-Mute/Unmute, and Multiply end. The window defaults to 100ms, narrowable to
+Mute/Unmute, and Multiply end. A corrected Record start or end gives the
+same loop an on-time press would, to the sample, fades included. The window defaults to 100ms, narrowable to
 a fraction of the current quantize cycle, and is configurable via the
 session file or live over OSC. Also fixes a stock 1.7.9 bug where a
 quantized Pause press while Muted resolved to Playing instead of Paused.

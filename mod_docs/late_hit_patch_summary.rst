@@ -1232,11 +1232,15 @@ never fires regardless of the checkbox.
 wait for the next boundary.  Instead:
 
 1. The loop buffer is created immediately via ``pushNewLoopChunk()``.
-2. The *T* samples of audio that elapsed since the boundary are copied
-   ("backfilled") from the continuous input ring buffer into the start of
-   the loop buffer at positions ``[0 .. T)``.
-3. The record position ``dCurrPos`` is set to *T*, so live recording
-   continues from position *T* onward, seamlessly after the backfilled audio.
+2. The audio since the boundary is copied ("backfilled") from the
+   continuous input ring buffer into the start of the loop buffer: *T* + 1
+   samples, starting with the boundary sample itself, which an on-time
+   start records first (the counter *T* reads one less; see the
+   glossary).  The record fade-in goes on these first samples, at the
+   loop's start, as in an on-time start.
+3. The record position ``dCurrPos`` is set to *T* + 1, so live recording
+   continues from there, seamlessly after the backfilled audio, with the
+   fade-in carried on where the backfill left it.
 4. The engine enters ``STATE_RECORD`` directly rather than
    ``STATE_TRIG_START``.
 
@@ -1244,12 +1248,18 @@ wait for the next boundary.  Instead:
 for the next boundary, producing a loop that is *T* samples too long and
 whose tail drifts on every repeat.  Instead:
 
-1. The loop length is trimmed by *T* samples: ``lLoopLength = dCurrPos − T``.
-2. The play position ``dCurrPos`` is set to ``lLoopLength + lOutputLatency +
-   lInputLatency + T`` -- the same formula as the normal ``STATE_TRIG_STOP``
-   path, plus *T* to compensate for having entered ``STATE_PLAY`` *T*
-   samples late in real time.
-3. The engine enters ``STATE_PLAY`` directly.
+1. The loop length is trimmed by *T* + 1 samples, back to just before the
+   boundary sample, where an on-time stop ends it:
+   ``lLoopLength = dCurrPos − (T + 1)``.
+2. The seam crossfade is made as an on-time stop makes it: the input that
+   followed the boundary, already in the buffer just past the new end, is
+   faded out into the loop's start, and playback carries the fade on from
+   there.
+3. The play position ``dCurrPos`` is set to ``lLoopLength + lOutputLatency +
+   lInputLatency + T + 1`` -- the same formula as the normal
+   ``STATE_TRIG_STOP`` path, plus *T* + 1 to compensate for having entered
+   ``STATE_PLAY`` that many samples late in real time.
+4. The engine enters ``STATE_PLAY`` directly.
 
 After the first natural wrap, ``dCurrPos`` lands at ``lOutputLatency +
 lInputLatency`` -- identical to a normal on-time loop.  No rewind or special
@@ -1691,6 +1701,47 @@ of its eleven tests fail with the flag at 0; the other four guard a
 trigger or oneshot that ends a record, a oneshot still ending Muted, and
 zero latency).
 
+Late-Hit Takes Now Match On-Time Ones
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**A bug in this fork's late-hit code, fixed.**  A late Record start or
+stop now gives the same loop an on-time press would: the same length, to
+the sample, and the same fades.  Before the fix:
+
+- **One sample off.**  A late start made the loop one sample short, a
+  late stop one sample long.  The sync counter reads one less than the
+  samples since the boundary sample, which an on-time start records
+  first and an on-time stop ends just before; the late-hit code backfilled
+  and trimmed by the counter alone.  A loop one sample off drifts a sample
+  per repeat against the beat, about 3 ms over a five-minute song of short
+  loops.
+- **Late start: a fade from silence inside the loop.**  The backfilled
+  audio went in without the record fade-in, and the fade-in started where
+  live recording took over, at the press: a fade from silence about 4 ms
+  long (the fade length), as far into the loop as the press was late, on
+  every pass.
+- **Late stop: no crossfade at the seam.**  An on-time stop crossfades the
+  seam: during the first moments of playback the input that follows the
+  boundary is faded out into the loop's start.  After a late stop that
+  fade-out started at full level as far into the loop as the press was
+  late, laid over the take for about 4 ms, and the loop's start came in
+  from silence instead.
+
+**The fix**, in the two late-hit branches of ``MULTI_RECORD``
+(``plugin.cc``): backfill and trim *T* + 1 samples instead of *T*; put the
+record fade-in on the backfilled samples and carry it on into live
+recording; and after a late stop, fade the input that followed the
+boundary into the loop's start (it is already in the buffer, just past the
+trimmed end), with playback carrying that fade on.  A late start is also
+refused if the backfill could reach samples the current block has already
+overwritten in the input ring, which only an unusually wide window could
+cause.
+
+**Not switchable**: it is a fix to this fork's own code.  Regression
+tests: ``TestLateHitExact`` in ``testdef_late_hit.py``, three of whose four
+tests fail on the old code.  The harness gained an option for
+single-sample sync pulses (``sync_inject_single``) for them.
+
 Why Not a LADSPA Port
 ~~~~~~~~~~~~~~~~~~~~~
 
@@ -1768,12 +1819,14 @@ General Terminology
        absolute millisecond cap and a fraction of one full quantize cycle at the
        current tempo and Eighths/Cycle setting; whichever is smaller applies.
    * - T
-     - The number of audio samples that elapsed between the most recent sync
-       boundary and the moment the button press was detected. The correction undoes
-       this displacement: T samples are backfilled on a late start, or T samples
-       are trimmed on a late stop.
+     - The sync counter at the start of the block where the button press was
+       detected: the samples since the most recent sync boundary, not counting the
+       boundary sample itself (the counter resets after that sample's own
+       increment).  The correction undoes the displacement from the boundary
+       sample on: T + 1 samples are backfilled on a late start, or trimmed on a
+       late stop.
    * - backfill
-     - The process of copying the most recent T samples from the continuous input
+     - The process of copying the most recent T + 1 samples from the continuous input
        ring buffer into the beginning of the newly created loop buffer, so that the
        loop contains audio from the sync boundary rather than from the press time.
    * - internal sync mode
@@ -1946,8 +1999,8 @@ exists per loop channel.
      - ``unsigned long``
      - Write cursor into ``pfInputLatencyBuf``. Points to the **start** of the current
        LADSPA buffer block and is not advanced until the end of ``runSooperLooper()``. The
-       backfill calculation relies on this: ``lInputBufWritePos − T`` is the read position
-       for the T samples that elapsed since the last sync boundary.
+       backfill calculation relies on this: ``lInputBufWritePos − (T + 1)`` is the read
+       position for the samples since the last sync boundary, the boundary sample first.
    * - ``lInputBufSize``
      - pre-existing
      - ``unsigned long``
@@ -1993,12 +2046,12 @@ single channel for overdub layers.
      - ``double``
      - Current read/write position within the loop buffer, in samples. In the late-stop
        path this is advanced by *T* beyond the normal ``STATE_TRIG_STOP`` value to
-       compensate for entering ``STATE_PLAY`` *T* samples late in real time.
+       compensate for entering ``STATE_PLAY`` *T* + 1 samples late in real time.
    * - ``lLoopLength``
      - pre-existing
      - ``unsigned long``
      - Length of the recorded loop in samples. In the late-stop path this is set to
-       ``dCurrPos − T`` (trimming the overrun audio) before entering ``STATE_PLAY``.
+       ``dCurrPos − (T + 1)`` (trimming the overrun audio) before entering ``STATE_PLAY``.
    * - ``lLoopStart``
      - pre-existing
      - ``unsigned long``
@@ -2034,8 +2087,8 @@ Buffer Variables (local to ``runSooperLooper()``)
      - **[NEW]**
      - ``unsigned long`` (local)
      - Alias for ``lGlobalSyncAtButtonPress`` within each late-hit block. Represents the
-       number of samples that have elapsed since the last sync boundary. Reused as the
-       trim/backfill size: *T* samples are backfilled on a late start, or *T* samples are
+       number of samples that have elapsed since the last sync boundary, not counting the
+       boundary sample.  The trim/backfill size is *T* + 1: backfilled on a late start,
        trimmed on a late stop.
    * - ``withinWindow``
      - **[NEW]**
@@ -2051,14 +2104,14 @@ Buffer Variables (local to ``runSooperLooper()``)
    * - ``trimmedLength``
      - **[NEW]**
      - ``unsigned long`` (local)
-     - Computed loop length after trim: ``(unsigned long)dCurrPos − T``. Protected by a
+     - Computed loop length after trim: ``(unsigned long)dCurrPos − (T + 1)``. Protected by a
        guard requiring at least ``xfadeSamples`` of remaining content; if the guard fails,
        the code falls back to ``STATE_TRIG_STOP``.
    * - ``readPos``
      - **[NEW]**
      - ``unsigned long`` (local)
      - Start offset into ``pfInputLatencyBuf`` for the backfill read:
-       ``lInputBufWritePos − T``. The ``lInputLatency`` term that appears in the normal
+       ``lInputBufWritePos − (T + 1)``. The ``lInputLatency`` term that appears in the normal
        recording path is absent here: ``pfInputLatencyBuf`` stores samples written at
        physical time, and matching the sample that normal recording would have captured
        from the sync boundary works out to ``lInputBufWritePos − T`` with no additional
@@ -2128,12 +2181,12 @@ Architecture Notes
 
 -  **Why backfill rather than a playback offset for late start:** The input ring buffer
    already contains the audio from the boundary onward. Copying it into the loop buffer
-   directly is simpler and more robust than skipping the first *T* samples on every play
-   pass with a per-play offset.
+   directly is simpler and more robust than skipping the first *T* + 1 samples on every
+   play pass with a per-play offset.
 
--  **Why** ``dCurrPos += T`` **rather than** ``lFirstPlayOffset`` **for late stop:** Detecting
+-  **Why** ``dCurrPos += T + 1`` **rather than** ``lFirstPlayOffset`` **for late stop:** Detecting
    the "first wrap" reliably to apply a rewind proved fragile (the wrap check fires
-   inside a ``recenter`` guard at the wrong moment). Advancing ``dCurrPos`` by *T* at
+   inside a ``recenter`` guard at the wrong moment). Advancing ``dCurrPos`` by *T* + 1 at
    entry to ``STATE_PLAY`` achieves the same correction with no wrap detection needed.
 
 -  **Why a global for** ``g_late_hit_window_ms`` **rather than a LADSPA port:** See
@@ -2141,13 +2194,14 @@ Architecture Notes
    version: it is a setup-time preference, not a real-time control, and avoiding the port
    system keeps the change entirely within ``plugin.cc`` and ``engine.cpp``.
 
--  **Why the backfill read position is** ``lInputBufWritePos − T`` **(no lInputLatency):**
+-  **Why the backfill read position is** ``lInputBufWritePos − (T + 1)`` **(no lInputLatency):**
    ``pfInputLatencyBuf`` is a verbatim copy of ``pfInput`` with its write pointer at the
    current physical time. Normal recording from the sync boundary would have captured
-   physical audio at ``T_sync − lInputLatency + i`` for sample *i*. Working backwards
-   from ``lInputBufWritePos`` (which points to physical time ``T_now − lInputLatency``)
-   this maps to offset ``lInputBufWritePos − T + i``, so ``readPos = lInputBufWritePos −
-   T``. The ``lInputLatency`` term cancels exactly.
+   physical audio at ``T_sync − lInputLatency + i`` for sample *i*, where the boundary
+   sample ``T_sync`` is *T* + 1 samples before the block.  Working backwards from
+   ``lInputBufWritePos`` (which points to physical time ``T_now − lInputLatency``) this
+   maps to offset ``lInputBufWritePos − (T + 1) + i``, so ``readPos =
+   lInputBufWritePos − (T + 1)``. The ``lInputLatency`` term cancels exactly.
 
 -  **Why** ``lLastSyncPeriodSamples`` **is seeded from tempo rather than measured pulses:**
    The sync bus carries two kinds of pulses above the 1.5 threshold: the true beat
@@ -2448,6 +2502,12 @@ timing uses ``wait_buffers(n)`` (busy-wait on ``process_count``) rather than
    * - ``TestLateStop.testLateStop_LoopLengthTrimmed``
      - Loop length after a late stop is positive and less than the total
        recording duration (the T-sample trim is visible).
+   * - ``TestLateHitExact`` (four tests)
+     - With single-sample sync pulses at buffer starts and a constant input:
+       on-time, late-start, late-stop and late-both takes are each a whole
+       number of buffers long (pulse to pulse), and play back flat (no record
+       fade left inside the loop, no overlay).  The last uses a fade longer
+       than the lateness, and a stop later than the start.
    * - ``TestWindowControl.testWindowBoundaryExact``
      - Pins the window arithmetic from both sides in a single test: T =
        ``WITHIN_BUFS × buf`` fires when window = ``WITHIN_BUFS + 1`` buffers
@@ -2462,13 +2522,9 @@ Not yet tested
 The following behaviors are covered by the patch but do not yet have
 automated tests:
 
--  **Exact T offset after late start.**  The tests verify that ``STATE_RECORD``
-   is entered directly, but do not assert that ``dCurrPos == T`` (the loop
-   content begins at the sync boundary).
-
--  **Backfill audio content.**  The ring buffer read position
-   (``lInputBufWritePos − T``) and the per-sample copy are not verified
-   against the expected source samples.
+-  **Backfill audio content, sample by sample.**  ``TestLateHitExact``
+   checks the lengths exactly and the level (fades) throughout, but not
+   each copied sample against its source.
 
 -  **Multiply-end correction** (``multStopInWindow``, guarded by
    ``LATE_HIT_MULTIPLY_CORRECTION``).
