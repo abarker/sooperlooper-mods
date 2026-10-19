@@ -355,6 +355,41 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 #define RESTART_POSITION_FIX 1
 //------ albEnd ----------------------------------
 
+//------ albBegin ----------------------------------
+// MULTIPLY_END_FIX: compile-time safety switch for a STOCK bug, and for
+// this fork's late multiply end, which had its own form of it.
+//
+// In STATE_MULTIPLY, dCurrPos is the play position; the record position
+// (rCurrPos) is IL + OL behind it.  With Round on, a multiply end finished
+// when the play position reached the loop end, set dCurrPos to 0 and went
+// on (to Play, usually).  So:
+//
+//   - stock: the record position was still IL + OL short of the end, so
+//     the last IL + OL samples of the new loop were never written (silence
+//     there, or only what Play's fade-out of the input put there), on every
+//     pass of the multiplied loop;
+//   - fork, late multiply end (LATE_HIT_MULTIPLY_CORRECTION): the length
+//     is cut back to the boundary just passed, the play position is already
+//     IL + OL + the lateness past it, and the reset to 0 left the loop
+//     playing that much late.
+//
+// The fix: a rounded multiply end finishes when the record position
+// reaches the end, and the play position carries its overshoot on
+// instead of starting again at 0.  A late multiply end finishes at once
+// (its record position is already past the end), and the input that
+// followed the boundary is faded into the loop's start, as after an
+// on-time end (as for a late record stop).
+//
+// Also stock: the finish came after the sample's position was advanced,
+// and the break left that sample to the next state, which played it
+// again at the reset position; the multiplied loop (and the take, after
+// an Undo, which carries the position over) played one sample early.
+// The finish now moves on to the next sample.
+//
+// Set to 0 to revert to the stock (buggy) behaviour.
+#define MULTIPLY_END_FIX 1
+//------ albEnd ----------------------------------
+
 //====== albBegin ==================================================================================
 // SYNCWDEBUG: master switch for ALL debug output in this file.
 // When defined:
@@ -1776,6 +1811,34 @@ static LoopChunk * endMultiply(SooperLooperI *pLS, LoopChunk *loop, int nextstat
    
    return loop;
 }
+
+//------ albBegin ----------------------------------
+// MULTIPLY_END_FIX (see its comment block near the top of this file):
+// finish a rounded multiply whose record position has reached the end.
+// The play position carries its overshoot past the end on, rather than
+// starting the loop again at 0.  Was inline in the STATE_MULTIPLY loop
+// (with dCurrPos = 0); also used by the late multiply end.
+//
+// A multiply that started mid-cycle leaves the new loop's start to be
+// filled from the source as the play position passes it (frontfill, in
+// fillLoops); the play position now skips [0, overshoot), so fill that
+// stretch here, in order, as it would have.
+#if MULTIPLY_END_FIX
+static LoopChunk * finishRoundedMultiply(SooperLooperI *pLS, LoopChunk *loop)
+{
+	const double overshoot = loop->dCurrPos - loop->lLoopLength;
+	for (unsigned long i = 0; i < (unsigned long) overshoot; ++i) {
+		fillLoops(pLS, loop, i, false);
+	}
+	loop->lMarkEndH = LONG_MAX;
+	loop->backfill = 0;
+	loop->lLoopLength = loop->lCycles * loop->lCycleLength;
+	loop->dCurrPos = fmod(overshoot, loop->lLoopLength);
+	pLS->rounding = false;
+	return transitionToNext(pLS, loop, pLS->nextState);
+}
+#endif
+//------ albEnd ----------------------------------
 
 
 static LoopChunk * beginInsert(SooperLooperI *pLS, LoopChunk *loop)
@@ -3632,6 +3695,31 @@ runSooperLooper(LADSPA_Handle Instance,
 								      pLS->lLoopIndex, pLS->lChannelIndex,
 								      loop->lCycles, loop->lLoopLength, T));
 							      loop = endMultiply(pLS, loop, STATE_PLAY);
+#if MULTIPLY_END_FIX
+							      // MULTIPLY_END_FIX (see its comment block near the
+							      // top of this file).  With Round on, endMultiply only
+							      // marks the end; the record position is already
+							      // past it, so finish now.  The input since the
+							      // boundary (T + 1 samples: the counter reads one less,
+							      // as for the record late-hit) went past the new end;
+							      // fade it into the loop's start as an on-time end's
+							      // Play does, and let Play carry the fade on.
+							      if (loop && pLS->rounding) {
+								      const unsigned long lateSamples = T + 1;
+								      const unsigned long readPos =
+									      (pLS->lInputBufWritePos + pLS->lInputBufSize - (lateSamples % pLS->lInputBufSize))
+									      % pLS->lInputBufSize;
+								      // Finish first: it fills the loop's start (which
+								      // the crossfade then adds to).
+								      loop = finishRoundedMultiply(pLS, loop);
+								      for (unsigned long i = 0; loop && i < lateSamples && i + 1 < (unsigned long) xfadeSamples; ++i) {
+									      const float fGain = 1.0f - (float) (i + 1) / xfadeSamples;
+									      pLS->pSampleBuf[(loop->lLoopStart + i) & pLS->lBufferSizeMask] +=
+										      fGain * pfInputLatencyBuf[(readPos + i) & pLS->lInputBufMask];
+								      }
+								      pLS->fLoopFadeAtten = LIMIT_BETWEEN_0_AND_1 (1.0f - (float) lateSamples / xfadeSamples);
+							      }
+#endif
 							      pfSyncOutput[0] = 1.0f;
 							      break;
 						      }
@@ -5476,6 +5564,31 @@ runSooperLooper(LADSPA_Handle Instance,
 
 			 if (loop->mult_out == (int) loop->lCycles
 			     || (unsigned long)loop->dCurrPos >= loop->lMarkEndH) {
+				 //------ albBegin ----------------------------------
+				 // STOCK (sooperlooper 1.7.9) finished here, when the play
+				 // position reached the end:
+				 //   loop->lMarkEndH = LONG_MAX;
+				 //   backfill = loop->backfill = 0;
+				 //   loop->dCurrPos = 0.0f;
+				 //   loop->lLoopLength = loop->lCycles * loop->lCycleLength;
+				 //   pLS->rounding = false;
+				 //   loop = transitionToNext(pLS, loop, pLS->nextState);
+				 //   break;
+				 // MULTIPLY_END_FIX: keep multiplying, without adding a cycle,
+				 // until the record position (IL + OL behind) reaches the end
+				 // too, so the loop's last IL + OL samples get written; then
+				 // finish with the play position carried on, not reset.
+				 // This sample is done (its position advanced past it), so
+				 // the next state starts on the next one, not on it again.
+#if MULTIPLY_END_FIX
+				 if (loop->dCurrPos < (double) loop->lLoopLength + (double) (lInputLatency + lOutputLatency)) {
+					 continue;
+				 }
+				 backfill = 0;
+				 loop = finishRoundedMultiply(pLS, loop);
+				 ++lSampleIndex;
+				 break;
+#else
 				 // we be done this only happens in round mode
 				 // adjust curr position
 				 loop->lMarkEndH = LONG_MAX;
@@ -5488,6 +5601,8 @@ runSooperLooper(LADSPA_Handle Instance,
 				 // fprintf(stderr, "mult is over with %d cyc\n", loop->lCycles);
 				 loop = transitionToNext(pLS, loop, pLS->nextState);
 				 break;
+#endif
+				 //------ albEnd ----------------------------------
 			 }
 
 			 
