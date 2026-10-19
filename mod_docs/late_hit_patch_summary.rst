@@ -133,6 +133,13 @@ item links to its full description.
   up Playing.  Controlled by the ``PAUSE_FROM_MUTE_FIX`` build flag (on).
   See `Quantized Pause from Muted Now Resolves to Paused`_ in the appendix.
 
+- **Restart timing fix.** A restart (``trigger``, or ``mute_trigger``
+  from Mute) now plays the loop in time.  Stock 1.7.9 restarts it late by
+  the input plus output latency (31 ms at 743/743), with sync on too, so
+  the loop then sits that far behind the drums until the next restart.
+  Controlled by the ``TRIGGER_LATENCY_FIX`` build flag (on).  See
+  `Restarts Now Play in Time`_ in the appendix.
+
 - **Adjustable window.** How late a press can be and still count as on
   time is set in milliseconds, optionally also capped at a fraction of the
   quantize cycle, and stored in the session file.  See `Record Late-Hit
@@ -1076,6 +1083,15 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        late-hit correction's pulse tracking, as a sync source change
        already does (see `Late-Hit Correction Robustness`_).  Fixes a bug
        in this fork's own late-hit code.  Set to 0 to remove the reset.
+   * - ``TRIGGER_LATENCY_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: a trigger into
+       play starts input + output latency into the loop, as playback
+       after a record does, so a restart is heard in time (see `Restarts
+       Now Play in Time`_ in the appendix).  Set to 0 to revert to stock
+       behavior.  A bug fix with an escape hatch, not a tunable: no
+       session-file or OSC equivalent.
    * - ``SYNCWDEBUG``
      - ``plugin.cc``
      - *(commented out)*
@@ -1616,6 +1632,50 @@ revert to exact stock (buggy) behavior. This is compile-time, not a
 session-file/OSC value like the four late-hit globals -- there is nothing to
 tune, only a bug to have fixed or not, so a rebuild-time switch fits
 better than a runtime one.
+
+Restarts Now Play in Time
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**A stock SooperLooper 1.7.9 bug, not introduced by this fork** -- stock
+1.7.9 and this fork behaved identically before the fix, measured on a
+dummy JACK server.
+
+**The bug.**  SooperLooper compensates for latency by running a loop
+input + output latency (IL + OL) ahead in its buffer: after a record,
+playback starts IL + OL into the loop, so what you hear lines up with
+what you played.  A trigger into play -- ``trigger``, or ``mute_trigger``
+from Mute, the usual way to bring a muted loop back in from the top --
+started at the top of the buffer instead, with nothing added.  The loop
+then played IL + OL late (1486 samples, 31 ms, at 743/743) until the
+next restart.  With sync on, the restart waits for the boundary and then
+starts at the top, so the loop sat 31 ms behind the drums.  The lateness
+doesn't build up over several restarts, since each one sets the position
+outright.
+
+**The fix.**  Every trigger into play -- immediate, in the
+relative-sync slack window just after a boundary, or after waiting for
+one -- goes through one case in ``transitionToNext()``
+(``STATE_TRIGGER_PLAY``).  After that case sets the start position, it now
+adds IL + OL, scaled by the playback rate (so reverse subtracts), unless
+the previous state was Record or TrigStop: from those, ``MULTI_TRIGGER``
+already adds the offset itself, and adding it there too would double it.
+About ten lines.
+
+**What you hear.**  A restart skips the first IL + OL samples of the
+loop's buffer.  With sync on, that is material from before the beat: a
+downbeat played to the drums you hear is recorded later than that.
+Without sync, about the first 15 ms of the loop's opening is cut.  It is
+the same trade SooperLooper already makes after a record.
+
+**Not covered** (the same bug, left for later): oneshot (``once``), and
+playback-sync re-alignment (``playback_sync``), which set the start
+position on their own paths.
+
+**Guarded by a compile-time flag.**  ``TRIGGER_LATENCY_FIX``
+(``plugin.cc``, default ``1``).  Set it to ``0`` and rebuild to revert to
+stock behavior.  Regression tests: ``testdef_trigger_latency.py`` (five
+of its seven tests fail with the flag at 0; the other two guard the
+record-ending trigger and zero latency).
 
 Why Not a LADSPA Port
 ~~~~~~~~~~~~~~~~~~~~~

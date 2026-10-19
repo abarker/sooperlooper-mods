@@ -323,6 +323,32 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 #define SYNC_MODE_LATE_HIT_RESET_FIX 1
 //------ albEnd ----------------------------------
 
+//------ albBegin ----------------------------------
+// TRIGGER_LATENCY_FIX: compile-time safety switch for a STOCK bug
+// (stock 1.7.9 behaves identically; checked on a dummy server).
+//
+// The bug: a trigger into play (trigger, or mute_trigger from Mute)
+// restarts the loop at the top of its buffer, index 0.  In normal play
+// the loop runs input + output latency ahead in the buffer -- playback
+// after a record starts at index IL + OL (MULTI_TRIGGER and the
+// record-end paths add it) -- so that what is heard lines up with what
+// was played.  A restart adds nothing, so the loop plays IL + OL behind
+// (1486 samples, 31 ms, at 743/743) until the next restart, including
+// with sync on, where it then sits that far behind the drums.
+//
+// The fix adds the same offset in the STATE_TRIGGER_PLAY case of
+// transitionToNext(), which every trigger into play goes through:
+// immediate ones from MULTI_TRIGGER and synced ones from the
+// waitingForSync sites in run().  Record and TrigStop are excluded,
+// because MULTI_TRIGGER already adds the offset after the transition
+// for them.  Not covered (same bug, unused on the rig): oneshot, and
+// playback-sync re-alignment.  See ROADMAP entry 26.
+// Regression tests: testdef_trigger_latency.py.
+//
+// Set to 0 to revert to the stock (buggy) behaviour.
+#define TRIGGER_LATENCY_FIX 1
+//------ albEnd ----------------------------------
+
 //====== albBegin ==================================================================================
 // SYNCWDEBUG: master switch for ALL debug output in this file.
 // When defined:
@@ -2163,6 +2189,12 @@ static LoopChunk * transitionToNext(SooperLooperI *pLS, LoopChunk *loop, int nex
 	      pLS->fLoopSrcFadeDelta = -1.0f / xfadeSamples;
 	      pLS->fFeedSrcFadeDelta = 1.0f / xfadeSamples;
 	      if (loop) {
+		      //------ albBegin ----------------------------------
+		      // TRIGGER_LATENCY_FIX: the state before this transition
+		      // (overwritten on the next line).
+		      const int prevstate = pLS->state;
+		      (void) prevstate;
+		      //------ albEnd ----------------------------------
 		      pLS->state = STATE_PLAY;
 		      nextstate = STATE_PLAY;
 		      pLS->wasMuted = false;
@@ -2189,6 +2221,19 @@ static LoopChunk * transitionToNext(SooperLooperI *pLS, LoopChunk *loop, int nex
 				      DBG(fprintf(stderr, "%u:%u  after sub %u  pos = %g\n", pLS->lLoopIndex, pLS->lChannelIndex, pLS->lSamplesSinceSync, loop->dCurrPos));
 			      }
 		      }
+		      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_FIX
+		      // Start IL + OL into the loop, as playback after a record
+		      // does, so a restart is heard in time.  From Record and
+		      // TrigStop, MULTI_TRIGGER adds it after this transition.
+		      // No wrap needed: the play loop wraps it, as it does the
+		      // Record path's lLoopLength + IL + OL.  Reverse subtracts.
+		      if (prevstate != STATE_RECORD && prevstate != STATE_TRIG_STOP) {
+			      loop->dCurrPos += ((long) *pLS->pfInputLatency
+						 + (long) *pLS->pfOutputLatency) * pLS->fCurrRate;
+		      }
+#endif
+		      //------ albEnd ----------------------------------
 
 
 	      }
