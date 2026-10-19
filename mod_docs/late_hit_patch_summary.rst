@@ -141,7 +141,7 @@ item links to its full description.
   1.7.9 starts it late by the input plus output latency (31 ms at
   743/743), with sync on too, so the loop then sits that far behind the
   drums until the next restart.  Controlled by the
-  ``TRIGGER_LATENCY_FIX`` build flag (on).  See `Restarts Now Play in
+  ``RESTART_POSITION_FIX`` build flag (on).  See `Restarts Now Play in
   Time`_ in the appendix.
 
 - **Adjustable window.** How late a press can be and still count as on
@@ -1087,7 +1087,7 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        late-hit correction's pulse tracking, as a sync source change
        already does (see `Late-Hit Correction Robustness`_).  Fixes a bug
        in this fork's own late-hit code.  Set to 0 to remove the reset.
-   * - ``TRIGGER_LATENCY_FIX``
+   * - ``RESTART_POSITION_FIX``
      - ``plugin.cc``
      - ``1``
      - When 1 (default), a stock 1.7.9 bug fix is active: a trigger into
@@ -1095,7 +1095,8 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        playback after a record does, so it is heard in time (see `Restarts
        Now Play in Time`_ in the appendix).  Set to 0 to revert to stock
        behavior.  A bug fix with an escape hatch, not a tunable: no
-       session-file or OSC equivalent.
+       session-file or OSC equivalent.  Unrelated to the
+       ``trigger_latency`` setting.
    * - ``SYNCWDEBUG``
      - ``plugin.cc``
      - *(commented out)*
@@ -1680,9 +1681,9 @@ re-alignment (``playback_sync``), which snaps a playing loop to the top
 of its buffer at a sync point.  Its check for being near the loop start
 compares buffer positions too, so it needs measuring before a fix.
 
-**Guarded by a compile-time flag.**  ``TRIGGER_LATENCY_FIX``
+**Guarded by a compile-time flag.**  ``RESTART_POSITION_FIX``
 (``plugin.cc``, default ``1``).  Set it to ``0`` and rebuild to revert to
-stock behavior.  Regression tests: ``testdef_trigger_latency.py`` (seven
+stock behavior.  Regression tests: ``testdef_restart_position.py`` (seven
 of its eleven tests fail with the flag at 0; the other four guard a
 trigger or oneshot that ends a record, a oneshot still ending Muted, and
 zero latency).

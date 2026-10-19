@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 """
-Regression tests for TRIGGER_LATENCY_FIX (stock bug, ROADMAP entry 26).
+Regression tests for RESTART_POSITION_FIX (stock bug, ROADMAP entry 26).
 
 A trigger into play restarts the loop at the top of its buffer.  Playback
 after a record starts input + output latency (IL + OL) into the buffer, so
