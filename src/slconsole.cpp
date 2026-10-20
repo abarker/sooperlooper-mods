@@ -272,8 +272,15 @@ static int post_event(char cmd)
 	return ret;
 }
 
+//------ albBegin ----------------------------------
+// liblo 0.32: an OSC handler's fifth argument is declared lo_message, as
+// lo_method_handler has it (stock: void *data).  0.32 makes lo_message its own
+// pointer type, so void * no longer matches and the build fails; up to 0.31
+// lo_message is void *, so this compiles to the same code.  The same change as
+// upstream PRs #50, #55 and #59.
 static int ctrl_handler(const char *path, const char *types, lo_arg **argv, int argc,
-			 void *data, void *user_data)
+			 lo_message data, void *user_data)
+//------ albEnd ----------------------------------
 {
 	// 1st arg is instance, 2nd ctrl string, 3nd is float value
 	//int index = argv[0]->i;
@@ -287,8 +294,11 @@ static int ctrl_handler(const char *path, const char *types, lo_arg **argv, int 
 	return 0;
 }
 
+//------ albBegin ----------------------------------
+// liblo 0.32: lo_message, not void *data (see the first such block in this file).
 static int pingack_handler(const char *path, const char *types, lo_arg **argv, int argc,
-			 void *data, void *user_data)
+			 lo_message data, void *user_data)
+//------ albEnd ----------------------------------
 {
 	// pingack expects: s:engine_url s:version i:loopcount
 	// 1st arg is instance, 2nd ctrl string, 3nd is float value

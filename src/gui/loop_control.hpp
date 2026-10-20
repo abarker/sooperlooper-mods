@@ -170,35 +170,42 @@ class LoopControl
 	
   protected:
 	
+	//------ albBegin ----------------------------------
+	// liblo 0.32: an OSC handler's fifth argument is declared lo_message, as
+	// lo_method_handler has it (stock: void *data).  0.32 makes lo_message its own
+	// pointer type, so void * no longer matches and the build fails; up to 0.31
+	// lo_message is void *, so this compiles to the same code.  The same change as
+	// upstream PRs #50, #55 and #59.
 	static int _control_handler(const char *path, const char *types, lo_arg **argv, int argc,
-				    void *data, void *user_data);
+				    lo_message data, void *user_data);
 
 	int control_handler(const char *path, const char *types, lo_arg **argv, int argc, void *data);
 
 	static int _property_handler(const char *path, const char *types, lo_arg **argv, int argc,
-				    void *data, void *user_data);
+				    lo_message data, void *user_data);
 
 	int property_handler(const char *path, const char *types, lo_arg **argv, int argc, void *data);
 
 	static int _pingack_handler(const char *path, const char *types, lo_arg **argv, int argc,
-				    void *data, void *user_data);
+				    lo_message data, void *user_data);
 
 	int pingack_handler(const char *path, const char *types, lo_arg **argv, int argc, void *data);
 
 	static int _midi_binding_handler(const char *path, const char *types, lo_arg **argv, int argc,
-				    void *data, void *user_data);
+				    lo_message data, void *user_data);
 
 	int midi_binding_handler(const char *path, const char *types, lo_arg **argv, int argc, void *data);
 
 	static int _alive_handler(const char *path, const char *types, lo_arg **argv, int argc,
-				    void *data, void *user_data);
+				    lo_message data, void *user_data);
 
 	int alive_handler(const char *path, const char *types, lo_arg **argv, int argc, void *data);
 
 	static int _error_handler(const char *path, const char *types, lo_arg **argv, int argc,
-				    void *data, void *user_data);
+				    lo_message data, void *user_data);
 
 	int error_handler(const char *path, const char *types, lo_arg **argv, int argc, void *data);
+	//------ albEnd ----------------------------------
 	
 	static void * _osc_traffic(void * arg);
 	void osc_traffic();

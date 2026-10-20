@@ -155,7 +155,7 @@ detect_loop_count (const std::string & host, int port)
 
 	struct Handler {
 		static int fn (const char *path, const char *types, lo_arg **argv,
-		                int argc, void *data, void *user_data) {
+		                int argc, lo_message data, void *user_data) {
 			ReplyBox * box = static_cast<ReplyBox *> (user_data);
 			if (argc >= 3) {
 				*(box->count) = argv[2]->i;
@@ -275,7 +275,7 @@ class BigStateApp : public wxApp
 	void on_config_watch_timer (wxTimerEvent & ev);
 
 	static int _config_ack_handler (const char *path, const char *types, lo_arg **argv,
-	                                   int argc, void *data, void *user_data);
+	                                   int argc, lo_message data, void *user_data);
 };
 
 IMPLEMENT_APP(BigStateApp)
@@ -617,7 +617,7 @@ BigStateApp::start_loop_count_watch ()
 
 int
 BigStateApp::_config_ack_handler (const char *path, const char *types, lo_arg **argv,
-                                     int argc, void *data, void *user_data)
+                                     int argc, lo_message data, void *user_data)
 {
 	BigStateApp * app = static_cast<BigStateApp *> (user_data);
 	if (argc >= 3) {

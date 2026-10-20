@@ -127,7 +127,7 @@ OscStateClient::get_state (LooperState & state) const
 
 int
 OscStateClient::_state_handler (const char *path, const char *types, lo_arg **argv,
-                                  int argc, void *data, void *user_data)
+                                  int argc, lo_message data, void *user_data)
 {
 	OscStateClient * self = static_cast<OscStateClient *> (user_data);
 	return self->state_handler (argv, argc);

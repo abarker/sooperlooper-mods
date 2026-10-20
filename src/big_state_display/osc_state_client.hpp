@@ -66,7 +66,7 @@ class OscStateClient
 	void send_register ();
 
 	static int _state_handler (const char *path, const char *types, lo_arg **argv,
-	                             int argc, void *data, void *user_data);
+	                             int argc, lo_message data, void *user_data);
 	int state_handler (lo_arg **argv, int argc);
 
 	lo_address _engine_addr;

@@ -661,9 +661,16 @@ bool LoopControl::spawn_looper()
 	return _engine_pid > 0;
 }
 
+//------ albBegin ----------------------------------
+// liblo 0.32: an OSC handler's fifth argument is declared lo_message, as
+// lo_method_handler has it (stock: void *data).  0.32 makes lo_message its own
+// pointer type, so void * no longer matches and the build fails; up to 0.31
+// lo_message is void *, so this compiles to the same code.  The same change as
+// upstream PRs #50, #55 and #59.
 int
 LoopControl::_pingack_handler(const char *path, const char *types, lo_arg **argv, int argc,
-			      void *data, void *user_data)
+			      lo_message data, void *user_data)
+//------ albEnd ----------------------------------
 {
 	LoopControl * lc = static_cast<LoopControl*> (user_data);
 	return lc->pingack_handler (path, types, argv, argc, data);
@@ -756,9 +763,12 @@ LoopControl::pingack_handler(const char *path, const char *types, lo_arg **argv,
 	return 0;
 }
 
+//------ albBegin ----------------------------------
+// liblo 0.32: lo_message, not void *data (see the first such block in this file).
 int
 LoopControl::_alive_handler(const char *path, const char *types, lo_arg **argv, int argc,
-			      void *data, void *user_data)
+			      lo_message data, void *user_data)
+//------ albEnd ----------------------------------
 {
 	LoopControl * lc = static_cast<LoopControl*> (user_data);
 	return lc->alive_handler (path, types, argv, argc, data);
@@ -780,9 +790,12 @@ LoopControl::alive_handler(const char *path, const char *types, lo_arg **argv, i
 	return 0;
 }
 
+//------ albBegin ----------------------------------
+// liblo 0.32: lo_message, not void *data (see the first such block in this file).
 int
 LoopControl::_error_handler(const char *path, const char *types, lo_arg **argv, int argc,
-			      void *data, void *user_data)
+			      lo_message data, void *user_data)
+//------ albEnd ----------------------------------
 {
 	LoopControl * lc = static_cast<LoopControl*> (user_data);
 	return lc->error_handler (path, types, argv, argc, data);
@@ -801,9 +814,12 @@ LoopControl::error_handler(const char *path, const char *types, lo_arg **argv, i
 
 
 
+//------ albBegin ----------------------------------
+// liblo 0.32: lo_message, not void *data (see the first such block in this file).
 int
 LoopControl::_control_handler(const char *path, const char *types, lo_arg **argv, int argc,
-			      void *data, void *user_data)
+			      lo_message data, void *user_data)
+//------ albEnd ----------------------------------
 {
 	LoopControl * lc = static_cast<LoopControl*> (user_data);
 	return lc->control_handler (path, types, argv, argc, data);
@@ -856,9 +872,12 @@ LoopControl::control_handler(const char *path, const char *types, lo_arg **argv,
 	return 0;
 }
 
+//------ albBegin ----------------------------------
+// liblo 0.32: lo_message, not void *data (see the first such block in this file).
 int
 LoopControl::_property_handler(const char *path, const char *types, lo_arg **argv, int argc,
-			      void *data, void *user_data)
+			      lo_message data, void *user_data)
+//------ albEnd ----------------------------------
 {
 	LoopControl * lc = static_cast<LoopControl*> (user_data);
 	return lc->property_handler (path, types, argv, argc, data);
@@ -892,9 +911,12 @@ LoopControl::property_handler(const char *path, const char *types, lo_arg **argv
 	return 0;
 }
 
+//------ albBegin ----------------------------------
+// liblo 0.32: lo_message, not void *data (see the first such block in this file).
 int
 LoopControl::_midi_binding_handler(const char *path, const char *types, lo_arg **argv, int argc,
-			      void *data, void *user_data)
+			      lo_message data, void *user_data)
+//------ albEnd ----------------------------------
 {
 	LoopControl * lc = static_cast<LoopControl*> (user_data);
 	return lc->midi_binding_handler (path, types, argv, argc, data);
