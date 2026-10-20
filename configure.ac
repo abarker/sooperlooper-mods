@@ -10,7 +10,11 @@ SOOP_MAJOR_VERSION=1
 SOOP_MINOR_VERSION=7
 SOOP_MICRO_VERSION=9
 
-BETA=
+#------ albBegin ----------------------------------
+# This fork's release number, so the version reads "1.7.9-mods.N" (stock:
+# BETA= empty).  Bump it for each release and tag that commit v1.7.9-mods.N.
+BETA=-mods.1
+#------ albEnd ----------------------------------
 
 AC_SUBST(SOOP_MAJOR_VERSION)
 AC_SUBST(SOOP_MINOR_VERSION)

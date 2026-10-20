@@ -1232,6 +1232,14 @@ Where the Changes Are in the Source
 | their own sections: ``src/big_state_display/`` in `New Tool: slbigstate`_,
 | ``src/beat_tracker.hpp`` in `JackSync Beat Tracking`_, new test files in
 | `Test Suite`_.
+| **Version:** ``1.7.9-mods.N``, set by ``BETA=-mods.N`` in ``configure.ac``
+| (stock leaves ``BETA`` empty).  Configure puts it into ``version.h``'s
+| ``sooperlooper_version``, so it shows in slgui's title, About box and
+| splash, the engine's startup banner and ``-V``, the engine's OSC ping
+| reply, and session files.  For each release, bump ``N``, rebuild (make
+| reruns configure), and tag the commit ``v1.7.9-mods.N``.  slgui shows the
+| version it was built with, not the engine's: they differ if the engine on
+| ``PATH`` is from another build.
 | **All new code sections** are bracketed with ``albBegin`` / ``albEnd`` markers,
 | ``//------ albBegin`` / ``//------ albEnd``.  Search for ``albBegin`` to
 | locate every changed block.
