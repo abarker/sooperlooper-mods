@@ -56,6 +56,16 @@ and glossaries at the end.
    should compile wherever stock SooperLooper 1.7.9 does, since this
    patch leaves the Windows and macOS code paths untouched.
 
+   It also builds with liblo 0.32 (Arch Linux, and likely newer
+   distributions), which stock 1.7.9 does not.  0.32 gives each liblo
+   handle its own pointer type, and stock's OSC handlers, declared with
+   ``void *`` where liblo now expects ``lo_message``, fail to compile.
+   The fork declares them with ``lo_message``, the same change as stock's
+   open pull requests #50, #55 and #59, and in its own ``slbigstate`` too.
+   With liblo 0.31 and earlier, ``lo_message`` is ``void *``, so the
+   compiled code is unchanged.  Checked by compiling against 0.32's
+   headers; not yet run on a system with 0.32 installed.
+
    Stock's Windows build notes say JACK MIDI input does not work there.
    That has not been rechecked; if it still holds, this patch's JACK MIDI
    feature would not work there either.  The late-hit corrections go

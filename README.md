@@ -203,7 +203,7 @@ To connect your MIDI device, you need to use a MIDI patchbay.
 |---------------|------------------------------------------------------------------------------------------------------------------|----------------------------------|
 | JACK  >= 0.80 | http://jackaudio.org/                                                                                            |                                  |
 | wxWidgets     | https://www.wxwidgets.org/                                                                                       | It should work with the 2.6.x, 2.8, or 3.x versions. For OS X you will want at least the 2.6.1 version of [wxMac](https://wiki.wxwidgets.org/Install#Mac_OS). |
-| liblo >= 0.18 | http://liblo.sourceforge.net/                                                                                    | Lightweight OSC library          |
+| liblo >= 0.18 | http://liblo.sourceforge.net/                                                                                    | Lightweight OSC library. This fork also builds with 0.32, which stock 1.7.9 does not. |
 | sigc++ >= 2   | https://libsigcplusplus.github.io/libsigcplusplus/                                                               | You probably already have it.... |
 | libsndfile    | http://www.mega-nerd.com/libsndfile/                                                                             |                                  |
 | libsamplerate | http://www.mega-nerd.com/SRC/                                                                                    |                                  |
