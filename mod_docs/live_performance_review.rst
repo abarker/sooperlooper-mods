@@ -497,6 +497,10 @@ C7: ``_pending_event_offset`` ordering vs. multiple events per buffer
 **Confidence**: HIGH.
 
 **Status**: CLOSED — invariant holds; comment added to looper.cpp.
+**Later**: the zeroing this item audits has since been removed, with
+``_pending_event_offset``.  A pedal measurement showed exactly placed
+commands still arrive well after the press, so trigger latency applies
+to them as well (patch summary, "JACK MIDI Input: Implementation").
 
 **Verification**
 

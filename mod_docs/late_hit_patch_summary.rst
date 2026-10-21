@@ -1402,15 +1402,20 @@ JACK MIDI events carry an exact sample offset within the current buffer
 event boundary, running audio up to the event position before applying the command. This
 is the standard JACK buffer-splitting technique for sample-accurate event handling.
 
-A JACK MIDI command arriving at sample *N* within a buffer is processed with
-``_pending_event_offset = N``.  The ``run()`` call that follows sees this non-zero
-offset and zeros ``TriggerLatency`` for that segment, on the reasoning that the
-event is already placed at its exact sample.  ALSA MIDI and OSC events, which carry
-no sub-buffer position, always have ``_pending_event_offset = 0`` and keep the full
-``TriggerLatency``; so does a JACK MIDI event at offset 0.  ``TriggerLatency`` is
-read only where overdub, multiply and insert (and replace and substitute, through
+Trigger latency applies to these commands as to any other.  Placing a
+command at its exact sample removes the scatter of where in the buffer it
+fell, not its delay: it still reaches SooperLooper after the press, by one
+period of JACK MIDI buffering plus the MIDI hardware's own delay, and that
+delay is what the setting describes.  (An earlier version of this fork set
+``TriggerLatency`` to 0 for JACK MIDI commands at a nonzero offset, on the
+reasoning that such a command was already placed at the press.  A pedal
+measured with a mic on its switch showed the command 685 samples after the
+press at 256 frames, so that was removed.)  ``TriggerLatency`` is read only
+where overdub, multiply and insert (and replace and substitute, through
 overdub) start taking input (``lFramesUntilInput = input_latency −
-trigger_latency``); plain record does not use it.
+trigger_latency``); plain record, the end of an overdub, mute and trigger
+do not use it.  The setup guide's "Trigger latency" section says what value
+to use.
 
 **MIDI clock on the JACK MIDI input.**  Clock, Start and Stop messages on
 ``midi_in`` go through the same path as commands, into SooperLooper's MIDI

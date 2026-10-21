@@ -811,8 +811,54 @@ resulting ~782-sample offset visible when zoomed in:
    :alt: Zoomed view showing ~782-sample offset between overdubbed and loop beats
    :target: images/overdub_error_example_test_zoomed.png
 
-2.9 Additional tests
----------------------
+2.9 Trigger latency (overdub starts)
+-------------------------------------
+
+SooperLooper has a third latency setting, the **trigger latency**:
+``trigger_latency`` on each loop's line in the session file.  slgui shows
+no control for it, so edit the session file while SooperLooper is not
+running.  It tells SooperLooper how late a command arrives after you
+press the pedal.
+
+It is used in one place only: the start of an overdub, and of Multiply,
+Insert, Replace and Substitute, which start the same way.  When one of
+them starts, SooperLooper waits for the sound you played at the moment of
+the press to come in -- that takes the input latency -- and starts
+recording with it.  The command itself arrives a little after the press,
+so part of that wait is already over when it gets there.  The trigger
+latency is that part, and SooperLooper waits that much less.  Nothing else
+uses it: not plain recording, not the end of an overdub, not Mute or
+Trigger, and not where recorded material lands in the loop, which the
+input and output latency settings decide.
+
+Set too low, an overdub starts a little after your press: a note you
+strike right as you press loses the start of its attack.  Set too high,
+the overdub takes in a little of what you played just before the press.
+Either way the error is the difference, a few milliseconds.
+
+What to set:
+
+* At least one JACK period: the buffer size, **Frames/Period** in
+  QjackCtl's setup dialog (256 in this setup, 5.3 ms at 48 kHz).  JACK
+  hands MIDI from a hardware port on a period later, as it does audio.
+  This is what SooperLooper's autoset (**Preferences -> Latency**) sets.
+* The MIDI hardware adds more: the pedal's own switch handling, the MIDI
+  cable and the interface.  In this setup -- a 5-pin DIN MIDI pedal into
+  the audio interface's MIDI input -- commands measured 685 samples
+  (14 ms) after the press, about 2.7 periods.  Other pedals will differ.
+* Commands through the remapper with ``--jack-rt`` arrive as early as from
+  the pedal directly, so the same value applies.  Without ``--jack-rt``,
+  add one period.
+* If you can't measure it, use one period.  That is as low as the true
+  value can be, so an overdub never takes in sound from before the press;
+  at worst it starts a few milliseconds late (in this setup, 9 ms late).
+* With autoset off, the value is whatever the session holds, and 0 for a
+  loop where it was never set.  Zero is the least accurate choice: every
+  overdub then starts the whole command delay after the press (14 ms
+  here).
+
+2.10 Additional tests
+----------------------
 
 * **Footswitch-noise marker.** Put a mic on the floor next to the footswitch
   to catch the switch's mechanical click. This is most useful with the drums
