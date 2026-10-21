@@ -134,9 +134,13 @@ item links to its full description.
   boundary ends the loop at that boundary, so the loop is not a cycle too
   long.  See `Late Record Stop`_.
 
-- **Late Multiply end.** The same correction for ending a Multiply.  It can
-  be switched off at build time with the ``LATE_HIT_MULTIPLY_CORRECTION``
-  flag, if it ever causes problems.
+- **Late Multiply end.** The same correction for ending a Multiply, at
+  the boundary where the Multiply's current cycle began.  With
+  Eighths/Cycle shorter than the loop's cycle there are boundaries inside
+  a cycle too; a press just after one of those waits for the cycle's end,
+  as it would without the correction.  It can be switched off at build
+  time with the ``LATE_HIT_MULTIPLY_CORRECTION`` flag, if it ever causes
+  problems.
 
 - **Late Mute and Unmute.** With mute-quantize on, a Mute or Unmute press
   just after the boundary acts at that boundary instead of the next one.
@@ -1840,8 +1844,10 @@ or Substitute.
 default ``1``).  Set it to ``0`` and rebuild to revert to stock behavior,
 and to the old late Multiply end.  Regression tests:
 ``testdef_multiply_end.py`` (three of its four tests fail with the flag at
-0; the fourth guards an end by Overdub).  They cover on-time ends; the
-late end is covered by the dummy-server probes only.
+0; the fourth guards an end by Overdub).  They cover on-time ends, and a
+fifth (``TestLateEndMidCycle``) a late end just after a boundary inside a
+cycle, which must wait for the cycle's end; the late end at a cycle's
+start is covered by the dummy-server probes only.
 
 Why Not a LADSPA Port
 ~~~~~~~~~~~~~~~~~~~~~
@@ -2371,8 +2377,15 @@ Known Issues and Future Work
 
 -  **Multiply end:** the late-hit correction is tested on a dummy JACK server,
    together with the ``MULTIPLY_END_FIX`` fix (see `Multiplied Loops Now End
-   Cleanly`_), but not yet on the rig (disable with
-   ``LATE_HIT_MULTIPLY_CORRECTION 0`` if regressions appear).
+   Cleanly`_) (disable with ``LATE_HIT_MULTIPLY_CORRECTION 0`` if
+   regressions appear).  On the rig, with sync boundaries every beat and a
+   4-beat loop cycle, it fired after any beat: a press just after a beat
+   inside a cycle took back a cycle that had not just been added, so the
+   Multiply was cancelled (stock gave the full length).  Now only the
+   boundary where the current cycle began counts: the play position runs
+   input + output latency ahead of the sync grid, so that cycle is
+   T + 1 + IL + OL samples old at the press, and a boundary inside the
+   cycle is at least one sync period off.
 
 -  **Multiply start:** deferred. The frontfill machinery in ``beginMultiply()`` makes the
    position adjustment more involved; low priority since Multiply start snaps to the

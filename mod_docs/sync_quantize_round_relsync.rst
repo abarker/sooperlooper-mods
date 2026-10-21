@@ -266,7 +266,7 @@ later.  This fork treats a press within a short window after a boundary
 (100 ms by default) as if it had arrived on that boundary: a late start
 still starts on the beat, with the audio played since the beat kept, and a
 late stop ends the loop on the beat.  The same applies to the press that
-ends a Multiply.  It needs the loop's Sync box checked and a source
+ends a Multiply, just after the boundary where its current cycle began.  It needs the loop's Sync box checked and a source
 producing boundaries -- with JACK or Internal, that means Quantize set to
 Cycle or 8th.  It does not apply with Rel Sync on, where a recording is
 meant to start and end off the boundary.  The window and a
