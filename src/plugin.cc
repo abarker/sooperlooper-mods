@@ -3668,8 +3668,22 @@ runSooperLooper(LADSPA_Handle Instance,
 					      //
 					      // Guard: lCycles >= 2 ensures we never decrement to 0.
 					      // Same g_late_hit_window_ms and T as the Record stop path.
+					      //
+					      // The boundary must also be where the current cycle began:
+					      // sync pulses can come several times per cycle (Eighths/Cycle
+					      // shorter than the loop's cycle), and only the one at a cycle
+					      // start added a cycle.  The play position runs IL + OL ahead
+					      // of the sync grid, so a cycle that began at that boundary is
+					      // T + 1 + IL + OL samples old (the + 1 as for the record
+					      // late-hit); a boundary inside the cycle is at least one sync
+					      // period off, more than half the window.
 					      {
 						      unsigned long shiftSamples = effectiveLateHitWindow(pLS, eighthPerCycle);
+						      const long sinceCycle = (long) loop->dCurrPos
+							      - (long) (loop->lLoopLength - loop->lCycleLength);
+						      const long cycleFromBoundary = (long) T + 1 + (long) (lInputLatency + lOutputLatency);
+						      const bool boundaryIsCycleStart =
+							      labs (sinceCycle - cycleFromBoundary) <= (long) (shiftSamples / 2);
 						      // C2 fix: bLateHitBypassed prevents late-hit firing on slave
 						      // channels in internal sync mode; see Looper::run() BLOCK 5.
 						      // Rel Sync fix: fSyncMode == 1 only, as for the record
@@ -3679,12 +3693,15 @@ runSooperLooper(LADSPA_Handle Instance,
 							                              && fSyncMode == 1.0f
 							                              && pLS->bSyncPulseReceived
 							                              && loop->lCycles >= 2
+							                              && boundaryIsCycleStart
 							                              && !pLS->bLateHitBypassed);
 						      SYNCWDBG(SL_LOG_RT(
 							      "%u:%u  MultiplyEnd: T=%lu shiftSamples=%lu lCycles=%lu"
+							      " sinceCycle=%ld (cycle start at the boundary: %ld)"
 							      " withinWindow=%d syncMode=%g\n",
 							      pLS->lLoopIndex, pLS->lChannelIndex,
 							      T, shiftSamples, loop->lCycles,
+							      sinceCycle, cycleFromBoundary,
 							      (int)multStopInWindow, fSyncMode));
 						      if (multStopInWindow) {
 							      loop->lCycles -= 1;

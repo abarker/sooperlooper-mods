@@ -16,7 +16,7 @@ never comes, and the multiply finishes where the bug was: when the play
 position reaches the loop's end (as on a rig, where it gets there IL + OL
 before the beat).  With sync off a Round-off or Overdub end would take
 effect at once and miss that path.  The late multiply end (late-hit) is
-covered by the dummy-server probes, not here.
+covered by the dummy-server probes, except for TestLateEndMidCycle below.
 """
 
 import time
@@ -158,6 +158,50 @@ class TestMultiplyEnd(MultiplyEndTestCase):
         self.assertState("Playing")
         self.assertEqual(self.loop_len(), multiplied)
         self.assertSteadyPass("after Redo")
+
+
+class TestLateEndMidCycle(MultiplyEndTestCase):
+    """A multiply end just after a sync pulse inside a cycle is not a late
+    hit: only a pulse at a cycle start added a cycle.  With Eighths/Cycle
+    shorter than the loop's cycle, pulses come several times per cycle,
+    and the fork used to take a cycle back after any of them."""
+
+    WINDOW_BUFS = 4
+
+    def setUp(self):
+        super().setUp()
+        test_engine.cvar.g_late_hit_window_ms = (self.WINDOW_BUFS * self.buf / self.sr) * 1000.0
+
+    def tearDown(self):
+        test_engine.cvar.g_late_hit_window_ms = 100.0
+        super().tearDown()
+
+    def testRoundOn_EndAfterMidCyclePulse_Waits(self):
+        """Round on: the end waits for the cycle's end, as with no pulse."""
+        self.looper.set_port(test_engine.Round, 1.0)
+        self.record_take()
+        tb = self.take // self.buf + 1
+        self.engine.request("MULTIPLY")
+        self.wait_buffers(2)
+        self.looper.sync_inject_value = 2.0       # start
+        self.wait_buffers(2)
+        self.looper.sync_inject_value = 0.0
+        self.wait_buffers(2)
+        self.assertState("Multiplying")
+        self.wait_buffers(tb + tb // 2)           # mid second cycle
+        self.looper.sync_inject_value = 2.0       # a pulse inside the cycle
+        self.wait_buffers(2)
+        self.looper.sync_inject_value = 0.0
+        self.wait_buffers(1)                      # well inside the window
+        self.engine.request("MULTIPLY")
+        self.wait_buffers(3)
+        self.assertState("Multiplying")           # waiting, not trimmed to one take
+        self.wait_buffers(2 * tb)
+        self.assertState("Playing")
+        L = self.loop_len()
+        self.assertTrue(L % self.take == 0 and L >= 2 * self.take,
+                        f"loop {L}, take {self.take}: expected whole takes, at least two")
+        self.assertSteadyPass("late end after a mid-cycle pulse")
 
 
 if __name__ == "__main__":
