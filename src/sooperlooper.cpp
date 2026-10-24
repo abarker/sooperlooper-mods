@@ -368,6 +368,13 @@ int main(int argc, char** argv)
 #elif WITH_COREMIDI
 	MIDI::PortRequest portreq (driver->get_name(), driver->get_name(),  "duplex", "coremidi");
 	midibridge = new MidiBridge(driver->get_name(), portreq);
+	//------ albBegin ----------------------------------
+	// Without ALSA or CoreMIDI (Windows under Cygwin), a bridge with no
+	// MIDI port of its own, so that the JACK MIDI port's events and the
+	// MIDI bindings still reach the engine.
+#else
+	midibridge = new MidiBridge(driver->get_name());
+	//------ albEnd ----------------------------------
 #endif
 
 	if (midibridge && midibridge->is_ok()) {
