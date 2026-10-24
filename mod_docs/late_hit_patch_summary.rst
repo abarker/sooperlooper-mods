@@ -2,26 +2,27 @@ SooperLooper Late-Hit Recording Modification Summary
 ====================================================
 
 This fork of SooperLooper 1.7.9 makes looping to a beat more forgiving and
-more precise:
+more precise.
 
-- a Record start or stop, Mute or Unmute, or Multiply-end press that lands a
-  moment after the beat counts as on time, instead of waiting a whole cycle;
-- a restart (``trigger``, or ``mute_trigger`` from Mute) or a oneshot plays
-  the loop in time, where stock starts it late by the input plus output
-  latency;
-- a multiplied loop is recorded to its end, where stock leaves its last
-  input plus output latency unrecorded, a dropout on every pass;
-- when synced to JACK transport, loops stay on the transport master's beat
-  through tempo changes;
+- A Record start or stop, Mute or Unmute, or Multiply-end press that lands
+  a moment after the beat counts as on time, instead of waiting a whole
+  cycle.
+- A restart (``trigger``, or ``mute_trigger`` from Mute) or a oneshot plays
+  the loop in time.  Stock starts it late by the input plus output latency.
+- A multiplied loop is recorded to its end.  Stock leaves its last input
+  plus output latency unrecorded, a dropout on every pass.
+- When synced to JACK transport, loops stay on the transport master's beat
+  through tempo changes.
 - SooperLooper can take commands, and send MIDI clock, over JACK MIDI
-  directly;
-- two new commands for a switch's long or double press: one cancels a
-  recording just started, the other undoes the last overdub even though
-  the press has already started a new one; and an optional timeout cancels
-  a recording left running over a playing loop;
-- a separate large-text display, ``slbigstate``, shows loop state from
-  across the room;
-- a latency tool, ``sllatency``, measures JACK's and SooperLooper's latency
+  directly.
+- Two new commands suit a switch's long or double press.  One cancels a
+  recording just started; the other undoes the last overdub, even though
+  the press has already started a new one.
+- An optional timeout cancels a recording left running over a playing
+  loop.
+- A separate large-text display, ``slbigstate``, shows loop state from
+  across the room.
+- A latency tool, ``sllatency``, measures JACK's and SooperLooper's latency
   with a click and sets SooperLooper's to match.
 
 This document describes each change and how to configure it.  How each is
@@ -53,35 +54,20 @@ and glossaries at the end.
 .. tip:: **Platform**
 
    Built and tested only on Ubuntu 24.04, using the script above.  It
-   should compile wherever stock SooperLooper 1.7.9 does, since this
-   patch leaves the Windows and macOS code paths untouched.
+   should compile wherever stock SooperLooper 1.7.9 does.
 
    It also builds with liblo 0.32 (Arch Linux, and likely newer
-   distributions), which stock 1.7.9 does not.  0.32 gives each liblo
-   handle its own pointer type, and stock's OSC handlers, declared with
-   ``void *`` where liblo now expects ``lo_message``, fail to compile.
-   The fork declares them with ``lo_message``, the same change as stock's
-   open pull requests #50, #55 and #59, and in its own ``slbigstate`` too.
-   With liblo 0.31 and earlier, ``lo_message`` is ``void *``, so the
-   compiled code is unchanged.  Checked by compiling against 0.32's
-   headers; not yet run on a system with 0.32 installed.
+   distributions), which stock 1.7.9 does not; not yet run on a system
+   with 0.32 installed.
 
    Windows builds under Cygwin; ``windows/README.md`` has the steps and
-   a build script, ``windows/cygwin_compile.bash``, which has built and
-   run this fork once on Windows 10 (on JACK's dummy driver).  Stock's
-   Windows notes said MIDI input did not work there, because stock reads
-   MIDI only from ALSA and CoreMIDI.  This patch's JACK MIDI port should
-   make it work, through JACK's own Windows MIDI driver, now that the
-   engine sets up its MIDI handling without ALSA or CoreMIDI too (before
-   that, the port's events and the MIDI bindings were ignored there);
-   untried.  The late-hit corrections go through OSC and should be
-   unaffected.
+   a build script, which has built and run this fork once on Windows 10.
+   MIDI control on Windows should work through the fork's JACK MIDI
+   port; untried.
 
    Stock's standalone macOS build has one reported startup hang on
-   Catalina, unrelated to this patch, with a workaround (enabling system
-   sharing): https://github.com/essej/sooperlooper/issues/32.  Other
-   users report it working, and stock has had several Catalina-specific
-   point releases.
+   Catalina, unrelated to this patch, with a workaround:
+   https://github.com/essej/sooperlooper/issues/32.
 
 .. tip:: **Quick Start**
 
