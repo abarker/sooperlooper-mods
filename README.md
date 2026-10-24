@@ -9,13 +9,14 @@ at-a-distance loop-state display.  Thanks to Jesse Chappell for the
 original SooperLooper.
 
 **Late-hit correction.** When sync is active, a press that lands within a
-configurable window after a sync boundary is corrected back to that
-boundary instead of waiting for the next one — covering Record start/end,
-Mute/Unmute, and Multiply end. A corrected Record start or end gives the
-same loop an on-time press would, to the sample, fades included. The window defaults to 100ms, narrowable to
-a fraction of the current quantize cycle, and is configurable via the
-session file or live over OSC. Also fixes a stock 1.7.9 bug where a
-quantized Pause press while Muted resolved to Playing instead of Paused.
+configurable window after a sync boundary is corrected back to that boundary
+instead of waiting for the next one — covering Record start/end, Mute/Unmute,
+and Multiply end. A corrected Record start or end gives the same loop an
+on-time press would, to the sample, fades included. The window defaults to
+100ms, narrowable to a fraction of the current quantize cycle, and is
+configurable via the session file or live over OSC. Also fixes a stock 1.7.9
+bug where a quantized Pause press while Muted resolved to Playing instead of
+Paused.
 
 **Restarts in time.**  Fixes a stock 1.7.9 bug: a restart (`trigger`, or
 `mute_trigger` from Mute) or a oneshot (`once`) started the loop late by
@@ -30,31 +31,29 @@ boundary) left that loop's last input plus output latency (31 ms at
 now recorded to its end and plays in time, after an on-time or late
 Multiply end, and so does the original take after an Undo.
 
-**`cancel_record_mute`, `cancel_overdub_undo` and record failsafe.**  Plain `record` already
-carries a loop from recording into play on its own — that part needs
-nothing new.  What `cancel_record_mute` adds is a clean way to stop that
-play again without needing a second button.  An optional second trigger on the same switch does the
-stopping: a long hold or a quick double tap, always following the
-`record` the switch sent the moment it was pressed.  That `record` is
-always sent at once, on every press (the switch fires "eagerly");
-waiting to see whether a second trigger will follow would cost the very
-timing accuracy this patch exists to protect.  A separate button bound to
-`mute_trigger` would do the same job for a playing loop, but costs a
-second pedal and is one more control to remember under performance
-pressure.  Internally
-`cancel_record_mute` works by discarding the take and restoring the
+**`cancel_record_mute`, `cancel_overdub_undo` and record failsafe.**  Plain
+`record` already carries a loop from recording into play on its own — that part
+needs nothing new.  What `cancel_record_mute` adds is a clean way to stop that
+play again without needing a second button.  An optional second trigger on the
+same switch does the stopping: a long hold or a quick double tap, always
+following the `record` the switch sent the moment it was pressed.  That
+`record` is always sent at once, on every press (the switch fires "eagerly");
+waiting to see whether a second trigger will follow would cost the very timing
+accuracy this patch exists to protect.  A separate button bound to
+`mute_trigger` would do the same job for a playing loop, but costs a second
+pedal and is one more control to remember under performance pressure.
+Internally `cancel_record_mute` works by discarding the take and restoring the
 previous loop muted, but that's implementation, not intent — the performer
-isn't undoing a mistake, they're choosing to stop play in favor of
-silence, on the same pedal.  A companion setting, record failsafe (off by
-default), covers the
-case where that second trigger never comes at all — a record simply left
-running too long, with no press of any kind.  `cancel_overdub_undo` puts
-a general undo button on top of an overdub switch: a tap overdubs, and a
-long press undoes as if that overdub press had not happened — usually
-taking back the last overdub, but undoing whatever was done last.  Since that hold is a real undo, the overdub switch must be
-tapped: a press that is merely slow undoes too.  The record switch, by
-contrast, can be held freely except when it starts a recording over a
-playing loop.
+isn't undoing a mistake, they're choosing to stop play in favor of silence, on
+the same pedal.  A companion setting, record failsafe (off by default), covers
+the case where that second trigger never comes at all — a record simply left
+running too long, with no press of any kind.  `cancel_overdub_undo` puts a
+general undo button on top of an overdub switch: a tap overdubs, and a long
+press undoes as if that overdub press had not happened — usually taking back
+the last overdub, but undoing whatever was done last.  Since that hold is a
+real undo, the overdub switch must be tapped: a press that is merely slow
+undoes too.  The record switch, by contrast, can be held freely except when it
+starts a recording over a playing loop.
 
 **JACK sync through tempo changes.**  With a JACK timebase master such
 as Hydrogen, stock SooperLooper's sync pulses drift off the master's beat
@@ -87,6 +86,9 @@ For full details see the documentation in [`mod_docs/`](mod_docs/):
   background on SooperLooper's sync and quantize model.
 - [`sooperlooper_and_ardour_setup_guide.rst`](mod_docs/sooperlooper_and_ardour_setup_guide.rst) —
   a practical low-budget live-looping setup and latency-calibration guide.
+- [`windows/README.md`](windows/README.md) — building and running on
+  Windows under Cygwin, with a build script (built and run once; MIDI
+  untried).
 
 All new code is bracketed with `albBegin` / `albEnd` markers; search for
 `albBegin` to locate every changed block.

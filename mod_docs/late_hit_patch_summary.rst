@@ -66,10 +66,16 @@ and glossaries at the end.
    compiled code is unchanged.  Checked by compiling against 0.32's
    headers; not yet run on a system with 0.32 installed.
 
-   Stock's Windows build notes say JACK MIDI input does not work there.
-   That has not been rechecked; if it still holds, this patch's JACK MIDI
-   feature would not work there either.  The late-hit corrections go
-   through OSC and should be unaffected.
+   Windows builds under Cygwin; ``windows/README.md`` has the steps and
+   a build script, ``windows/cygwin_compile.bash``, which has built and
+   run this fork once on Windows 10 (on JACK's dummy driver).  Stock's
+   Windows notes said MIDI input did not work there, because stock reads
+   MIDI only from ALSA and CoreMIDI.  This patch's JACK MIDI port should
+   make it work, through JACK's own Windows MIDI driver, now that the
+   engine sets up its MIDI handling without ALSA or CoreMIDI too (before
+   that, the port's events and the MIDI bindings were ignored there);
+   untried.  The late-hit corrections go through OSC and should be
+   unaffected.
 
    Stock's standalone macOS build has one reported startup hang on
    Catalina, unrelated to this patch, with a workaround (enabling system
@@ -1031,9 +1037,9 @@ untested elsewhere:
 - *macOS:* should work, with JACK installed.  The advice gives only the
   total change, since JACK's current extra latencies can be read only
   through jackdbus, which is Linux-only.
-- *Windows:* not installed by the Windows build; running the script
-  directly should work where JACK and the ``jack`` module do, with the
-  same limitation as on macOS.
+- *Windows:* installed by the Cygwin build (``windows/README.md``), but
+  not copied by its ``package.sh``.  It should work where JACK and the
+  ``jack`` module do, with the same limitation as on macOS.
 
 The file picker needs a graphical desktop; elsewhere the file name is
 typed.
