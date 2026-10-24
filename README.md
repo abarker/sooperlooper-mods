@@ -1,11 +1,12 @@
 ## Modifications to SooperLooper 1.7.9
 
-This is a modified version of SooperLooper which adds late-hit correction
+This is a modified fork of SooperLooper which adds late-hit correction
 for record, mute/unmute, and multiply operations, two new commands around
 recording safety, direct JACK MIDI ports, JACK sync that stays on the
 beat through tempo changes, fixes for restarts that play late and for
 multiplied loops that drop out at their end, and a standalone
-at-a-distance loop-state display.
+at-a-distance loop-state display.  Thanks to Jesse Chappell for the
+original SooperLooper.
 
 **Late-hit correction.** When sync is active, a press that lands within a
 configurable window after a sync boundary is corrected back to that
