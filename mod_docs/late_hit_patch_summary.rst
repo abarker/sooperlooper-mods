@@ -94,11 +94,11 @@ and glossaries at the end.
       ``record_failsafe_seconds`` and ``mute_late_hit_ms``, two further
       settings described later, which you do not need to add here::
 
-          <Globals tempo="170" eighth_per_cycle="2" common_dry="0" common_wet="1"
+          <Globals tempo="125" eighth_per_cycle="2" common_dry="0" common_wet="1"
            input_gain="1" sync_source="-1" auto_disable_latency="1"
            jack_timebase_master="0" output_midi_clock="0" use_midi_start="0"
            use_midi_stop="0" send_midi_start_on_trigger="0" smart_eighths="0"
-           late_hit_window_ms="200" late_hit_max_quant_unit_fraction="0.5"
+           late_hit_window_ms="100" late_hit_max_quant_unit_fraction="0.5"
            record_failsafe_seconds="120.0" mute_late_hit_ms="100"/>
 
    3. **Restart SooperLooper** with the session file::
