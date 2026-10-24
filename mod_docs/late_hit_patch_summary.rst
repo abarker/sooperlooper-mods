@@ -8,9 +8,9 @@ more precise.
   a moment after the beat counts as on time, instead of waiting a whole
   cycle.
 - A restart (``trigger``, or ``mute_trigger`` from Mute) or a oneshot plays
-  the loop in time.  Stock starts it late by the input plus output latency.
-- A multiplied loop is recorded to its end.  Stock leaves its last input
-  plus output latency unrecorded, a dropout on every pass.
+  the loop in time, where stock starts it slightly late.
+- A multiplied loop is recorded to its end, where stock leaves a short
+  dropout at the end on every pass.
 - When synced to JACK transport, loops stay on the transport master's beat
   through tempo changes.
 - SooperLooper can take commands, and send MIDI clock, over JACK MIDI
