@@ -4,7 +4,10 @@
 class TestEngine 
 {
     public:
-        TestEngine(const char* name);
+        //------ albBegin ----------------------------------
+        // Was: TestEngine(const char* name), always one channel.
+        TestEngine(const char* name, int chans = 1);
+        //------ albEnd ----------------------------------
         ~TestEngine();
 
         jack_client_t* jack;

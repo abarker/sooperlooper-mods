@@ -234,6 +234,18 @@ item links to its full description.
   next boundary.  Clock on ``midi_in``, with its perfectly regular timing,
   hit this reliably; clock through ALSA only rarely.
 
+- **Rel Sync first-recording fix** (``REL_SYNC_STALE_PHASE_FIX``, on by
+  default).  A loop counts the samples since the last cycle boundary only
+  while its Sync is on, so after Sync is turned off and on again -- the
+  checkbox, a sync settings change, or a tool that turns Sync off at every
+  transport stop -- the count is stale until the next boundary.  In stock
+  1.7.9 a Rel Sync recording started in that gap takes the stale count as
+  its offset: the loop comes out the wrong length, or, if the count is
+  over a cycle, the recording never stops.  Now, when a loop enters Rel
+  Sync, its first record press waits for the next boundary and starts
+  there, as plain Sync would; once a boundary has passed, records start at
+  once as before.  Both channels of a stereo loop start together.
+
 .. rubric:: Realtime-Safety Fixes
 
 - **Fewer xruns on transport locates** (``ALB_RT_SAFE_COND_SIGNAL``).

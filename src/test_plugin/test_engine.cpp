@@ -21,13 +21,17 @@ TestEngine::connect_to_jack (const char* name)
 }
 
 
-TestEngine::TestEngine(const char* name)
+TestEngine::TestEngine(const char* name, int chans)
 {
     sl_init();
 	if (connect_to_jack (name)) {
 		return;
 	}
-    looper = new SooperLooper::TestLooper(jack, 0, 1);
+    //------ albBegin ----------------------------------
+    // Was: TestLooper(jack, 0, 1).  chans > 1 for tests of the channels
+    // that take their sync from channel 0's output, as in a stereo loop.
+    looper = new SooperLooper::TestLooper(jack, 0, chans);
+    //------ albEnd ----------------------------------
 
     while (!looper->ok);//wait 
 

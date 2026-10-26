@@ -94,6 +94,15 @@ testdef_cancel_record_mute.py
     content via the input-injection / output-readback support in
     TestLooper.  See ../../mod_docs/late_hit_patch_summary.rst.
 
+testdef_rel_sync_stale_phase.py
+    Regression tests for REL_SYNC_STALE_PHASE_FIX: a Rel Sync record
+    pressed before the first cycle pulse after Sync comes back on waits
+    for that pulse and gives whole cycles; later presses start at once.
+    Uses TestLooper's own pulse generator (``sync_inject_period``,
+    ``sync_clock``) so pulses land on exact samples, and a two-channel
+    engine (``Engine(name, 2)``) to check that the second channel, which
+    takes its sync from channel 0's output, starts with the first.
+
 testdef_late_hit.py
     Regression tests for the late-hit recording correction patch.
     Requires the sync injection fields added to TestLooper (see

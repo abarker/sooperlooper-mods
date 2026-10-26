@@ -429,9 +429,11 @@ pickup; with Rel Sync, you press on the pickup and the loop closes on the
 next one.
 
 It needs a source producing boundaries, and Quantize set to Cycle or 8th.
-The first recording after turning Rel Sync on, or after changing the sync
-settings, can come out the wrong length; the recordings after it are
-right.  Make one recording and undo it before relying on the length.
+Right after Rel Sync comes on -- turning it on, checking the loop's Sync
+box, or turning Sync back on after it was off -- the first Record waits
+for the next boundary and starts there, as plain Sync would; after that
+boundary, Record starts at once again.  (Stock 1.7.9 starts at once but
+can get that first loop's length wrong, or never stop it.)
 
 Common setups for live performance
 ----------------------------------

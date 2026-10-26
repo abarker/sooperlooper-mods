@@ -48,6 +48,10 @@ TestLooper::TestLooper (jack_client_t* j, unsigned int index, unsigned int chan_
 	sync_inject_value   = 1.0f;
 	sync_inject_enabled = false;
 	sync_inject_single  = false;
+	//------ albBegin ----------------------------------
+	sync_inject_period  = 0;
+	sync_clock          = 0;
+	//------ albEnd ----------------------------------
 	process_count       = 0;
 	//------ albBegin ----------------------------------
 	/* -0.7 is the value run() used to hardcode; keep it as the default so
@@ -199,6 +203,37 @@ TestLooper::get_global_samples_since_sync (unsigned int index) const
 	return 0;
 }
 
+//------ albBegin ----------------------------------
+unsigned long
+TestLooper::get_samples_since_sync (unsigned int index) const
+{
+	if (index < _chan_count && _instances[index]) {
+		SooperLooperI * pLS = (SooperLooperI *) _instances[index];
+		return pLS->lSamplesSinceSync;
+	}
+	return 0;
+}
+
+int
+TestLooper::get_channel_state (unsigned int index) const
+{
+	if (index < _chan_count && _instances[index]) {
+		return ((SooperLooperI *) _instances[index])->state;
+	}
+	return -1;
+}
+
+unsigned long
+TestLooper::get_channel_loop_length (unsigned int index) const
+{
+	if (index < _chan_count && _instances[index]) {
+		SooperLooperI * pLS = (SooperLooperI *) _instances[index];
+		return pLS->headLoopChunk ? pLS->headLoopChunk->lLoopLength : 0;
+	}
+	return 0;
+}
+//------ albEnd ----------------------------------
+
 
 void
 TestLooper::request_cmd (int cmd)
@@ -211,6 +246,12 @@ void
 TestLooper::run (jack_nframes_t offset, jack_nframes_t nframes)
 {
 	++process_count;
+
+	//------ albBegin ----------------------------------
+	/* As Looper::run(): the other channels' Sync port follows channel 0's
+	 * (with Rel Sync, channel 0's port is already 2). */
+	_slave_sync_port = ports[Sync];
+	//------ albEnd ----------------------------------
 
 	/* maybe change modes */
 
@@ -253,11 +294,20 @@ TestLooper::run (jack_nframes_t offset, jack_nframes_t nframes)
 
 		if (i == 0) {
 			/* Late-hit test support: fill sync input buffer before connecting. */
-			if (sync_inject_enabled && _our_syncin_buf) {
+			//------ albBegin ----------------------------------
+			// Was: the sync_inject_value fill only.
+			if (sync_inject_enabled && _our_syncin_buf && sync_inject_period) {
+				for (nframes_t n = 0; n < _buffersize; ++n)
+					_our_syncin_buf[n] = ((sync_clock + n) % sync_inject_period == 0)
+						? 2.0f : 0.0f;
+				sync_clock += _buffersize;
+			}
+			else if (sync_inject_enabled && _our_syncin_buf) {
 				for (nframes_t n = 0; n < _buffersize; ++n)
 					_our_syncin_buf[n] = (sync_inject_single && n > 0)
 						? 0.0f : sync_inject_value;
 			}
+			//------ albEnd ----------------------------------
 			descriptor->connect_port (_instances[i], SyncInputPort, (LADSPA_Data*) _use_sync_buf + offset);
 			descriptor->connect_port (_instances[i], SyncOutputPort, (LADSPA_Data*) _our_syncout_buf + offset);
 		}

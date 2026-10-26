@@ -324,6 +324,42 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
+// REL_SYNC_STALE_PHASE_FIX: compile-time safety switch for a STOCK bug
+// (stock 1.7.9 counts the same way).
+//
+// The bug: lSamplesSinceSync, the samples since the last cycle pulse,
+// counts only while the loop's Sync is on, and not at all in
+// STATE_TRIG_START.  After Sync is turned off and on again (the slgui
+// checkbox, a sync settings change, or this rig's big_tempo at every JACK
+// transport stop and start) it holds a stale value until the next pulse.
+// A Rel Sync record pressed in that gap takes the stale value as its
+// offset from the pulse.  The loop comes out the wrong length (stock's
+// "first Rel Sync recording comes out wrong"); if the value is over a
+// cycle, the stop, which waits for the counter to equal the offset, never
+// comes.
+//
+// The fix: when a loop enters Rel Sync (fSyncMode becomes 2 from anything
+// else, including the first run() after instantiation), the counter is
+// set to REL_SYNC_PHASE_UNKNOWN.  A Rel Sync record pressed while it is
+// unknown waits in STATE_TRIG_START, which now counts under Rel Sync like
+// the other states, so the next cycle pulse resets the counter to 0 and
+// the recording starts there, offset 0, as plain Sync would.  Once a pulse
+// has passed, records start at once as before.  Plain Sync and Sync off
+// are unchanged.
+//
+// Regression tests: testdef_rel_sync_stale_phase.py.
+//
+// Set to 0 to revert to the stock (buggy) behaviour.
+#define REL_SYNC_STALE_PHASE_FIX 1
+#if REL_SYNC_STALE_PHASE_FIX
+// lSamplesSinceSync is an unsigned int despite its name.  Far above any
+// real count, and the ++ in every state would take over 12 hours at 48 kHz
+// with no pulse at all to carry it past UINT_MAX.
+#define REL_SYNC_PHASE_UNKNOWN (UINT_MAX / 2)
+#endif
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
 // RESTART_POSITION_FIX: compile-time safety switch for a STOCK bug
 // (stock 1.7.9 behaves identically; checked on a dummy server).
 //
@@ -2483,6 +2519,16 @@ runSooperLooper(LADSPA_Handle Instance,
 	  pLS->bSyncPulseReceived      = false;
 	  pLS->lLastSyncPeriodSamples  = ULONG_MAX;
   }
+#endif
+  // REL_SYNC_STALE_PHASE_FIX (see its comment block near the top of this
+  // file): entering Rel Sync, the counter's value is not known to match
+  // the pulses; it is again after the next one.
+#if REL_SYNC_STALE_PHASE_FIX
+  if (fSyncMode == 2.0f && pLS->fSyncModeLastBuffer != 2.0f) {
+	  pLS->lSamplesSinceSync = REL_SYNC_PHASE_UNKNOWN;
+  }
+#endif
+#if SYNC_MODE_LATE_HIT_RESET_FIX || REL_SYNC_STALE_PHASE_FIX
   pLS->fSyncModeLastBuffer = fSyncMode;
 #endif
   //------ albEnd ----------------------------------
@@ -4838,9 +4884,21 @@ runSooperLooper(LADSPA_Handle Instance,
 	      // TODO: need to possibly wait IL-TL before actually starting
 	      
 	      fInputSample = pfInput[lSampleIndex];
+	      //------ albBegin ----------------------------------
+	      // REL_SYNC_STALE_PHASE_FIX: start at once only when the counter
+	      // is known.  The plain-Sync clause leaves Rel Sync out, so an
+	      // unknown one cannot start on a non-cycle value; it waits for the
+	      // counting at the bottom of this loop to see a cycle pulse.
+#if REL_SYNC_STALE_PHASE_FIX
+	      if ((fSyncMode == 0.0f && ((fInputSample > fTrigThresh) || (fTrigThresh==0.0f)))
+			  || (fSyncMode == 2.0f && pLS->lSamplesSinceSync < REL_SYNC_PHASE_UNKNOWN) // relative sync offset mode
+			  || (fSyncMode > 0.0f && fSyncMode != 2.0f && pfSyncInput[lSampleIndex] != 0.0f))
+#else
 	      if ((fSyncMode == 0.0f && ((fInputSample > fTrigThresh) || (fTrigThresh==0.0f)))
 			  || (fSyncMode == 2.0f) // relative sync offset mode 
 			  || (fSyncMode > 0.0f && pfSyncInput[lSampleIndex] != 0.0f))
+#endif
+	      //------ albEnd ----------------------------------
 	      {
 			  
 			  loop = pushNewLoopChunk(pLS, 0, NULL);
@@ -4904,6 +4962,27 @@ runSooperLooper(LADSPA_Handle Instance,
 	      }
 
 	      pfOutput[lSampleIndex] = fDry * fInputSample;
+
+	      //------ albBegin ----------------------------------
+	      // REL_SYNC_STALE_PHASE_FIX: count while waiting, as the other
+	      // states do.  Only for samples that stay in this state: a start
+	      // breaks out above, and STATE_RECORD counts that sample itself.
+	      // A cycle pulse makes the counter 0, so an unknown Rel Sync
+	      // record starts on the next sample with offset 0, and its stop
+	      // comes one sample after a later pulse: whole cycles.  Pass the
+	      // sync through too, as the other states do: the other channels
+	      // take it from this one's output and must see the same pulse,
+	      // which STATE_RECORD never reprocesses here.
+#if REL_SYNC_STALE_PHASE_FIX
+	      if (fSyncMode == 2.0f) {
+		      pfSyncOutput[lSampleIndex] = pfSyncInput[lSampleIndex];
+		      pLS->lSamplesSinceSync++;
+		      if (pfSyncInput[lSampleIndex] > 1.5f) {
+			      pLS->lSamplesSinceSync = 0;
+		      }
+	      }
+#endif
+	      //------ albEnd ----------------------------------
 	   }
      
 	} break;

@@ -43,6 +43,14 @@ class TestLooper
 	 * survives a 0->1 toggle) rather than only inferring it from
 	 * button-press behaviour. Read-only, non-RT-path (test harness only). */
 	unsigned long long get_global_samples_since_sync (unsigned int index = 0) const;
+	//------ albBegin ----------------------------------
+	/* Same, for the per-loop lSamplesSinceSync (Rel Sync's offset). */
+	unsigned long get_samples_since_sync (unsigned int index = 0) const;
+	/* Per-channel state and loop length (samples), for the channels whose
+	 * State and LoopLength ports go to a dummy. */
+	int get_channel_state (unsigned int index) const;
+	unsigned long get_channel_loop_length (unsigned int index) const;
+	//------ albEnd ----------------------------------
 
 	void request_cmd (int cmd);
 	
@@ -71,6 +79,15 @@ class TestLooper
 	 * frame, as a real sync source gives, instead of a pulse on every
 	 * sample.  Exact loop lengths can then be checked against it. */
 	bool  sync_inject_single;
+
+	/* When nonzero (and sync_inject_enabled), run() makes its own pulses
+	 * instead of using sync_inject_value: a single-sample 2.0 every
+	 * sync_inject_period samples of sync_clock, the number of samples run
+	 * since sync_clock was last set.  Pulses then land on exact frames,
+	 * with no race against Python, and a test reads the phase from
+	 * sync_clock. */
+	unsigned long      sync_inject_period;
+	unsigned long long sync_clock;
 	//------ albEnd ----------------------------------
 
 	/* Incremented at the top of every run() call.  Python tests busy-wait
