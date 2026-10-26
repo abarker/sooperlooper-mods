@@ -575,7 +575,10 @@ instantiation via ``calloc``, in two fixed blocks:
 ``pushNewLoopChunk`` takes), picks the next slot from the circular pool
 and always returns it.  The only NULL return in ``ensureLoopSpace`` is
 in an unrelated branch (extending an existing loop beyond
-``lBufferSize``), which ``pushNewLoopChunk`` never enters.
+``lBufferSize``), which ``pushNewLoopChunk`` never enters.  (That
+branch is reachable, though, from ``STATE_TRIG_STOP``, which in stock
+1.7.9 didn't check for it and crashed; fixed separately as
+``TRIG_STOP_MEMORY_FIX``, see the patch summary.)
 
 The sole condition under which ``pushNewLoopChunk`` could return NULL
 is if ``pLoopChunks`` itself is NULL — meaning the startup ``calloc``

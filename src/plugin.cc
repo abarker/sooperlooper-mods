@@ -360,6 +360,28 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
+// TRIG_STOP_MEMORY_FIX: compile-time safety switch for a STOCK bug
+// (stock 1.7.9 has the same unchecked call; probed in the plugin harness).
+//
+// The bug: a recording waiting for its stop (STATE_TRIG_STOP) keeps
+// recording, and asks ensureLoopSpace() for room each buffer without
+// checking the result.  When the loop memory is full the call returns
+// NULL and the next sample dereferences it: the engine crashes.  Any stop
+// that waits past the end of memory gets there -- one that never comes
+// (Sync on with no pulses; a stale Rel Sync offset over a cycle), or a
+// long take whose next boundary falls after the memory runs out.
+//
+// The fix: check it as STATE_RECORD does and end the same way -- keep what
+// was recorded and play it -- also dropping the pending stop and any
+// command queued to follow it.
+//
+// Regression tests: testdef_trig_stop_memory.py.
+//
+// Set to 0 to revert to the stock (crashing) behaviour.
+#define TRIG_STOP_MEMORY_FIX 1
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
 // RESTART_POSITION_FIX: compile-time safety switch for a STOCK bug
 // (stock 1.7.9 behaves identically; checked on a dummy server).
 //
@@ -5078,7 +5100,23 @@ runSooperLooper(LADSPA_Handle Instance,
 	   // play the input out.  Keep recording until we go
 	   // above the threshold, then go into next state.
 
+	   //------ albBegin ----------------------------------
+	   // TRIG_STOP_MEMORY_FIX: see its comment block near the top of this
+	   // file.  Was: the call alone, unchecked.
+#if TRIG_STOP_MEMORY_FIX
+	   if ((loop = ensureLoopSpace (pLS, loop, SampleCount - lSampleIndex, NULL)) == NULL) {
+		   // As STATE_RECORD does at the end of memory: keep what was
+		   // recorded and play it.  Also drop the pending stop.
+		   pLS->state = STATE_PLAY;
+		   pLS->wasMuted = false;
+		   pLS->nextState = -1;
+		   pLS->waitingForSync = 0;
+		   goto passthrough;
+	   }
+#else
 	   loop = ensureLoopSpace (pLS, loop, SampleCount - lSampleIndex, NULL);
+#endif
+	   //------ albEnd ----------------------------------
 
 	   bool roundTempoDone  = false;
 	   unsigned int roundedSamples = 0;

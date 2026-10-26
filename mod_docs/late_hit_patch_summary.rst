@@ -246,6 +246,15 @@ item links to its full description.
   there, as plain Sync would; once a boundary has passed, records start at
   once as before.  Both channels of a stereo loop start together.
 
+- **No crash when a pending stop outlasts the loop memory**
+  (``TRIG_STOP_MEMORY_FIX``, on by default).  A recording waiting for its
+  stop keeps recording; in stock 1.7.9, if the loop memory runs out first,
+  the engine crashes.  That happens with a stop that never comes (Sync on
+  with no pulses) or a long take whose next boundary falls after the end
+  of memory.  Now the take ends at the end of memory and plays, as a
+  recording that simply runs out of memory already does; a command queued
+  to follow the stop (an overdub, say) is dropped.
+
 .. rubric:: Realtime-Safety Fixes
 
 - **Fewer xruns on transport locates** (``ALB_RT_SAFE_COND_SIGNAL``).

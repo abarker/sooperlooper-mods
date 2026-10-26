@@ -158,6 +158,14 @@ the transport is rolling.  Two cases catch people out:
 - **A stopped transport means no boundaries.**  A synced Record waits until
   the transport rolls.
 
+*Fork fix -- end of loop memory.*  When the waiting press is the one that
+ends a recording, the recording carries on until the loop's memory runs
+out (40 seconds by default, a little more in practice).  It then ends
+there and plays; undo removes it.  An action queued to follow the end,
+such as an overdub, is dropped.  In stock SooperLooper the engine crashes
+at that point.  The same happens if the next boundary simply falls after
+the end of memory, as with a very long cycle.
+
 *Fork change -- beat tracking.*  Stock SooperLooper counts its JACK grid
 from transport frame 0 at the current tempo.  When the master changes
 tempo while the transport is rolling, as Hydrogen does, that grid drifts

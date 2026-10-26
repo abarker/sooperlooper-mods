@@ -103,6 +103,13 @@ testdef_rel_sync_stale_phase.py
     engine (``Engine(name, 2)``) to check that the second channel, which
     takes its sync from channel 0's output, starts with the first.
 
+testdef_trig_stop_memory.py
+    Regression tests for TRIG_STOP_MEMORY_FIX: a recording whose stop is
+    still pending when the loop memory runs out ends there and plays,
+    instead of crashing the engine.  Each scenario runs in a child process
+    with ``SL_SAMPLE_TIME=3`` (5.46 s of memory), so a crash fails the
+    test rather than pytest.
+
 testdef_late_hit.py
     Regression tests for the late-hit recording correction patch.
     Requires the sync injection fields added to TestLooper (see
