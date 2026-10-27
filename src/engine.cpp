@@ -58,6 +58,19 @@ using namespace PBD;
 using namespace sigc;
 
 //------ albBegin ----------------------------------
+// INTERNAL_SYNC_BOUNDARY_PULSE_FIX: stock generate_sync()'s Internal
+// branch lost a cycle pulse that fell on the first sample of a buffer:
+// the zero-fill loop stopped with the buffer full just as curr reached
+// _tempo_frames, and the pulse went to _internal_sync_buf[nframes], one
+// past the end (a heap overrun), while curr was reset as if delivered.
+// Loops missed that boundary (a synced take a cycle long, or a Rel Sync
+// stop that never comes) and later pulses came one sample early.  With
+// the fix the pulse waits for the next call and lands on its first
+// sample.  Set to 0 for stock behaviour.
+#define INTERNAL_SYNC_BOUNDARY_PULSE_FIX 1
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
 // Late-hit window (ms).  Defined and defaulted in plugin.cc; declared
 // extern here so engine.cpp can persist it in the Globals session node.
 // See the comment block in plugin.cc for the full rationale on why this
@@ -2965,7 +2978,13 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 					qcurr = ((qcurr - _quarter_note_frames) - truncf(qcurr - _quarter_note_frames)) + 1.0;
 				}
 				
+				//------ albBegin ----------------------------------
+#if INTERNAL_SYNC_BOUNDARY_PULSE_FIX
+				if (curr >= _tempo_frames && npos < nframes) {
+#else
 				if (curr >= _tempo_frames) {
+#endif
+				//------ albEnd ----------------------------------
 					// cerr << "tempo hit" << endl;
 					_internal_sync_buf[npos++] = 2.0f;
 					// reset curr counter

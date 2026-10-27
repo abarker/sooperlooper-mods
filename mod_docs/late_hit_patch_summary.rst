@@ -234,6 +234,20 @@ item links to its full description.
   next boundary.  Clock on ``midi_in``, with its perfectly regular timing,
   hit this reliably; clock through ALSA only rarely.
 
+- **Internal sync no longer drops a boundary**
+  (``INTERNAL_SYNC_BOUNDARY_PULSE_FIX`` in ``engine.cpp``, on by default).
+  With the Internal sync source, stock 1.7.9 lost a cycle boundary that
+  fell exactly on the first sample of an audio buffer: it was written one
+  place past the end of the sync buffer, overrunning it, and the
+  boundaries after it came one sample early.  A loop waiting for that
+  boundary missed it: a synced recording started or ended a cycle late,
+  and a Rel Sync recording came out a cycle long, or, if the boundary was
+  lost before the record press, never stopped.  How often depends on the
+  tempo and buffer size; in tests at 120 BPM with 1024-frame buffers, one Rel
+  Sync take in eight went wrong.  Now the boundary arrives on the first
+  sample of the next buffer, where it belongs.  JACK and MIDI clock sync
+  were not affected.
+
 - **Rel Sync first-recording fix** (``REL_SYNC_STALE_PHASE_FIX``, on by
   default).  A loop counts the samples since the last cycle boundary only
   while its Sync is on, so after Sync is turned off and on again -- the
@@ -1202,6 +1216,26 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        late-hit correction's pulse tracking, as a sync source change
        already does (see `Late-Hit Correction Robustness`_).  Fixes a bug
        in this fork's own late-hit code.  Set to 0 to remove the reset.
+   * - ``REL_SYNC_STALE_PHASE_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: a Rel Sync
+       record pressed after Rel Sync comes on but before the next boundary
+       waits for that boundary, instead of taking a stale offset (a loop
+       of the wrong length, or one that never stops).  Set to 0 for stock.
+   * - ``TRIG_STOP_MEMORY_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: a recording
+       whose stop is still pending when the loop memory runs out ends there
+       and plays, instead of crashing the engine.  Set to 0 for stock.
+   * - ``INTERNAL_SYNC_BOUNDARY_PULSE_FIX``
+     - ``engine.cpp``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: an Internal sync
+       boundary that falls on the first sample of an audio buffer is
+       delivered there, instead of being written past the end of the sync
+       buffer and lost.  Set to 0 for stock.
    * - ``RESTART_POSITION_FIX``
      - ``plugin.cc``
      - ``1``

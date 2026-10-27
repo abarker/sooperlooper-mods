@@ -123,6 +123,12 @@ button.  Boundaries fall at every cycle or eighth note at that tempo,
 according to Quantize.  With Quantize Off or Loop, there are no boundaries
 and synced actions happen at once.
 
+*Fork fix.*  In stock SooperLooper, a boundary that fell exactly at the
+start of an audio buffer was lost, and the boundaries after it came one
+sample early.  A synced recording then started or ended a cycle late, and
+a Rel Sync recording could come out a cycle long or never stop.  This
+fork delivers it.
+
 **MidiClock.**  Tempo and boundaries come from incoming MIDI clock.
 SooperLooper counts the clock's ticks (24 to a beat) and places a boundary
 every cycle or every eighth note, according to Quantize; with Quantize Off
