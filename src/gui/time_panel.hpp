@@ -87,6 +87,7 @@ class TimePanel
 	float    _len_secs;
 	float    _mem_secs;
 	bool     _mem_low;
+	bool     _growing;   // recording, waiting to stop, multiplying, inserting
 	//------ albEnd ----------------------------------
 	
 	wxFont  _pos_font;

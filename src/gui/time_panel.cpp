@@ -31,7 +31,8 @@ using namespace SooperLooperGui;
 
 //------ albBegin ----------------------------------
 // Low loop memory warning: once a loop's length passes this fraction of
-// its loop memory, the panel shows "memory low" in red where it
+// its loop memory while it is growing (recording, waiting to stop,
+// multiplying, inserting), the panel shows "memory low" in red where it
 // shows "waiting for sync".  Running out of memory is an error condition
 // (a take that reaches the end is cut there), so this is only a warning.
 static const float MEM_LOW_FRACTION = 0.75f;
@@ -155,6 +156,7 @@ TimePanel::init()
 	_len_secs = 0.0f;
 	_mem_secs = 0.0f;
 	_mem_low = false;
+	_growing = false;
 	//------ albEnd ----------------------------------
 }
 
@@ -285,6 +287,12 @@ TimePanel::update_time()
 	if (_loop_control->is_updated(_index, wxT("state"))) {
 		SooperLooper::LooperState tmpstate;
 		_loop_control->get_state(_index, tmpstate, _state_str);
+		//------ albBegin ----------------------------------
+		_growing = (tmpstate == SooperLooper::LooperStateRecording
+		            || tmpstate == SooperLooper::LooperStateWaitStop
+		            || tmpstate == SooperLooper::LooperStateMultiplying
+		            || tmpstate == SooperLooper::LooperStateInserting);
+		//------ albEnd ----------------------------------
 		calc_text_extents();
 		ret = true;
 		up_state = true;
@@ -293,7 +301,8 @@ TimePanel::update_time()
 	//------ albBegin ----------------------------------
 	// Low loop memory warning: redraw the state area when it turns on or off.
 	{
-		const bool low = (_mem_secs > 0.0f && _len_secs >= MEM_LOW_FRACTION * _mem_secs);
+		const bool low = (_growing && _mem_secs > 0.0f
+		                  && _len_secs >= MEM_LOW_FRACTION * _mem_secs);
 		if (low != _mem_low) {
 			_mem_low = low;
 			ret = true;

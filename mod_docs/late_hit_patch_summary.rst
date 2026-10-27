@@ -263,12 +263,13 @@ item links to its full description.
   loop.  Loops in a saved session keep their own value, and slgui keeps
   a loop time already saved in its preferences.
 
-- **Low loop memory warning.**  When a loop's length passes three
-  quarters of its loop memory, the engine prints a warning on its
-  terminal, and slgui shows "memory low" in red in the loop's time panel,
-  where "waiting for sync" appears.  If a recording reaches the end of
-  memory, the engine prints that the recording was cut there.  The
-  warnings come again for a later take after an undo or a new recording.
+- **Low loop memory warning.**  When a recording (or a multiply or
+  insert) takes a loop past three quarters of its loop memory, the engine
+  prints a warning on its terminal, and slgui shows "memory low" in red in
+  the loop's time panel, where "waiting for sync" appears, until the loop
+  stops growing.  If a recording reaches the end of memory, the engine
+  prints that the recording was cut there.  A later recording that gets
+  that far warns again.
 
 .. rubric:: Realtime-Safety Fixes
 

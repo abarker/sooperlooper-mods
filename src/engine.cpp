@@ -2179,9 +2179,10 @@ Engine::mainloop()
 		// Low loop memory warning on the terminal.  Running out of loop
 		// memory is an error condition (the take is cut at the end of
 		// memory), so warn once when a loop's length passes
-		// MEM_LOW_FRACTION of its memory, and once if it reaches the end;
-		// both re-arm when the length drops below MEM_LOW_FRACTION again
-		// (an undo, a new take).
+		// MEM_LOW_FRACTION of its memory while it is growing (recording,
+		// waiting to stop, multiplying, inserting), and once if it reaches
+		// the end.  Both re-arm when the length drops below the mark (an
+		// undo, a new take) or the loop stops growing.
 		// Reads the same control values the GUI reads; this thread only.
 		{
 			static const float MEM_LOW_FRACTION = 0.75f;
@@ -2200,9 +2201,16 @@ Engine::mainloop()
 				if (!(mem > 0.0f)) {
 					continue;
 				}
+				const int state = (int) _instances[n]->get_control_value (Event::State);
+				const bool growing = (state == LooperStateRecording
+				                      || state == LooperStateWaitStop
+				                      || state == LooperStateMultiplying
+				                      || state == LooperStateInserting);
 				// The end of memory: within a JACK period or so of it.
-				const int level = (len >= mem - 0.1f) ? 2
-				                : (len >= MEM_LOW_FRACTION * mem) ? 1 : 0;
+				// Only growth gets there, so it needs no state check.
+				const int full = (len >= mem - 0.1f) ? 2
+				               : (len >= MEM_LOW_FRACTION * mem) ? 1 : 0;
+				const int level = (full == 1 && !growing) ? 0 : full;
 				// The buffer where a take is cut reports length 0 (the
 				// plugin has no current loop for it), which looks like a
 				// re-arm; so don't repeat a level printed under 2 s ago.
