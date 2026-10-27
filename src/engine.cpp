@@ -2174,7 +2174,61 @@ Engine::mainloop()
 			}
 			_conns_changed = false;
 		}
-		
+
+		//------ albBegin ----------------------------------
+		// Low loop memory warning on the terminal.  Running out of loop
+		// memory is an error condition (the take is cut at the end of
+		// memory), so warn once when a loop's length passes
+		// MEM_LOW_FRACTION of its memory, and once if it reaches the end;
+		// both re-arm when the length drops below MEM_LOW_FRACTION again
+		// (an undo, a new take).
+		// Reads the same control values the GUI reads; this thread only.
+		{
+			static const float MEM_LOW_FRACTION = 0.75f;
+			static std::vector<int> mem_warned;   // 0 none, 1 low, 2 full
+			static std::vector<int> last_level;   // last level printed
+			static std::vector<double> last_time; // when it was printed
+			mem_warned.resize (_instances.size(), 0);
+			last_level.resize (_instances.size(), 0);
+			last_time.resize (_instances.size(), 0.0);
+			struct timeval tv;
+			gettimeofday (&tv, NULL);
+			const double tnow = tv.tv_sec + tv.tv_usec * 1e-6;
+			for (unsigned int n = 0; n < _instances.size(); ++n) {
+				const float len = _instances[n]->get_control_value (Event::LoopLength);
+				const float mem = _instances[n]->get_control_value (Event::TotalTime);
+				if (!(mem > 0.0f)) {
+					continue;
+				}
+				// The end of memory: within a JACK period or so of it.
+				const int level = (len >= mem - 0.1f) ? 2
+				                : (len >= MEM_LOW_FRACTION * mem) ? 1 : 0;
+				// The buffer where a take is cut reports length 0 (the
+				// plugin has no current loop for it), which looks like a
+				// re-arm; so don't repeat a level printed under 2 s ago.
+				if (level > mem_warned[n]
+				    && !(level == last_level[n] && tnow - last_time[n] < 2.0)) {
+					last_level[n] = level;
+					last_time[n] = tnow;
+					if (level == 2) {
+						cerr << "SooperLooper WARNING: loop " << n + 1
+						     << " reached the end of its loop memory (" << mem
+						     << " s); the recording was cut there." << endl;
+					} else {
+						cerr << "SooperLooper WARNING: loop " << n + 1
+						     << " memory low: " << len << " s of " << mem
+						     << " s used." << endl;
+					}
+				}
+				// Re-arm only below the low mark, so a length that
+				// wobbles around the end of memory warns once.
+				if (level > mem_warned[n] || level == 0) {
+					mem_warned[n] = level;
+				}
+			}
+		}
+		//------ albEnd ----------------------------------
+
 		// handle learning done from the midi thread
 		if (_learn_done && _midi_bridge) {
 			LockMonitor lm (_midi_bridge->bindings_lock(), __LINE__, __FILE__);

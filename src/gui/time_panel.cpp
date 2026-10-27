@@ -28,6 +28,14 @@
 #include "loop_control.hpp"
 
 using namespace SooperLooperGui;
+
+//------ albBegin ----------------------------------
+// Low loop memory warning: once a loop's length passes this fraction of
+// its loop memory, the panel shows "memory low" in red where it
+// shows "waiting for sync".  Running out of memory is an error condition
+// (a take that reaches the end is cut there), so this is only a warning.
+static const float MEM_LOW_FRACTION = 0.75f;
+//------ albEnd ----------------------------------
 using namespace std;
 
 BEGIN_EVENT_TABLE(TimePanel, wxPanel)
@@ -141,8 +149,13 @@ TimePanel::init()
 	_waitdc.SetTextForeground(_legend_color);
 
 	calc_text_extents();
-	
+
 	_waiting = false;
+	//------ albBegin ----------------------------------
+	_len_secs = 0.0f;
+	_mem_secs = 0.0f;
+	_mem_low = false;
+	//------ albEnd ----------------------------------
 }
 
 void
@@ -235,6 +248,7 @@ TimePanel::update_time()
 	if (_loop_control->is_updated(_index, wxT("loop_len"))) {
 		_loop_control->get_value(_index, wxT("loop_len"), val);
 		format_time (_tot_str, val);
+		_len_secs = val;   // alb: low loop memory warning
 		up_cyc = true;
 		up_other = true;
 		ret = true;
@@ -256,6 +270,7 @@ TimePanel::update_time()
 	if (_loop_control->is_updated(_index, wxT("total_time"))) {
 		_loop_control->get_value(_index, wxT("total_time"), val);
 		format_time (_mem_str, val);
+		_mem_secs = val;   // alb: low loop memory warning
 		ret = true;
 		up_other = true;
 	}
@@ -274,6 +289,18 @@ TimePanel::update_time()
 		ret = true;
 		up_state = true;
 	}
+
+	//------ albBegin ----------------------------------
+	// Low loop memory warning: redraw the state area when it turns on or off.
+	{
+		const bool low = (_mem_secs > 0.0f && _len_secs >= MEM_LOW_FRACTION * _mem_secs);
+		if (low != _mem_low) {
+			_mem_low = low;
+			ret = true;
+			up_state = true;
+		}
+	}
+	//------ albEnd ----------------------------------
 
 	if (up_cyc) {
 		update_cyc();
@@ -418,6 +445,18 @@ TimePanel::draw_state()
 		_waitdc.DrawText (wxT("waiting for sync"), 0, 0);
 		_memdc.Blit (5, _ph , _ww, _wh, &_waitdc, 0, 0);
 	}
+
+	//------ albBegin ----------------------------------
+	// Low loop memory warning, in the same place; it takes precedence
+	// over "waiting for sync".
+	if (_mem_low) {
+		_waitdc.Clear();
+		_waitdc.SetTextForeground(wxColour(255, 80, 80));
+		_waitdc.DrawText (wxT("memory low"), 0, 0);
+		_waitdc.SetTextForeground(_legend_color);
+		_memdc.Blit (5, _ph , _ww, _wh, &_waitdc, 0, 0);
+	}
+	//------ albEnd ----------------------------------
 }
 
 void

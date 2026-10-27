@@ -82,6 +82,12 @@ class TimePanel
 	wxString _rem_str;
 	wxString _mem_str;
 	bool     _waiting;
+	//------ albBegin ----------------------------------
+	// Low loop memory warning (time_panel.cpp, MEM_LOW_FRACTION).
+	float    _len_secs;
+	float    _mem_secs;
+	bool     _mem_low;
+	//------ albEnd ----------------------------------
 	
 	wxFont  _pos_font;
 	wxColour _pos_color;
