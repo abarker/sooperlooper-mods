@@ -394,14 +394,16 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 //   pulse starts at the pulse with E = 0, as now.
 //
 // * Late stop.  STATE_RECORD notes the loop position each time the take
-//   passes its end point (the check STATE_TRIG_STOP makes).  A Record
-//   press arriving at most the late-hit window (effectiveLateHitWindow())
-//   past that point, at least one Quantize unit after the start, ends the
-//   take at that point, less E, at once: the same trim, seam fade and
-//   playback position as above with the overrun added.  Otherwise the
-//   stop waits in STATE_TRIG_STOP as now.  Record presses only, as for
-//   the plain Sync late-hit stop; other commands ending a take still wait
-//   for the end point (with the early-start trim there).
+//   passes its end point (the check STATE_TRIG_STOP makes).  Every
+//   command that ends a Rel Sync take goes through STATE_TRIG_STOP
+//   (Record, Overdub, a quantized Mute or mute_trigger, Multiply, ...);
+//   if it arrived at most the late-hit window (effectiveLateHitWindow())
+//   past that point, at least one Quantize unit after the start,
+//   STATE_TRIG_STOP ends the take on its first sample, at that point less
+//   E: the same trim, seam fade and playback position as above with the
+//   overrun added, then on to the command's state as usual.  Otherwise
+//   it waits for the end point as now.  (The plain Sync late stop is
+//   still Record presses only.)
 //
 // g_rel_sync_early_ms: the extra early start, for a press made on the
 // first note.  A setup-time preference saved/loaded as the XML property
@@ -3456,36 +3458,7 @@ runSooperLooper(LADSPA_Handle Instance,
 				      loop->dCurrPos += (double)lateSamples;
 				      pLS->lFramesUntilFilled = lOutputLatency + lInputLatency;
 
-			      }
-#if REL_SYNC_LATE_HIT
-			      // REL_SYNC_LATE_HIT late stop: pressed at most the late-hit
-			      // window past the take's last end point, and that point is a
-			      // whole Quantize unit or more after the start (the start
-			      // itself is a point, at lRelSyncEarly).  End there, less the
-			      // early start, at once, instead of recording another unit.
-			      // The playback position follows the late-hit stop above,
-			      // with lateSamples the overrun plus the early start.
-			      else if (fSyncMode == 2.0f
-			               && loop != NULL
-			               && !pLS->bLateHitBypassed
-			               && loop->lRelSyncLastPoint > loop->lRelSyncEarly
-			               && (unsigned long) loop->dCurrPos - loop->lRelSyncLastPoint <= shiftSamples) {
-				      const unsigned long lateSamples =
-					      (unsigned long) loop->dCurrPos - (loop->lRelSyncLastPoint - loop->lRelSyncEarly);
-				      pLS->fLoopFadeAtten = relSyncEndTrimmed(pLS, loop, lateSamples, xfadeSamples);
-				      pLS->state = STATE_PLAY;
-				      pLS->wasMuted = false;
-				      pLS->recSyncEnded = true;   // as the Rel Sync STATE_TRIG_STOP end
-				      pLS->fLoopFadeDelta   = -1.0f / xfadeSamples;
-				      pLS->fPlayFadeDelta   =  1.0f / xfadeSamples;
-				      pLS->fLoopSrcFadeDelta = -1.0f / xfadeSamples;
-				      pLS->fFeedSrcFadeDelta = -1.0f / xfadeSamples;
-				      loop->dCurrPos = (double) loop->lLoopLength
-					      + (lOutputLatency + lInputLatency) * fRate + (double) lateSamples;
-				      pLS->lFramesUntilFilled = lOutputLatency + lInputLatency;
-			      }
-#endif
-			      else {
+			      } else {
 				      pLS->state = STATE_TRIG_STOP;
 				      pLS->nextState = STATE_PLAY;
 				      DBG(fprintf(stderr,"%u:%u  Entering TRIG_STOP state\n", pLS->lLoopIndex, pLS->lChannelIndex));
@@ -5351,6 +5324,11 @@ runSooperLooper(LADSPA_Handle Instance,
 
 	   bool roundTempoDone  = false;
 	   unsigned int roundedSamples = 0;
+	   //------ albBegin ----------------------------------
+#if REL_SYNC_LATE_HIT
+	   const unsigned long relSyncWindow = effectiveLateHitWindow(pLS, eighthPerCycle);
+#endif
+	   //------ albEnd ----------------------------------
 
 	   if (bRoundIntegerTempo) {
 		   // logic to figure out if it is time to stop with a rounded tempo
@@ -5391,11 +5369,31 @@ runSooperLooper(LADSPA_Handle Instance,
 // 		  || (fSyncMode > 0.0f && pfSyncInput[lSampleIndex] != 0.0))
 
 	      roundTempoDone = bRoundIntegerTempo && lCurrPos == roundedSamples;
+
+	      //------ albBegin ----------------------------------
+#if REL_SYNC_LATE_HIT
+	      // REL_SYNC_LATE_HIT late stop: the command that ended the take
+	      // (any: Record, Overdub, a quantized Mute, ...) came at most the
+	      // late-hit window past the take's last end point, and that point
+	      // is a whole Quantize unit or more after the start (the start
+	      // itself is a point, at lRelSyncEarly).  End there now instead of
+	      // at the next point.  The take's last point only moves while
+	      // recording, so this can hold only on the first sample here.
+	      const bool relSyncLate = (fSyncMode == 2.0f
+	                                && !pLS->bLateHitBypassed
+	                                && loop->lRelSyncLastPoint > loop->lRelSyncEarly
+	                                && lCurrPos - loop->lRelSyncLastPoint <= relSyncWindow);
+#endif
+	      //------ albEnd ----------------------------------
 	      
 	      // exit immediately if syncmode is off, or we have a sync
 	      if ((fSyncMode == 0.0f && (!bRoundIntegerTempo || roundTempoDone))
  		  || (fSyncMode == 1.0f && (pfSyncInput[lSampleIndex] != 0.0f))
-		  || (fSyncMode == 2.0f && pLS->lSamplesSinceSync == loop->lSyncOffset))
+		  || (fSyncMode == 2.0f && pLS->lSamplesSinceSync == loop->lSyncOffset)
+#if REL_SYNC_LATE_HIT
+		  || relSyncLate
+#endif
+		  )
 	      {
 		      DBG(fprintf(stderr,"%u:%u   Entering %d state at %u\n", pLS->lLoopIndex, pLS->lChannelIndex, pLS->nextState, lCurrPos));
 		 //pLS->state = pLS->nextState;
@@ -5423,14 +5421,19 @@ runSooperLooper(LADSPA_Handle Instance,
 		      loop->lCycles = 1;
 		      //------ albBegin ----------------------------------
 #if REL_SYNC_LATE_HIT
-		      // A take that started early ends as early: drop the last
-		      // lRelSyncEarly samples into the loop's start.  The position
-		      // stays here, so playback (below) carries on lRelSyncEarly
-		      // samples into the loop.  Before transitionToNext(), so a
-		      // following overdub copies the faded start.
-		      if (fSyncMode == 2.0f && loop->lRelSyncEarly > 0
-			  && (unsigned long) lCurrPos > loop->lRelSyncEarly) {
-			      pLS->fLoopFadeAtten = relSyncEndTrimmed(pLS, loop, loop->lRelSyncEarly, xfadeSamples);
+		      // The take ends at its end point less the early start: drop
+		      // the samples past that (the early start, plus the overrun
+		      // after a late command) into the loop's start.  The position
+		      // stays here, so playback (below) carries on that many
+		      // samples into the loop, as the plain Sync late stop does.
+		      // Before transitionToNext(), so a following overdub copies
+		      // the faded start.
+		      if (fSyncMode == 2.0f) {
+			      const unsigned long lateSamples = loop->lRelSyncEarly
+				      + (relSyncLate ? lCurrPos - loop->lRelSyncLastPoint : 0);
+			      if (lateSamples > 0 && (unsigned long) lCurrPos > lateSamples) {
+				      pLS->fLoopFadeAtten = relSyncEndTrimmed(pLS, loop, lateSamples, xfadeSamples);
+			      }
 		      }
 #endif
 		      //------ albEnd ----------------------------------

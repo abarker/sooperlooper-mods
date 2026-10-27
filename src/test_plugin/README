@@ -114,10 +114,10 @@ testdef_rel_sync_late_hit.py
     Tests for REL_SYNC_LATE_HIT: a Rel Sync record started at the press
     starts trigger_latency + rel_sync_early_ms earlier, from the input
     history, ends as much earlier (whole cycles) and plays in phase; one
-    that waits for a pulse does not start early; a Record stop within the
+    that waits for a pulse does not start early; a command ending the
+    take (Record, Overdub, quantized Mute or mute_trigger) within the
     late-hit window after the end point ends it there at once, outside
-    the window or just after the start it waits; Cycle and 8th, stereo,
-    and a record ended by Overdub.  Presses go in at exact frames
+    the window or just after the start it waits; Cycle and 8th, stereo.  Presses go in at exact frames
     (request_at_clock) and the input is a ramp (input_ramp), so lengths,
     contents and playback phase are checked exactly.
 

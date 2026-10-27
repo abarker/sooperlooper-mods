@@ -464,12 +464,16 @@ Two more changes in this fork, for playing on the press:
   the first note and it still clips, the session setting
   ``rel_sync_early_ms`` starts it earlier still.  The recording ends the
   same amount earlier, so it is still whole cycles.
-- **A slightly late stop is caught.**  A Record press just after the end
-  point (within the late-hit window, 100 ms by default) ends the
-  recording there instead of recording another whole cycle.  As with
-  plain Sync's late stop, the first moment of the first repeat is not
-  heard.  Other commands that end a recording, such as Overdub or a
-  quantized Mute, still wait for the end point.
+- **A slightly late stop is caught.**  Ending the recording just after
+  the end point (within the late-hit window, 100 ms by default) ends it
+  there instead of recording another whole cycle.  This works for Record,
+  Overdub, and Mute or ``mute_trigger`` with mute quant on.  As with plain
+  Sync's late stop, the first moment of the first repeat is not heard.
+
+Rel Sync changes only the recording.  Overdubs (and Multiply, Replace and
+the rest) are as with plain Sync: with odub quant off they start and stop
+at the press; with it on they wait for the source's next boundary, on
+the beat, not at the loop's own offset.
 
 Common setups for live performance
 ----------------------------------

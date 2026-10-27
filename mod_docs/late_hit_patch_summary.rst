@@ -270,9 +270,10 @@ item links to its full description.
   at the press now starts earlier by the trigger latency (the pedal's
   delay) plus an optional extra, ``rel_sync_early_ms``, so the first notes
   played on the press are in the loop, and it ends that much earlier
-  too, so it is still a whole number of cycles.  And a stop pressed just
-  after the recording's end point -- up to the late-hit window -- ends it
-  there at once, instead of recording another whole cycle.  See `Rel Sync
+  too, so it is still a whole number of cycles.  And a command that ends
+  the recording just after its end point -- up to the late-hit window --
+  ends it there at once, instead of recording another whole cycle: Record,
+  Overdub, or a quantized Mute or ``mute_trigger``.  See `Rel Sync
   Recordings`_.
 
 - **No crash when a pending stop outlasts the loop memory**
@@ -420,15 +421,16 @@ On the first time round, playback joins the loop that far in: you have
 just played that stretch live.  A recording that waits for a boundary
 (see below) starts on the boundary, not earlier.
 
-**Late stop.**  A Record press that ends the recording up to the late-hit
+**Late stop.**  A command that ends the recording up to the late-hit
 window (``late_hit_window_ms``, 100 ms by default) after its end point
-ends it at that point at once, instead of recording another whole cycle.
-As with the plain Sync late stop, the first moments of the first repeat
-have already gone by and are not heard.  A stop pressed in the window
-right after the start does not end a loop of no cycles: it waits for the
-first full cycle.  Other commands that end a recording (Overdub, a
-quantized Mute or ``mute_trigger``, and so on) still wait for the end
-point, and get the early-start trim there.
+ends it at that point at once, instead of recording another whole cycle,
+and goes on to what the command asks for.  That covers Record (to play),
+Overdub, and Mute or ``mute_trigger`` with mute quant on.  As with the
+plain Sync late stop, the first moments of the first repeat have already
+gone by and are not heard.  A stop pressed in the window right after the
+start does not end a loop of no cycles: it waits for the first full
+cycle.  With mute quant off, Mute ends the recording at once wherever it
+is pressed, as in stock, so the loop is not a whole number of cycles.
 
 Set ``rel_sync_early_ms`` like the other settings: in the session file's
 ``<Globals>`` line, or over OSC with ``/set`` (see `OSC Control`_).
@@ -446,12 +448,12 @@ What happens, by situation:
      - The recording starts at the press and ends at the same point after
        a later boundary: whole cycles, off the beat as played.
      - --
-   * - Record stop pressed a little after that point, within the
-       late-hit window
+   * - The recording is ended (Record, Overdub, or a quantized Mute or
+       ``mute_trigger``) a little after that point, within the late-hit
+       window
      - The recording ends at that point at once: whole cycles.
      - --
-   * - The stop is pressed later than the window after that point, or
-       ended by another command (Overdub, a quantized Mute) after it
+   * - It is ended later than the window after that point
      - The point has passed, so the recording carries on to the same
        point a cycle later: the loop is a cycle longer than meant.
      - Undo, and record again.  ``cancel_record_mute`` does nothing once
@@ -1280,8 +1282,8 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
      - New behaviour, on in this build for trial: a Rel Sync recording
        that starts at the press starts trigger latency +
        ``rel_sync_early_ms`` earlier and ends as much earlier, and a
-       Record stop within the late-hit window after the end point ends
-       it there (see `Rel Sync Recordings`_).  Needs
+       command ending the recording within the late-hit window after the
+       end point ends it there (see `Rel Sync Recordings`_).  Needs
        ``REL_SYNC_STALE_PHASE_FIX``.  Set to 0 for the previous
        behaviour.
    * - ``REL_SYNC_EARLY_MS_DEFAULT``

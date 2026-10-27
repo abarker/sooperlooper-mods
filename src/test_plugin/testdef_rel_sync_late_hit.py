@@ -2,8 +2,9 @@
 """
 Tests for REL_SYNC_LATE_HIT (plugin.cc): a Rel Sync record that starts at
 the press starts trigger_latency + rel_sync_early_ms earlier, from the
-input history, and ends as much earlier; a Record stop pressed at most the
-late-hit window past the take's end point ends it there at once instead of
+input history, and ends as much earlier; a command ending the take
+(Record, Overdub, a quantized Mute or mute_trigger) at most the late-hit
+window past the take's end point ends it there at once instead of
 recording another Quantize unit.
 
 Presses go in at exact frames (TestLooper.request_at_clock), and each
@@ -148,7 +149,7 @@ class TestRelSyncEarlyStart(RelSyncLateHitTestCase):
 
     def testEndsEarlyWholeCycles(self):
         s0 = self.start_take()
-        since, over, now_len, next_len = self.stop(s0, 2 * self.cycle - 3 * self.buf)
+        since, over, now_len, next_len = self.stop(s0, 2 * self.cycle - 6 * self.buf)
         self.assertEqual(self.state(), "WaitStop")
         self.wait_state("Playing")
         self.assertEqual(self.length(), next_len)
@@ -157,7 +158,7 @@ class TestRelSyncEarlyStart(RelSyncLateHitTestCase):
 
     def testPlaybackKeepsPhase(self):
         s0 = self.start_take()
-        since, over, now_len, next_len = self.stop(s0, 2 * self.cycle - 3 * self.buf)
+        since, over, now_len, next_len = self.stop(s0, 2 * self.cycle - 6 * self.buf)
         self.wait_state("Playing")
         self.assertPlaysInPhase(next_len)
 
@@ -208,7 +209,7 @@ class TestRelSyncLateStop(RelSyncLateHitTestCase):
 
     def testEarlyStop_WaitsForPoint(self):
         s0 = self.start_take()
-        since, over, now_len, next_len = self.stop(s0, 2 * self.cycle - 3 * self.buf)
+        since, over, now_len, next_len = self.stop(s0, 2 * self.cycle - 6 * self.buf)
         self.assertEqual(self.state(), "WaitStop")
         self.wait_state("Playing")
         self.assertEqual(self.length(), next_len)
@@ -248,15 +249,80 @@ class TestRelSyncLateStopWithEarlyStart(RelSyncLateHitTestCase):
         self.assertPlaysInPhase(now_len)
 
     def testRecordIntoOverdub_EndsAtPointLessEarly(self):
-        # Another command ending the take: it waits for the end point and
-        # gets the early-start trim there.
+        # Another command ending the take before the end point: it waits
+        # for the point and gets the early-start trim there.
         s0 = self.start_take()
-        since, over, now_len, next_len = self.stop(s0, 2 * self.cycle - 3 * self.buf,
+        since, over, now_len, next_len = self.stop(s0, 2 * self.cycle - 6 * self.buf,
                                                    command="OVERDUB")
         self.assertEqual(self.state(), "WaitStop")
         self.wait_state("Overdubbing")
         self.assertEqual(self.length(), next_len)
         # (no content check: the overdub is adding to the loop)
+
+    def testLateMuteTrigger_EndsAtPointLessEarly(self):
+        self.looper.set_port(test_engine.MuteQuantized, 1.0)
+        s0 = self.start_take()
+        since, over, now_len, next_len = self.stop(s0, 2 * self.cycle + MARGIN,
+                                                   command="MUTE_TRIGGER")
+        self.assertEqual(self.state(), "Muted")
+        self.assertEqual(self.length(), now_len)
+        self.assertStartsAt(s0, self.early)
+        self.assertContiguous(now_len)
+
+
+class TestRelSyncLateStopOtherCommands(RelSyncLateHitTestCase):
+    """Every command that ends a Rel Sync take waits in STATE_TRIG_STOP,
+    so each gets the late stop."""
+
+    def lateEnd(self, command, state):
+        s0 = self.start_take()
+        since, over, now_len, next_len = self.stop(s0, 2 * self.cycle + MARGIN,
+                                                   command=command)
+        self.assertLessEqual(over, self.window - MARGIN)
+        self.assertEqual(self.state(), state, f"a late {command} should end the take at once")
+        self.assertEqual(self.length(), now_len)
+        self.assertEqual(now_len, 2 * self.cycle)
+        if state != "Overdubbing":        # an overdub is adding to the loop
+            self.assertContiguous(now_len)
+
+    def testLateOverdub_EndsAtPoint(self):
+        self.lateEnd("OVERDUB", "Overdubbing")
+
+    def testLateQuantizedMute_EndsAtPoint(self):
+        self.looper.set_port(test_engine.MuteQuantized, 1.0)
+        self.lateEnd("MUTE", "Muted")
+
+    def testLateQuantizedMuteTrigger_EndsAtPoint(self):
+        self.looper.set_port(test_engine.MuteQuantized, 1.0)
+        self.lateEnd("MUTE_TRIGGER", "Muted")
+
+    def testLateMuteTrigger_OutsideWindow_WaitsAnotherCycle(self):
+        self.looper.set_port(test_engine.MuteQuantized, 1.0)
+        s0 = self.start_take()
+        since, over, now_len, next_len = self.stop(s0, 2 * self.cycle + self.window + MARGIN,
+                                                   command="MUTE_TRIGGER")
+        self.assertGreater(over, self.window)
+        self.assertEqual(self.state(), "WaitStop")
+        self.wait_state("Muted")
+        self.assertEqual(self.length(), next_len)
+
+    def testEarlyMuteTrigger_WaitsForPoint(self):
+        self.looper.set_port(test_engine.MuteQuantized, 1.0)
+        s0 = self.start_take()
+        since, over, now_len, next_len = self.stop(s0, 2 * self.cycle - 6 * self.buf,
+                                                   command="MUTE_TRIGGER")
+        self.assertEqual(self.state(), "WaitStop")
+        self.wait_state("Muted")
+        self.assertEqual(self.length(), next_len)
+        self.assertEqual(next_len, 2 * self.cycle)
+
+    def testLateOverdub_UnmutedPlaybackAfterRecordStop(self):
+        # Record (stop) late, then the loop plays in phase: as the Record
+        # tests, through the same STATE_TRIG_STOP path.
+        s0 = self.start_take()
+        since, over, now_len, next_len = self.stop(s0, 2 * self.cycle + MARGIN)
+        self.assertEqual(self.state(), "Playing")
+        self.assertPlaysInPhase(now_len)
 
 
 class TestRelSyncLateStopEighth(RelSyncLateHitTestCase):
