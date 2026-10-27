@@ -438,6 +438,32 @@ float g_rel_sync_early_ms = REL_SYNC_EARLY_MS_DEFAULT;
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
+// LATE_STOP_ANY_COMMAND: compile-time switch for a NEW behaviour (on for
+// the rig trial; 0 for the previous behaviour).
+//
+// The problem: the plain Sync late stop (the MULTI_RECORD / STATE_RECORD
+// case) runs only for a Record press.  A take ended by any other command
+// -- Overdub, a quantized Mute or mute_trigger, Multiply, ... -- waits in
+// STATE_TRIG_STOP for the next pulse, so one pressed just after a pulse
+// records another whole cycle.
+//
+// The change: STATE_TRIG_STOP makes the same check on the first sample of
+// the buffer where the command arrived: the last pulse at most the late-hit
+// window (effectiveLateHitWindow()) before the buffer
+// (lGlobalSyncAtButtonPress, T), with the same guards as the Record check.
+// Then the take ends now, trimmed by T + 1 to end just before that pulse,
+// with the seam fade and playback position of the Record late stop, and
+// goes on to the command's state as usual (transitionToNext()).  A take
+// still waiting in a later buffer has T past the window (a pulse in
+// between would have ended it), so the check cannot fire late.  The
+// Record press keeps its own path in the dispatch, unchanged; it never
+// reaches STATE_TRIG_STOP inside the window.
+//
+// Regression tests: testdef_late_stop_any_command.py.
+#define LATE_STOP_ANY_COMMAND 1
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
 // RESTART_POSITION_FIX: compile-time safety switch for a STOCK bug
 // (stock 1.7.9 behaves identically; checked on a dummy server).
 //
@@ -842,17 +868,17 @@ static_assert((int) Event::PAUSE_OFF == MULTI_PAUSE_OFF, "Event::command_t drift
 
 
 //------ albBegin ----------------------------------
-#if REL_SYNC_LATE_HIT
-// relSyncEndTrimmed(): end a Rel Sync take lateSamples before the current
-// position (REL_SYNC_LATE_HIT; see its comment block).  Sets the length,
-// fades the dropped samples into the loop's start (the late-hit stop's
+#if REL_SYNC_LATE_HIT || LATE_STOP_ANY_COMMAND
+// endTakeTrimmed(): end a take lateSamples before the current position
+// (REL_SYNC_LATE_HIT, LATE_STOP_ANY_COMMAND; see their comment blocks).
+// Sets the length, fades the dropped samples into the loop's start (the late-hit stop's
 // seam fade: after a normal stop STATE_PLAY writes the input following
 // the end into the start, fading it out, index i at 1 - (i + 1) / xfade;
 // here that input is already in the buffer past the new end), and
 // returns the fade level STATE_PLAY carries on from at index lateSamples.
 // The caller sets the state and the position.
-static inline float relSyncEndTrimmed(SooperLooperI *pLS, LoopChunk *loop,
-                                      unsigned long lateSamples, int xfadeSamples)
+static inline float endTakeTrimmed(SooperLooperI *pLS, LoopChunk *loop,
+                                   unsigned long lateSamples, int xfadeSamples)
 {
 	const unsigned long length = (unsigned long) loop->dCurrPos - lateSamples;
 	loop->lLoopLength  = length;
@@ -2829,6 +2855,7 @@ runSooperLooper(LADSPA_Handle Instance,
       pLS->lRecordFailsafeSamples >
           (unsigned long)(g_record_failsafe_seconds * pLS->fSampleRate);
   //------ albEnd ----------------------------------
+
 
   // force use delay
   if (lMultiCtrl == MULTI_REDO && *pLS->pfRedoTapMode != 0)
@@ -5325,8 +5352,8 @@ runSooperLooper(LADSPA_Handle Instance,
 	   bool roundTempoDone  = false;
 	   unsigned int roundedSamples = 0;
 	   //------ albBegin ----------------------------------
-#if REL_SYNC_LATE_HIT
-	   const unsigned long relSyncWindow = effectiveLateHitWindow(pLS, eighthPerCycle);
+#if REL_SYNC_LATE_HIT || LATE_STOP_ANY_COMMAND
+	   const unsigned long lateStopWindow = effectiveLateHitWindow(pLS, eighthPerCycle);
 #endif
 	   //------ albEnd ----------------------------------
 
@@ -5382,7 +5409,21 @@ runSooperLooper(LADSPA_Handle Instance,
 	      const bool relSyncLate = (fSyncMode == 2.0f
 	                                && !pLS->bLateHitBypassed
 	                                && loop->lRelSyncLastPoint > loop->lRelSyncEarly
-	                                && lCurrPos - loop->lRelSyncLastPoint <= relSyncWindow);
+	                                && lCurrPos - loop->lRelSyncLastPoint <= lateStopWindow);
+#endif
+#if LATE_STOP_ANY_COMMAND
+	      // LATE_STOP_ANY_COMMAND: plain Sync, the command arrived at the
+	      // start of this buffer at most the window after the last pulse,
+	      // with the guards of the Record late stop (and no pulse right
+	      // here, which ends the take normally).
+	      const bool plainSyncLate = (fSyncMode == 1.0f
+	                                  && lSampleIndex == 0
+	                                  && pfSyncInput[lSampleIndex] == 0.0f
+	                                  && pLS->bSyncPulseReceived
+	                                  && !pLS->bLateHitBypassed
+	                                  && lGlobalSyncAtButtonPress > 0
+	                                  && lGlobalSyncAtButtonPress <= lateStopWindow
+	                                  && loop->dCurrPos > (double) (lGlobalSyncAtButtonPress + 1 + xfadeSamples));
 #endif
 	      //------ albEnd ----------------------------------
 	      
@@ -5392,6 +5433,9 @@ runSooperLooper(LADSPA_Handle Instance,
 		  || (fSyncMode == 2.0f && pLS->lSamplesSinceSync == loop->lSyncOffset)
 #if REL_SYNC_LATE_HIT
 		  || relSyncLate
+#endif
+#if LATE_STOP_ANY_COMMAND
+		  || plainSyncLate
 #endif
 		  )
 	      {
@@ -5432,8 +5476,15 @@ runSooperLooper(LADSPA_Handle Instance,
 			      const unsigned long lateSamples = loop->lRelSyncEarly
 				      + (relSyncLate ? lCurrPos - loop->lRelSyncLastPoint : 0);
 			      if (lateSamples > 0 && (unsigned long) lCurrPos > lateSamples) {
-				      pLS->fLoopFadeAtten = relSyncEndTrimmed(pLS, loop, lateSamples, xfadeSamples);
+				      pLS->fLoopFadeAtten = endTakeTrimmed(pLS, loop, lateSamples, xfadeSamples);
 			      }
+		      }
+#endif
+#if LATE_STOP_ANY_COMMAND
+		      // Plain Sync late command: end just before the pulse T + 1
+		      // samples back, as the Record late stop trims.
+		      if (plainSyncLate) {
+			      pLS->fLoopFadeAtten = endTakeTrimmed(pLS, loop, lGlobalSyncAtButtonPress + 1, xfadeSamples);
 		      }
 #endif
 		      //------ albEnd ----------------------------------
@@ -5516,10 +5567,11 @@ runSooperLooper(LADSPA_Handle Instance,
 
 	   // update loop values (in case we get stopped by an event)
 	   //------ albBegin ----------------------------------
-#if REL_SYNC_LATE_HIT
+#if REL_SYNC_LATE_HIT || LATE_STOP_ANY_COMMAND
 	   // Only while still waiting.  After an end above the values are set
-	   // already, possibly trimmed (REL_SYNC_LATE_HIT), and `loop` may be a
-	   // new overdub chunk; this would put the untrimmed length back.
+	   // already, possibly trimmed (REL_SYNC_LATE_HIT,
+	   // LATE_STOP_ANY_COMMAND), and `loop` may be a new overdub chunk;
+	   // this would put the untrimmed length back.
 	   if (loop && pLS->state == STATE_TRIG_STOP) {
 #else
 	   if (loop) {

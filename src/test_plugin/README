@@ -121,6 +121,14 @@ testdef_rel_sync_late_hit.py
     (request_at_clock) and the input is a ramp (input_ramp), so lengths,
     contents and playback phase are checked exactly.
 
+testdef_late_stop_any_command.py
+    Tests for LATE_STOP_ANY_COMMAND: under plain Sync, a take ended just
+    after a pulse by mute_trigger, a quantized Mute or Overdub ends on the
+    pulse at once (Muted / Overdubbing), plays in phase when unmuted;
+    outside the window or with the window 0 it waits another cycle;
+    early, it waits for the pulse; Record's own late stop unchanged;
+    stereo channels alike.
+
 testdef_trig_stop_memory.py
     Regression tests for TRIG_STOP_MEMORY_FIX: a recording whose stop is
     still pending when the loop memory runs out ends there and plays,

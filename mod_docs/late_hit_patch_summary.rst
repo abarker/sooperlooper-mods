@@ -265,6 +265,14 @@ item links to its full description.
   stopped) -- Record waits for the next boundary and starts there, as
   plain Sync would.  Both channels of a stereo loop start together.
 
+- **Late stop for any command that ends a recording**
+  (``LATE_STOP_ANY_COMMAND``, new in this fork, on in this build).  Under
+  plain Sync, the late stop used to apply only when Record ended the
+  recording.  Now Overdub, and Mute or ``mute_trigger`` with mute quant
+  on, get it too: pressed just after the boundary, they end the recording
+  on it and go straight to overdubbing or muted, instead of recording
+  another whole cycle.  See `Late Record Stop`_.
+
 - **Rel Sync late-hit: early start, late stop** (``REL_SYNC_LATE_HIT``,
   new in this fork, on in this build).  A Rel Sync recording that starts
   at the press now starts earlier by the trigger latency (the pedal's
@@ -372,6 +380,13 @@ the loop comes out a whole cycle too long.  With the patch, the loop is
 trimmed to end at the boundary just passed, and playback starts at once
 from where it would be had the press been on time, so the loop is in time
 from the start.
+
+This works for every command that ends a recording and waits for the
+boundary to do it: Record, Overdub, and Mute or ``mute_trigger`` with mute
+quant on.  A recording ended late by ``mute_trigger`` ends on the boundary
+and is muted at once; when unmuted later it plays in time.
+(With mute quant off, Mute ends the recording at once wherever it is
+pressed, so there is nothing to correct.)
 
 That is why, with the corrections in place, an accurate stop matters more
 than an accurate start.  The beginning of the loop's *first* repeat -- the
@@ -1276,6 +1291,14 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        (a loop of the wrong length, or one that never stops).  Defined in
        ``plugin.hpp`` because ``looper.cpp`` uses it too.  Set to 0 for
        stock.
+   * - ``LATE_STOP_ANY_COMMAND``
+     - ``plugin.cc``
+     - ``1``
+     - New behaviour, on in this build for trial: under plain Sync, a
+       command other than Record that ends a recording (Overdub, a
+       quantized Mute or ``mute_trigger``) within the late-hit window
+       after a boundary ends it on that boundary, as the Record late stop
+       does.  Set to 0 for the previous behaviour (another whole cycle).
    * - ``REL_SYNC_LATE_HIT``
      - ``plugin.hpp``
      - ``1``
