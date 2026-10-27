@@ -195,9 +195,9 @@ item links to its full description.
   an empty loop, or one started from Mute or Pause.  See
   `New Feature: record failsafe`_.
 
-- **Four settings, one place.** ``late_hit_window_ms``,
-  ``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds`` and
-  ``mute_late_hit_ms`` are all saved in the session file's ``<Globals>``
+- **Five settings, one place.** ``late_hit_window_ms``,
+  ``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds``,
+  ``mute_late_hit_ms`` and ``rel_sync_early_ms`` are all saved in the session file's ``<Globals>``
   line, and can be read and set live over OSC.  See `Record Late-Hit
   Window Size`_ and `OSC Control`_.
 
@@ -248,17 +248,32 @@ item links to its full description.
   sample of the next buffer, where it belongs.  JACK and MIDI clock sync
   were not affected.
 
-- **Rel Sync first-recording fix** (``REL_SYNC_STALE_PHASE_FIX``, on by
-  default).  A loop counts the samples since the last cycle boundary only
-  while its Sync is on, so after Sync is turned off and on again -- the
-  checkbox, a sync settings change, or a tool that turns Sync off at every
-  transport stop -- the count is stale until the next boundary.  In stock
-  1.7.9 a Rel Sync recording started in that gap takes the stale count as
-  its offset: the loop comes out the wrong length, or, if the count is
-  over a cycle, the recording never stops.  Now, when a loop enters Rel
-  Sync, its first record press waits for the next boundary and starts
-  there, as plain Sync would; once a boundary has passed, records start at
-  once as before.  Both channels of a stereo loop start together.
+- **Rel Sync knows where it is in the cycle** (``REL_SYNC_STALE_PHASE_FIX``,
+  on by default).  In stock 1.7.9 a loop counts the samples since the last
+  cycle boundary only while its Sync is on, and keeps counting across a
+  sync source or Quantize change.  So after Sync is turned off and on
+  again -- the checkbox, a sync settings change, or a tool that turns Sync
+  off at every transport stop -- or after a source or Quantize change, the
+  count is stale until the next boundary.  A Rel Sync recording started in
+  that gap takes the stale count as its offset: the loop comes out the
+  wrong length, or, if the count is over a cycle, the recording never
+  stops.  Now a loop keeps track of the boundaries all the time, whatever
+  its Sync setting, so a Record pressed right after Rel Sync comes on
+  starts at the press with the right offset.  Where the position really
+  is not known -- no boundary seen yet, just after a sync source or
+  Quantize change, or no boundary for over two cycles (the transport
+  stopped) -- Record waits for the next boundary and starts there, as
+  plain Sync would.  Both channels of a stereo loop start together.
+
+- **Rel Sync late-hit: early start, late stop** (``REL_SYNC_LATE_HIT``,
+  new in this fork, on in this build).  A Rel Sync recording that starts
+  at the press now starts earlier by the trigger latency (the pedal's
+  delay) plus an optional extra, ``rel_sync_early_ms``, so the first notes
+  played on the press are in the loop, and it ends that much earlier
+  too, so it is still a whole number of cycles.  And a stop pressed just
+  after the recording's end point -- up to the late-hit window -- ends it
+  there at once, instead of recording another whole cycle.  See `Rel Sync
+  Recordings`_.
 
 - **No crash when a pending stop outlasts the loop memory**
   (``TRIG_STOP_MEMORY_FIX``, on by default).  A recording waiting for its
@@ -331,10 +346,10 @@ needs sync to be active, which means two things together:
   fires, whatever the checkbox says.
 
 With a JACK or Internal source this also means Quantize set to Cycle or
-8th: with Quantize Off or Loop those sources produce no boundaries.  The
-correction is off under Rel Sync, where a recording deliberately starts
-and ends away from the boundary; see `Rel Sync Recordings`_.  The
-window is 100 ms by default; see
+8th: with Quantize Off or Loop those sources produce no boundaries.  Under
+Rel Sync, where a recording deliberately starts and ends away from the
+boundary, a different correction applies; see `Rel Sync Recordings`_.
+The window is 100 ms by default; see
 `Record Late-Hit Window Size`_.
 
 Late Record Start
@@ -387,10 +402,36 @@ Rel Sync Recordings
 With Rel Sync on and the loop's Sync box checked, Record starts at the
 press, and the recording ends when the same distance after a boundary
 comes round again, so the loop is a whole number of cycles that starts off
-the beat.  The late-hit correction does not apply.  Two fixes in this fork
-(``REL_SYNC_STALE_PHASE_FIX`` and ``TRIG_STOP_MEMORY_FIX``, see `What This
-Patch Adds at a Glance`_) cover the cases where the engine does not yet
-know that distance, or never reaches it.
+the beat.  Two fixes in this fork (``REL_SYNC_STALE_PHASE_FIX`` and
+``TRIG_STOP_MEMORY_FIX``, see `What This Patch Adds at a Glance`_) cover
+the cases where the engine does not yet know that distance, or never
+reaches it.
+
+**Early start.**  The Record command reaches SooperLooper a little after
+the pedal is pressed: the trigger latency, which is measured once and set
+in the loop's latency settings.  So a recording that starts at the press
+starts that much earlier, taking the missing audio from SooperLooper's
+continuous input history, and the first notes played on the press are in
+the loop.  For a press made right on the first note, a further
+``rel_sync_early_ms`` (default 0) starts it earlier still; it adds to the
+trigger latency, so leave the trigger latency out of it.  The recording
+ends the same amount earlier, so it is still a whole number of cycles.
+On the first time round, playback joins the loop that far in: you have
+just played that stretch live.  A recording that waits for a boundary
+(see below) starts on the boundary, not earlier.
+
+**Late stop.**  A Record press that ends the recording up to the late-hit
+window (``late_hit_window_ms``, 100 ms by default) after its end point
+ends it at that point at once, instead of recording another whole cycle.
+As with the plain Sync late stop, the first moments of the first repeat
+have already gone by and are not heard.  A stop pressed in the window
+right after the start does not end a loop of no cycles: it waits for the
+first full cycle.  Other commands that end a recording (Overdub, a
+quantized Mute or ``mute_trigger``, and so on) still wait for the end
+point, and get the early-start trim there.
+
+Set ``rel_sync_early_ms`` like the other settings: in the session file's
+``<Globals>`` line, or over OSC with ``/set`` (see `OSC Control`_).
 
 What happens, by situation:
 
@@ -405,31 +446,37 @@ What happens, by situation:
      - The recording starts at the press and ends at the same point after
        a later boundary: whole cycles, off the beat as played.
      - --
-   * - The stop is pressed a little after that point
+   * - Record stop pressed a little after that point, within the
+       late-hit window
+     - The recording ends at that point at once: whole cycles.
+     - --
+   * - The stop is pressed later than the window after that point, or
+       ended by another command (Overdub, a quantized Mute) after it
      - The point has passed, so the recording carries on to the same
        point a cycle later: the loop is a cycle longer than meant.
      - Undo, and record again.  ``cancel_record_mute`` does nothing once
        the stop is pressed.
-   * - Record pressed after Rel Sync comes on (turned on, the loop's Sync
-       box checked, or Sync turned back on) but before the next boundary
-     - That Record waits for the boundary and starts there, as plain Sync
-       would.  A Record pressed after that boundary starts at the press.
+   * - Record pressed just after Rel Sync comes on (turned on, the
+       loop's Sync box checked, Sync turned back on, or switched from
+       plain Sync) while boundaries keep arriving
+     - Record starts at the press, as with steady boundaries.  The loop
+       keeps track of where it is in the cycle even while its Sync is off.
+     - --
+   * - Record pressed when the position is not known: the loop has not
+       seen a boundary yet, the sync source or Quantize has just changed
+       (adding or removing a loop re-applies the source), or no boundary
+       has come for over two cycles (the transport stopped)
+     - Record waits for the next boundary and starts there, as plain Sync
+       would; the loop comes out whole cycles.
      - --
    * - The same, with no boundaries arriving at all (transport stopped,
        or Quantize Off or Loop with a JACK or Internal source)
      - Record waits and records nothing until boundaries arrive.
        Pressing Record again does not cancel it.
      - Undo or ``cancel_record_mute``.
-   * - The sync source or Quantize is changed while Rel Sync stays on,
-       and Record is pressed before the first new boundary
-     - The distance is measured from the old setting's boundaries, so it
-       can be wrong.  Usually the loop comes out the wrong length and
-       drifts against the beat on each pass.  If the end point is never
-       reached, see the next row.
-     - Undo and record again after a boundary.
-   * - The end point is never reached: no boundaries arrive after the
-       recording starts (the transport stopped before or during it), or
-       the case above
+   * - The end point is never reached: the boundaries stop during the
+       recording, or less than two cycles before Record was pressed (the
+       transport stopped)
      - Record starts at the press as usual, but the stop waits forever.
        The recording runs until the loop memory is full (120 seconds by
        default, about 175 at 48 kHz), then ends there and plays.  The loop is however long
@@ -731,9 +778,9 @@ fraction alone governs at all normal tempos.
 OSC Control
 ~~~~~~~~~~~
 
-All four settings -- ``late_hit_window_ms``,
-``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds`` and
-``mute_late_hit_ms`` -- can be read and changed while SooperLooper runs,
+All five settings -- ``late_hit_window_ms``,
+``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds``,
+``mute_late_hit_ms`` and ``rel_sync_early_ms`` -- can be read and changed while SooperLooper runs,
 with the same global OSC ``/set`` and ``/get`` messages used for ``tempo``,
 ``eighth_per_cycle`` and the other ``<Globals>`` values:
 
@@ -1217,12 +1264,32 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        already does (see `Late-Hit Correction Robustness`_).  Fixes a bug
        in this fork's own late-hit code.  Set to 0 to remove the reset.
    * - ``REL_SYNC_STALE_PHASE_FIX``
-     - ``plugin.cc``
+     - ``plugin.hpp``
      - ``1``
-     - When 1 (default), a stock 1.7.9 bug fix is active: a Rel Sync
-       record pressed after Rel Sync comes on but before the next boundary
-       waits for that boundary, instead of taking a stale offset (a loop
-       of the wrong length, or one that never stops).  Set to 0 for stock.
+     - When 1 (default), a stock 1.7.9 bug fix is active: each loop keeps
+       track of the sync boundaries whatever its Sync setting, so a Rel
+       Sync record uses the right offset; where the position is not known
+       (no boundary yet, a source or Quantize change, none for over two
+       cycles) it waits for the next boundary.  Stock takes a stale offset
+       (a loop of the wrong length, or one that never stops).  Defined in
+       ``plugin.hpp`` because ``looper.cpp`` uses it too.  Set to 0 for
+       stock.
+   * - ``REL_SYNC_LATE_HIT``
+     - ``plugin.hpp``
+     - ``1``
+     - New behaviour, on in this build for trial: a Rel Sync recording
+       that starts at the press starts trigger latency +
+       ``rel_sync_early_ms`` earlier and ends as much earlier, and a
+       Record stop within the late-hit window after the end point ends
+       it there (see `Rel Sync Recordings`_).  Needs
+       ``REL_SYNC_STALE_PHASE_FIX``.  Set to 0 for the previous
+       behaviour.
+   * - ``REL_SYNC_EARLY_MS_DEFAULT``
+     - ``plugin.cc``
+     - ``0.0f``
+     - Compile-time initial value for ``g_rel_sync_early_ms``, the extra
+       early start added to the trigger latency.  Overridden at runtime
+       by the session file or OSC ``/set``.
    * - ``TRIG_STOP_MEMORY_FIX``
      - ``plugin.cc``
      - ``1``

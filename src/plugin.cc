@@ -338,25 +338,79 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 // cycle, the stop, which waits for the counter to equal the offset, never
 // comes.
 //
-// The fix: when a loop enters Rel Sync (fSyncMode becomes 2 from anything
-// else, including the first run() after instantiation), the counter is
-// set to REL_SYNC_PHASE_UNKNOWN.  A Rel Sync record pressed while it is
-// unknown waits in STATE_TRIG_START, which now counts under Rel Sync like
-// the other states, so the next cycle pulse resets the counter to 0 and
-// the recording starts there, offset 0, as plain Sync would.  Once a pulse
-// has passed, records start at once as before.  Plain Sync and Sync off
-// are unchanged.
+// The fix: the pulses reach channel 0 of every loop whatever its Sync
+// setting, so channel 0 tracks them all the time (lTrackedSinceSync, a
+// pass over each buffer's sync input in every state), and Looper::run()
+// copies that count to the other channels, whose sync input is channel
+// 0's output.  When a loop enters Rel Sync (fSyncMode becomes 2 from
+// anything else, including the first run() after instantiation) or its
+// Quantize changes under Rel Sync, the loop's counter takes the tracked
+// count, so a record pressed then starts at the press with the right
+// offset.  The tracked count is REL_SYNC_PHASE_UNKNOWN when it really is
+// not known: no pulse seen yet, a Quantize change (the pulse spacing
+// changes), a sync source change (Looper::reset_late_hit_state()), or no
+// pulse for over twice the longest pulse spacing since the count became
+// known (the transport stopped, so a count from before the stop is never
+// used).  Under Rel Sync an unknown tracked
+// count makes the counter unknown too.  A Rel Sync record pressed while
+// the counter is unknown waits in STATE_TRIG_START, which counts under
+// Rel Sync like the other states, so the next pulse resets the counter to
+// 0 and the recording starts there, offset 0, as plain Sync would.  Plain
+// Sync and Sync off are unchanged.
 //
-// Regression tests: testdef_rel_sync_stale_phase.py.
+// Regression tests: testdef_rel_sync_stale_phase.py,
+// testdef_rel_sync_known_phase.py.
 //
-// Set to 0 to revert to the stock (buggy) behaviour.
-#define REL_SYNC_STALE_PHASE_FIX 1
-#if REL_SYNC_STALE_PHASE_FIX
-// lSamplesSinceSync is an unsigned int despite its name.  Far above any
-// real count, and the ++ in every state would take over 12 hours at 48 kHz
-// with no pulse at all to carry it past UINT_MAX.
-#define REL_SYNC_PHASE_UNKNOWN (UINT_MAX / 2)
-#endif
+// The switch itself, and REL_SYNC_PHASE_UNKNOWN, are defined in
+// plugin.hpp, since looper.cpp and the test harness use them too.  Set it
+// to 0 to revert to the stock (buggy) behaviour.
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
+// REL_SYNC_LATE_HIT: compile-time switch for a NEW behaviour (defined in
+// plugin.hpp; needs REL_SYNC_STALE_PHASE_FIX).
+//
+// The problem: a Rel Sync record starts when the command arrives, which
+// is trigger_latency samples after the pedal (stock never reads
+// trigger_latency for a record start; the "this needs to be adjusted for
+// latency" note at the Rel Sync start below), so the first bit of what
+// was played on the press is missing.  And its stop waits until the
+// counter equals the start's offset, so a stop arriving even one sample
+// past that point records another whole Quantize unit (a cycle, or an
+// eighth under 8th).  The late-hit corrections never run under Rel Sync
+// (fSyncMode == 1 only): they trim to the pulse, not to the offset.
+//
+// The change:
+//
+// * Early start.  A Rel Sync record that starts at the press (the count
+//   is known) starts E = trigger_latency + g_rel_sync_early_ms samples
+//   earlier: [0, E) is filled from the input history, as the late-hit
+//   start backfill does, and recording carries on at E.  The offset
+//   stays the press's, so the stop still comes at whole Quantize units
+//   after the press; there the last E samples are dropped (the loop is
+//   whole units long, starting E before the press), faded into the
+//   loop's start as the late-hit stop's seam fade does, and playback
+//   carries on E samples into the loop.  A record that waits for a
+//   pulse starts at the pulse with E = 0, as now.
+//
+// * Late stop.  STATE_RECORD notes the loop position each time the take
+//   passes its end point (the check STATE_TRIG_STOP makes).  A Record
+//   press arriving at most the late-hit window (effectiveLateHitWindow())
+//   past that point, at least one Quantize unit after the start, ends the
+//   take at that point, less E, at once: the same trim, seam fade and
+//   playback position as above with the overrun added.  Otherwise the
+//   stop waits in STATE_TRIG_STOP as now.  Record presses only, as for
+//   the plain Sync late-hit stop; other commands ending a take still wait
+//   for the end point (with the early-start trim there).
+//
+// g_rel_sync_early_ms: the extra early start, for a press made on the
+// first note.  A setup-time preference saved/loaded as the XML property
+// "rel_sync_early_ms" in the <Globals> node, like g_mute_late_hit_ms.
+// Default 0: only trigger_latency, which is the measured pedal delay.
+//
+// Regression tests: testdef_rel_sync_late_hit.py.
+#define REL_SYNC_EARLY_MS_DEFAULT 0.0f
+float g_rel_sync_early_ms = REL_SYNC_EARLY_MS_DEFAULT;
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
@@ -785,6 +839,33 @@ static_assert((int) Event::PAUSE_OFF == MULTI_PAUSE_OFF, "Event::command_t drift
 	f_max (x, y)
 
 
+//------ albBegin ----------------------------------
+#if REL_SYNC_LATE_HIT
+// relSyncEndTrimmed(): end a Rel Sync take lateSamples before the current
+// position (REL_SYNC_LATE_HIT; see its comment block).  Sets the length,
+// fades the dropped samples into the loop's start (the late-hit stop's
+// seam fade: after a normal stop STATE_PLAY writes the input following
+// the end into the start, fading it out, index i at 1 - (i + 1) / xfade;
+// here that input is already in the buffer past the new end), and
+// returns the fade level STATE_PLAY carries on from at index lateSamples.
+// The caller sets the state and the position.
+static inline float relSyncEndTrimmed(SooperLooperI *pLS, LoopChunk *loop,
+                                      unsigned long lateSamples, int xfadeSamples)
+{
+	const unsigned long length = (unsigned long) loop->dCurrPos - lateSamples;
+	loop->lLoopLength  = length;
+	loop->lCycleLength = length;
+	loop->lCycles = 1;
+	for (unsigned long i = 0; i < lateSamples && i + 1 < (unsigned long) xfadeSamples; ++i) {
+		const float fGain = 1.0f - (float) (i + 1) / xfadeSamples;
+		pLS->pSampleBuf[(loop->lLoopStart + i) & pLS->lBufferSizeMask] +=
+			fGain * pLS->pSampleBuf[(loop->lLoopStart + length + i) & pLS->lBufferSizeMask];
+	}
+	return LIMIT_BETWEEN_0_AND_1 (1.0f - (float) lateSamples / xfadeSamples);
+}
+#endif
+//------ albEnd ----------------------------------
+
 
 // reads loop audio into buffer, up to frames length, starting from loop_offset.  if fewer frames are
 // available returns amount read.  if 0 is returned loop is done.
@@ -1014,7 +1095,14 @@ static LoopChunk * pushNewLoopChunk(SooperLooperI* pLS, unsigned long initLength
 
    DBG(fprintf(stderr, "%u:%u  New head is %08x   start: %lu\n",pLS->lLoopIndex, pLS->lChannelIndex, (unsigned)loop, loop->lLoopStart);)
 
-   
+   //------ albBegin ----------------------------------
+#if REL_SYNC_LATE_HIT
+   // Chunks are reused: no early start or end point from a previous take.
+   loop->lRelSyncEarly = 0;
+   loop->lRelSyncLastPoint = 0;
+#endif
+   //------ albEnd ----------------------------------
+
    return loop;
 }
 
@@ -1340,8 +1428,20 @@ activateSooperLooper(LADSPA_Handle Instance) {
   pLS->nextState = -1;
   pLS->wasMuted = false;
   pLS->recSyncEnded = false;
+  //------ albBegin ----------------------------------
+#if REL_SYNC_LATE_HIT
+  pLS->lRelSyncPressEarly = 0;
+#endif
+  //------ albEnd ----------------------------------
 
   pLS->lSamplesSinceSync = 0;
+  //------ albBegin ----------------------------------
+#if REL_SYNC_STALE_PHASE_FIX
+  pLS->lTrackedSinceSync    = REL_SYNC_PHASE_UNKNOWN;   // no pulse seen yet
+  pLS->lTrackedSyncPeriod   = 0;
+  pLS->fQuantModeLastBuffer = -1.0f;                    // any Quantize differs
+#endif
+  //------ albEnd ----------------------------------
 
   pLS->lInputBufWritePos = 0;
   pLS->lFramesUntilInput = 0;
@@ -2543,15 +2643,62 @@ runSooperLooper(LADSPA_Handle Instance,
   }
 #endif
   // REL_SYNC_STALE_PHASE_FIX (see its comment block near the top of this
-  // file): entering Rel Sync, the counter's value is not known to match
-  // the pulses; it is again after the next one.
+  // file): under Rel Sync the loop's counter must match the pulses.
 #if REL_SYNC_STALE_PHASE_FIX
-  if (fSyncMode == 2.0f && pLS->fSyncModeLastBuffer != 2.0f) {
-	  pLS->lSamplesSinceSync = REL_SYNC_PHASE_UNKNOWN;
+  {
+	  // A Quantize change changes the pulse spacing: the tracked count
+	  // is not known again until the next pulse.
+	  const bool quantChanged = (*pLS->pfQuantMode != pLS->fQuantModeLastBuffer);
+	  pLS->fQuantModeLastBuffer = *pLS->pfQuantMode;
+	  if (quantChanged) {
+		  pLS->lTrackedSinceSync  = REL_SYNC_PHASE_UNKNOWN;
+		  pLS->lTrackedSyncPeriod = 0;
+	  }
+	  // Take the tracked count on entering Rel Sync or a Quantize change,
+	  // and whenever the tracked count is unknown (no pulse yet since a
+	  // source change, or none for over two spacings).
+	  if (fSyncMode == 2.0f
+	      && (pLS->fSyncModeLastBuffer != 2.0f || quantChanged
+	          || pLS->lTrackedSinceSync >= REL_SYNC_PHASE_UNKNOWN)) {
+		  pLS->lSamplesSinceSync = pLS->lTrackedSinceSync;
+	  }
   }
 #endif
 #if SYNC_MODE_LATE_HIT_RESET_FIX || REL_SYNC_STALE_PHASE_FIX
   pLS->fSyncModeLastBuffer = fSyncMode;
+#endif
+#if REL_SYNC_STALE_PHASE_FIX
+  // Track the source's pulses whatever the state or Sync setting (only
+  // channel 0's input is the source; see Looper::run()).  Same counting
+  // as the states' own: ++, then 0 on a pulse.
+  if (pLS->lChannelIndex == 0) {
+	  // The spacing kept is the longest since the count became known: a
+	  // loop as the source also sends a pulse at its state changes, which
+	  // can only make a spacing shorter, so it cannot make the stop test
+	  // below fire early.  Such pulses still reset the count, as they
+	  // reset the states' own counters.
+	  for (unsigned long n = 0; n < SampleCount; ++n) {
+		  if (pLS->lTrackedSinceSync < REL_SYNC_PHASE_UNKNOWN) {
+			  pLS->lTrackedSinceSync++;
+		  }
+		  if (pfSyncInput[n] > 1.5f) {
+			  if (pLS->lTrackedSinceSync >= REL_SYNC_PHASE_UNKNOWN) {
+				  pLS->lTrackedSyncPeriod = 0;
+			  } else if (pLS->lTrackedSinceSync > pLS->lTrackedSyncPeriod) {
+				  pLS->lTrackedSyncPeriod = pLS->lTrackedSinceSync;
+			  }
+			  pLS->lTrackedSinceSync = 0;
+		  }
+	  }
+	  // No pulse for over two spacings (the transport stopped): a count
+	  // from before the stop must not be used when the pulses resume.
+	  if (pLS->lTrackedSyncPeriod != 0
+	      && pLS->lTrackedSinceSync < REL_SYNC_PHASE_UNKNOWN
+	      && pLS->lTrackedSinceSync > 2 * pLS->lTrackedSyncPeriod) {
+		  pLS->lTrackedSinceSync  = REL_SYNC_PHASE_UNKNOWN;
+		  pLS->lTrackedSyncPeriod = 0;
+	  }
+  }
 #endif
   //------ albEnd ----------------------------------
 
@@ -3309,7 +3456,36 @@ runSooperLooper(LADSPA_Handle Instance,
 				      loop->dCurrPos += (double)lateSamples;
 				      pLS->lFramesUntilFilled = lOutputLatency + lInputLatency;
 
-			      } else {
+			      }
+#if REL_SYNC_LATE_HIT
+			      // REL_SYNC_LATE_HIT late stop: pressed at most the late-hit
+			      // window past the take's last end point, and that point is a
+			      // whole Quantize unit or more after the start (the start
+			      // itself is a point, at lRelSyncEarly).  End there, less the
+			      // early start, at once, instead of recording another unit.
+			      // The playback position follows the late-hit stop above,
+			      // with lateSamples the overrun plus the early start.
+			      else if (fSyncMode == 2.0f
+			               && loop != NULL
+			               && !pLS->bLateHitBypassed
+			               && loop->lRelSyncLastPoint > loop->lRelSyncEarly
+			               && (unsigned long) loop->dCurrPos - loop->lRelSyncLastPoint <= shiftSamples) {
+				      const unsigned long lateSamples =
+					      (unsigned long) loop->dCurrPos - (loop->lRelSyncLastPoint - loop->lRelSyncEarly);
+				      pLS->fLoopFadeAtten = relSyncEndTrimmed(pLS, loop, lateSamples, xfadeSamples);
+				      pLS->state = STATE_PLAY;
+				      pLS->wasMuted = false;
+				      pLS->recSyncEnded = true;   // as the Rel Sync STATE_TRIG_STOP end
+				      pLS->fLoopFadeDelta   = -1.0f / xfadeSamples;
+				      pLS->fPlayFadeDelta   =  1.0f / xfadeSamples;
+				      pLS->fLoopSrcFadeDelta = -1.0f / xfadeSamples;
+				      pLS->fFeedSrcFadeDelta = -1.0f / xfadeSamples;
+				      loop->dCurrPos = (double) loop->lLoopLength
+					      + (lOutputLatency + lInputLatency) * fRate + (double) lateSamples;
+				      pLS->lFramesUntilFilled = lOutputLatency + lInputLatency;
+			      }
+#endif
+			      else {
 				      pLS->state = STATE_TRIG_STOP;
 				      pLS->nextState = STATE_PLAY;
 				      DBG(fprintf(stderr,"%u:%u  Entering TRIG_STOP state\n", pLS->lLoopIndex, pLS->lChannelIndex));
@@ -3571,6 +3747,19 @@ runSooperLooper(LADSPA_Handle Instance,
 			 }
 		 } else {
 			 pLS->state = STATE_TRIG_START;
+#if REL_SYNC_LATE_HIT
+			 // A Rel Sync record that starts at the press (STATE_TRIG_START
+			 // decides on its first sample) starts this much earlier, if the
+			 // input history holds it as well as this block.
+			 {
+				 const float fTrigLat = *pLS->pfTriggerLatency;
+				 const unsigned long early =
+					 (unsigned long) (fTrigLat > 0.0f ? fTrigLat : 0.0f)
+					 + (unsigned long) (g_rel_sync_early_ms * 0.001f * pLS->fSampleRate);
+				 pLS->lRelSyncPressEarly =
+					 (fSyncMode == 2.0f && early + SampleCount <= pLS->lInputBufSize) ? early : 0;
+			 }
+#endif
 			 SYNCWDBG(SL_LOG_RT(
 			     "%u:%u  Normal path: entering TRIG_START, will wait for next sync"
 			     " (%.2f ms since last boundary, lGlobalSyncAtButtonPress=%llu)\n",
@@ -4972,7 +5161,34 @@ runSooperLooper(LADSPA_Handle Instance,
 				  pLS->fLoopSrcFadeDelta = 1.0f / xfadeSamples;
 				  // and this goes down
 				  pLS->fFeedSrcFadeDelta = -1.0f / xfadeSamples;
-				  
+
+				  //------ albBegin ----------------------------------
+#if REL_SYNC_LATE_HIT
+				  // Early start: [0, early) is the input before this sample,
+				  // from the input history (a verbatim copy of pfInput, this
+				  // block included), with the fade-in a normal start gives
+				  // index i; recording carries on at early.  The offset stays
+				  // the press's; the sync position moves back with the start.
+				  if (fSyncMode == 2.0f && pLS->lRelSyncPressEarly > 0) {
+					  const unsigned long early = pLS->lRelSyncPressEarly;
+					  const unsigned long readPos =
+						  (pLS->lInputBufWritePos + lSampleIndex + pLS->lInputBufSize - early)
+						  & pLS->lInputBufMask;
+					  for (unsigned long i = 0; i < early; ++i) {
+						  const float fGain = (i + 1 < (unsigned long) xfadeSamples)
+							  ? (float) (i + 1) / xfadeSamples : 1.0f;
+						  pLS->pSampleBuf[(loop->lLoopStart + i) & pLS->lBufferSizeMask] =
+							  fGain * pfInputLatencyBuf[(readPos + i) & pLS->lInputBufMask];
+					  }
+					  loop->dCurrPos = (double) early;
+					  pLS->fLoopFadeAtten = LIMIT_BETWEEN_0_AND_1 ((float) early / xfadeSamples);
+					  loop->lRelSyncEarly = early;
+					  loop->lSyncPos -= (long) early;
+					  loop->lOrigSyncPos = loop->lSyncPos;
+				  }
+				  pLS->lRelSyncPressEarly = 0;
+#endif
+				  //------ albEnd ----------------------------------
 			  }
 			  else {
 				  DBG(fprintf(stderr, "out of memory! back to PLAY mode\n"));
@@ -5003,6 +5219,10 @@ runSooperLooper(LADSPA_Handle Instance,
 			      pLS->lSamplesSinceSync = 0;
 		      }
 	      }
+#endif
+#if REL_SYNC_LATE_HIT
+	      // Waiting, so it will not start at the press: no early start.
+	      pLS->lRelSyncPressEarly = 0;
 #endif
 	      //------ albEnd ----------------------------------
 	   }
@@ -5043,6 +5263,17 @@ runSooperLooper(LADSPA_Handle Instance,
 // 		      pLS->waitingForSync = 0;
 // 		      break;
 // 	      }
+
+	      //------ albBegin ----------------------------------
+#if REL_SYNC_LATE_HIT
+	      // Where the take passes its end point: the check STATE_TRIG_STOP
+	      // makes, at the same place in the sample (before this sample's
+	      // count).  The start sample is the first.
+	      if (fSyncMode == 2.0f && pLS->lSamplesSinceSync == loop->lSyncOffset) {
+		      loop->lRelSyncLastPoint = (unsigned long) loop->dCurrPos;
+	      }
+#endif
+	      //------ albEnd ----------------------------------
 
 	      if (fSyncMode != 0.0f) {
 		      pfSyncOutput[lSampleIndex] = pfSyncInput[lSampleIndex];
@@ -5190,6 +5421,19 @@ runSooperLooper(LADSPA_Handle Instance,
 		      loop->lLoopLength = (unsigned long) lCurrPos;
 		      loop->lCycleLength = loop->lLoopLength;
 		      loop->lCycles = 1;
+		      //------ albBegin ----------------------------------
+#if REL_SYNC_LATE_HIT
+		      // A take that started early ends as early: drop the last
+		      // lRelSyncEarly samples into the loop's start.  The position
+		      // stays here, so playback (below) carries on lRelSyncEarly
+		      // samples into the loop.  Before transitionToNext(), so a
+		      // following overdub copies the faded start.
+		      if (fSyncMode == 2.0f && loop->lRelSyncEarly > 0
+			  && (unsigned long) lCurrPos > loop->lRelSyncEarly) {
+			      pLS->fLoopFadeAtten = relSyncEndTrimmed(pLS, loop, loop->lRelSyncEarly, xfadeSamples);
+		      }
+#endif
+		      //------ albEnd ----------------------------------
 
 		      DBG(fprintf(stderr,"%u:%u  transitioning to %d  at %g with length: %lu\n", pLS->lLoopIndex, pLS->lChannelIndex, pLS->nextState, loop->dCurrPos, loop->lLoopLength));
 		      
@@ -5268,7 +5512,16 @@ runSooperLooper(LADSPA_Handle Instance,
 	   }
 
 	   // update loop values (in case we get stopped by an event)
+	   //------ albBegin ----------------------------------
+#if REL_SYNC_LATE_HIT
+	   // Only while still waiting.  After an end above the values are set
+	   // already, possibly trimmed (REL_SYNC_LATE_HIT), and `loop` may be a
+	   // new overdub chunk; this would put the untrimmed length back.
+	   if (loop && pLS->state == STATE_TRIG_STOP) {
+#else
 	   if (loop) {
+#endif
+	   //------ albEnd ----------------------------------
 		   loop->lLoopLength = (unsigned long) lCurrPos;
 		   loop->lCycleLength = loop->lLoopLength;
 		   loop->lCycles = 1;

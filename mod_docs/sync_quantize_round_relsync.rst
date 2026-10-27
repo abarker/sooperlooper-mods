@@ -284,8 +284,9 @@ still starts on the beat, with the audio played since the beat kept, and a
 late stop ends the loop on the beat.  The same applies to the press that
 ends a Multiply, just after the boundary where its current cycle began.  It needs the loop's Sync box checked and a source
 producing boundaries -- with JACK or Internal, that means Quantize set to
-Cycle or 8th.  It does not apply with Rel Sync on, where a recording is
-meant to start and end off the boundary.  The window and a
+Cycle or 8th.  With Rel Sync on, where a recording is meant to start and
+end off the boundary, a late stop is measured from the recording's own end
+point instead (see Rel Sync, below).  The window and a
 tempo-relative cap on it are session-file settings; see the patch summary,
 "What the Patch Does" and "Record Late-Hit Window Size".
 
@@ -445,11 +446,30 @@ pickup; with Rel Sync, you press on the pickup and the loop closes on the
 next one.
 
 It needs a source producing boundaries, and Quantize set to Cycle or 8th.
-Right after Rel Sync comes on -- turning it on, checking the loop's Sync
-box, or turning Sync back on after it was off -- the first Record waits
-for the next boundary and starts there, as plain Sync would; after that
-boundary, Record starts at once again.  (Stock 1.7.9 starts at once but
-can get that first loop's length wrong, or never stop it.)
+A loop keeps track of where it is in the cycle even while its Sync box is
+off, so Record starts at the press as soon as Rel Sync comes on.  Record
+waits for the next boundary, and starts there as plain Sync would, only
+when the loop cannot know where it is: it has not seen a boundary yet,
+the sync source or Quantize has just changed, or no boundary has come for
+over two cycles.  (Stock 1.7.9 starts at once in those cases too, and can
+get the loop's length wrong, or never stop it.)
+
+Two more changes in this fork, for playing on the press:
+
+- **The recording starts a little before the press.**  The pedal's
+  command arrives a few milliseconds after the pedal goes down (the
+  trigger latency, set with the loop's latency settings).  A Rel Sync
+  recording that starts at the press starts that much earlier, so the
+  notes you played as you pressed are in the loop.  If you press right on
+  the first note and it still clips, the session setting
+  ``rel_sync_early_ms`` starts it earlier still.  The recording ends the
+  same amount earlier, so it is still whole cycles.
+- **A slightly late stop is caught.**  A Record press just after the end
+  point (within the late-hit window, 100 ms by default) ends the
+  recording there instead of recording another whole cycle.  As with
+  plain Sync's late stop, the first moment of the first repeat is not
+  heard.  Other commands that end a recording, such as Overdub or a
+  quantized Mute, still wait for the end point.
 
 Common setups for live performance
 ----------------------------------

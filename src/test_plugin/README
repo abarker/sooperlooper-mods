@@ -96,12 +96,30 @@ testdef_cancel_record_mute.py
 
 testdef_rel_sync_stale_phase.py
     Regression tests for REL_SYNC_STALE_PHASE_FIX: a Rel Sync record
-    pressed before the first cycle pulse after Sync comes back on waits
-    for that pulse and gives whole cycles; later presses start at once.
+    pressed right after Sync comes back on, or later, gives whole cycles.
     Uses TestLooper's own pulse generator (``sync_inject_period``,
     ``sync_clock``) so pulses land on exact samples, and a two-channel
     engine (``Engine(name, 2)``) to check that the second channel, which
     takes its sync from channel 0's output, starts with the first.
+
+testdef_rel_sync_known_phase.py
+    Tests for REL_SYNC_STALE_PHASE_FIX's tracked count: Rel Sync coming on
+    while pulses flow starts a record at the press; a Quantize change,
+    pulses that stop and resume, and a loop that has never seen a pulse
+    make it wait for the next pulse; stereo channels start together.
+    (A sync source change needs the real engine: the harness does not
+    link looper.cpp.)
+
+testdef_rel_sync_late_hit.py
+    Tests for REL_SYNC_LATE_HIT: a Rel Sync record started at the press
+    starts trigger_latency + rel_sync_early_ms earlier, from the input
+    history, ends as much earlier (whole cycles) and plays in phase; one
+    that waits for a pulse does not start early; a Record stop within the
+    late-hit window after the end point ends it there at once, outside
+    the window or just after the start it waits; Cycle and 8th, stereo,
+    and a record ended by Overdub.  Presses go in at exact frames
+    (request_at_clock) and the input is a ramp (input_ramp), so lengths,
+    contents and playback phase are checked exactly.
 
 testdef_trig_stop_memory.py
     Regression tests for TRIG_STOP_MEMORY_FIX: a recording whose stop is

@@ -1203,6 +1203,19 @@ Looper::run (nframes_t offset, nframes_t nframes)
 	_input_peak = flush_to_zero (f_clamp (DB_CO (CO_DB(_input_peak) - nframes * _falloff_per_sample), 0.0f, 20.0f));
 	_output_peak = flush_to_zero (f_clamp (DB_CO (CO_DB(_output_peak) - nframes * _falloff_per_sample), 0.0f, 20.0f));
 
+	//------ albBegin ----------------------------------
+	// REL_SYNC_STALE_PHASE_FIX (plugin.cc): the other channels' sync input
+	// is channel 0's sync output, which carries channel 0's own loop
+	// boundaries while Sync is off, so only channel 0 can track the
+	// source; give the others its count.
+#if REL_SYNC_STALE_PHASE_FIX
+	for (unsigned int i = 1; i < _chan_count; ++i) {
+		static_cast<SooperLooperI*>(_instances[i])->lTrackedSinceSync =
+			static_cast<SooperLooperI*>(_instances[0])->lTrackedSinceSync;
+	}
+#endif
+	//------ albEnd ----------------------------------
+
 	run_loops (offset, nframes);
 /*
 	if (ports[Rate] == 1.0f) {
@@ -1247,6 +1260,11 @@ Looper::reset_late_hit_state()
 		pLS->lGlobalSamplesSinceSync  = 0;
 		pLS->bSyncPulseReceived       = false;
 		pLS->lLastSyncPeriodSamples   = ULONG_MAX;
+#if REL_SYNC_STALE_PHASE_FIX
+		// The tracked count is from the old source (plugin.cc).
+		pLS->lTrackedSinceSync        = REL_SYNC_PHASE_UNKNOWN;
+		pLS->lTrackedSyncPeriod       = 0;
+#endif
 	}
 }
 //------ albEnd ----------------------------------

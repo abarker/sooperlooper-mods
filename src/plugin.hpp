@@ -22,6 +22,33 @@
 
 #include "ladspa.h"
 
+//------ albBegin ----------------------------------
+// REL_SYNC_STALE_PHASE_FIX: compile-time switch for a STOCK bug fix; the
+// full writeup is the comment block near the top of plugin.cc.  Defined
+// here, not in plugin.cc, because looper.cpp and the test harness use it
+// too (the tracked count's copy to the other channels, and its reset on
+// a sync source change).  Set to 0 to revert to the stock behaviour.
+#define REL_SYNC_STALE_PHASE_FIX 1
+#if REL_SYNC_STALE_PHASE_FIX
+#include <climits>
+// lSamplesSinceSync / lTrackedSinceSync value meaning "not known".  Far
+// above any real count; the ++ in every state would take over 12 hours
+// at 48 kHz with no pulse to carry it past UINT_MAX.
+#define REL_SYNC_PHASE_UNKNOWN (UINT_MAX / 2)
+#endif
+// REL_SYNC_LATE_HIT: compile-time switch for a NEW behaviour (on for the
+// rig trial; set to 0 for the previous behaviour); the writeup is the
+// comment block near the top of plugin.cc.  A Rel Sync record that starts at the press starts
+// trigger_latency + rel_sync_early_ms earlier, from the input history,
+// and ends as much earlier; a Record stop pressed just past the take's
+// end point ends it there instead of recording another Quantize unit.
+// Here, not in plugin.cc, for the LoopChunk fields below.
+#define REL_SYNC_LATE_HIT 1
+#if REL_SYNC_LATE_HIT && !REL_SYNC_STALE_PHASE_FIX
+#error "REL_SYNC_LATE_HIT needs REL_SYNC_STALE_PHASE_FIX (a start at the press needs a known count)"
+#endif
+//------ albEnd ----------------------------------
+
 // TODO, move the whole looping core into a class
 
 
@@ -143,6 +170,16 @@ typedef struct _LoopChunk {
 	unsigned long lMarkEndH;        
 
 	unsigned long lSyncOffset; // used for rel sync
+	//------ albBegin ----------------------------------
+#if REL_SYNC_LATE_HIT
+	// lRelSyncEarly: samples this Rel Sync take started before its press
+	// (0 if it waited for a pulse); its end comes as much before the end
+	// point.  lRelSyncLastPoint: loop position where the take last passed
+	// its end point while recording.  Both set by plugin.cc.
+	unsigned long lRelSyncEarly;
+	unsigned long lRelSyncLastPoint;
+#endif
+	//------ albEnd ----------------------------------
 	long lSyncPos; // used for retriggering
 	long lOrigSyncPos;
 	
@@ -333,6 +370,27 @@ typedef struct {
 	// this struct (a per-channel master/slave role flag, not a port
 	// snapshot -- do not confuse the two).
 	LADSPA_Data fSyncModeLastBuffer;
+	//------ albEnd ----------------------------------
+
+	//------ albBegin ----------------------------------
+#if REL_SYNC_STALE_PHASE_FIX
+	// REL_SYNC_STALE_PHASE_FIX (plugin.cc): samples since the last sync
+	// pulse, tracked on channel 0 in every state whatever the Sync
+	// setting, and the longest pulse spacing since it became known (0 =
+	// not known).
+	// REL_SYNC_PHASE_UNKNOWN when not known.  Looper::run() copies channel
+	// 0's count to the other channels before each run().
+	// fQuantModeLastBuffer: the previous buffer's Quantize, to see it change.
+	unsigned int lTrackedSinceSync;
+	unsigned int lTrackedSyncPeriod;
+	LADSPA_Data  fQuantModeLastBuffer;
+#endif
+#if REL_SYNC_LATE_HIT
+	// REL_SYNC_LATE_HIT (plugin.cc): how much earlier than the press a
+	// Rel Sync record entering STATE_TRIG_START this buffer will start,
+	// if it starts at the press; 0 once it waits instead.
+	unsigned long lRelSyncPressEarly;
+#endif
 	//------ albEnd ----------------------------------
 
 	//------ albBegin ----------------------------------

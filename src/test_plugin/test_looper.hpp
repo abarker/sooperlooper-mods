@@ -50,6 +50,8 @@ class TestLooper
 	 * State and LoopLength ports go to a dummy. */
 	int get_channel_state (unsigned int index) const;
 	unsigned long get_channel_loop_length (unsigned int index) const;
+	/* The current take's sample at loop position pos (channel index). */
+	float get_loop_sample (unsigned int index, unsigned long pos) const;
 	//------ albEnd ----------------------------------
 
 	void request_cmd (int cmd);
@@ -88,6 +90,17 @@ class TestLooper
 	 * sync_clock. */
 	unsigned long      sync_inject_period;
 	unsigned long long sync_clock;
+
+	/* Exact press timing.  process_count goes up at the top of run(), so
+	 * a test reading sync_clock after wait_buffers() races the callback
+	 * and cannot know which block a request() lands in.  Instead:
+	 * request_at_clock >= 0 makes run() request request_at_cmd in the
+	 * first block whose sync_clock (its first sample) is >= it, then
+	 * sets it back to -1; last_request_clock is the sync_clock of the
+	 * block where the last requested command (either way) was applied. */
+	long long          request_at_clock;
+	int                request_at_cmd;
+	unsigned long long last_request_clock;
 	//------ albEnd ----------------------------------
 
 	/* Incremented at the top of every run() call.  Python tests busy-wait
@@ -113,6 +126,21 @@ class TestLooper
 	 * Written from Python, read on the JACK thread (and vice versa) -- the
 	 * same single-float race as ports[] and sync_inject_*, acceptable here. */
 	float input_inject_value;
+
+	/* When true, the input is a ramp instead: the sample at frame f (f =
+	 * input_clock, the samples run since the harness started) is
+	 * (f mod 2^20) / 2^20, exact in a float, so a test can tell which
+	 * input frame any recorded or played sample came from.
+	 * out_first / out_first_frame: channel 0's output at the first sample
+	 * of the most recent block, and that sample's frame. */
+	bool  input_ramp;
+	unsigned long long input_clock;
+	/* input_clock - sync_clock, taken at the top of run() where both are
+	 * the block's first sample (they advance at different points in
+	 * run(), so reading the two from Python races). */
+	long long input_minus_sync;
+	float out_first;
+	unsigned long long out_first_frame;
 
 	float output_min;      /* running min since reset_output_stats() */
 	float output_max;      /* running max since reset_output_stats() */

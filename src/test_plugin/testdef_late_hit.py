@@ -271,22 +271,40 @@ class TestRelSyncNoLateHit(LateHitTestCase):
     """Under Rel Sync a record starts where it is pressed and its end waits
     for the same offset from the pulse, so the late-hit start and stop
     corrections must stay out of it.  Before the fix the stop was trimmed
-    to the pulse, giving a loop that was not a whole number of cycles."""
+    to the pulse, giving a loop that was not a whole number of cycles.
+
+    These use the harness's single-sample pulse generator, as a real
+    source gives, rather than prime_pulse(): Rel Sync tracks the pulse
+    spacing (REL_SYNC_STALE_PHASE_FIX), and a pulse held high for whole
+    buffers is a spacing of one sample."""
+
+    CYCLE_BUFS = 16
 
     def setUp(self):
         LateHitTestCase.setUp(self)
+        self.cycle = self.CYCLE_BUFS * self.buf
+        self.looper.sync_clock = 0
+        self.looper.sync_inject_period = self.cycle
         self.looper.set_port(test_engine.Sync, 2.0)    # Rel Sync
-        self.wait_buffers(2)
+        self.wait_buffers(2 * self.CYCLE_BUFS)
+
+    def tearDown(self):
+        self.looper.sync_inject_period = 0
+        LateHitTestCase.tearDown(self)
+
+    def wait_bufs_after_pulse(self, n):
+        """Wait until the next block starts n buffers after a pulse."""
+        while self.looper.sync_clock % self.cycle != n * self.buf:
+            self.wait_buffers(1)
 
     def testRelSync_LateStopNotApplied(self):
-        self.prime_pulse()
-        self.wait_buffers(self.OUTSIDE_BUFS)
+        self.wait_bufs_after_pulse(self.OUTSIDE_BUFS)
         self.engine.request("RECORD")
         self.wait_buffers(1)
         self.assertState("Recording", "Rel Sync record should start at once")
         self.wait_buffers(self.RECORD_BUFS)
-        self.prime_pulse()
-        self.wait_buffers(self.WITHIN_BUFS)
+        # inside the window after a pulse, but before the take's end point
+        self.wait_bufs_after_pulse(self.WITHIN_BUFS)
         self.engine.request("RECORD")
         self.wait_buffers(1)
         self.assertState("WaitStop",
@@ -296,8 +314,7 @@ class TestRelSyncNoLateHit(LateHitTestCase):
     def testRelSync_LateStartNotBackfilled(self):
         # A late-hit start would backfill T samples, putting the position
         # about T ahead of a plain start.
-        self.prime_pulse()
-        self.wait_buffers(self.WITHIN_BUFS)
+        self.wait_bufs_after_pulse(self.WITHIN_BUFS)
         self.engine.request("RECORD")
         self.wait_buffers(1)
         self.assertState("Recording")

@@ -89,6 +89,9 @@ extern float g_record_failsafe_seconds;
 // node, same pattern as the globals above. See the comment block in
 // plugin.cc for the full rationale.
 extern float g_mute_late_hit_ms;
+// REL_SYNC_LATE_HIT's extra early start for a Rel Sync record (plugin.cc);
+// saved and loaded like the globals above, inert while the switch is 0.
+extern float g_rel_sync_early_ms;
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
@@ -2406,6 +2409,9 @@ Engine::process_nonrt_event (EventNonRT * event)
 		else if (gg_event->param == "mute_late_hit_ms") {
 			gg_event->ret_value = g_mute_late_hit_ms;
 		}
+		else if (gg_event->param == "rel_sync_early_ms") {
+			gg_event->ret_value = g_rel_sync_early_ms;
+		}
 		//------ albEnd ----------------------------------
 
 		_osc->finish_global_get_event (*gg_event);
@@ -2511,6 +2517,11 @@ Engine::process_nonrt_event (EventNonRT * event)
 		else if (gs_event->param == "mute_late_hit_ms") {
 			if (gs_event->value >= 0.0f) {
 				g_mute_late_hit_ms = gs_event->value;
+			}
+		}
+		else if (gs_event->param == "rel_sync_early_ms") {
+			if (gs_event->value >= 0.0f) {
+				g_rel_sync_early_ms = gs_event->value;
 			}
 		}
 		//------ albEnd ----------------------------------
@@ -3784,11 +3795,18 @@ Engine::load_session (std::string fname, string * readstr)
 				g_mute_late_hit_ms = val;
 			}
 		}
+		if ((prop = globals_node->property ("rel_sync_early_ms")) != 0) {
+			float val;
+			if (sscanf (prop->value().c_str(), "%g", &val) == 1 && val >= 0.0f) {
+				g_rel_sync_early_ms = val;
+			}
+		}
 		fprintf(stderr,
 		        "SooperLooper: late_hit_window_ms loaded from session: %.4g ms"
 		        " (quant_unit_fraction cap: %.4g)"
 		        "  record_failsafe_seconds: %.4g"
 		        "  mute_late_hit_ms: %.4g"
+		        "  rel_sync_early_ms: %.4g"
 #ifdef ALB_RT_SAFE_COND_SIGNAL
 		        "  rt_safe_cond_signal: ON"
 #else
@@ -3805,7 +3823,8 @@ Engine::load_session (std::string fname, string * readstr)
 		        "  jack_beat_tracking: OFF\n",
 #endif
 		        g_late_hit_window_ms, g_late_hit_max_quant_unit_fraction,
-		        g_record_failsafe_seconds, g_mute_late_hit_ms);
+		        g_record_failsafe_seconds, g_mute_late_hit_ms,
+		        g_rel_sync_early_ms);
 		//------ albEnd ----------------------------------
 
 	}
@@ -3911,6 +3930,8 @@ Engine::save_session (std::string fname, bool write_audio, string * writestr)
 	globals_node->add_property ("record_failsafe_seconds", buf);
 	snprintf(buf, sizeof(buf), "%.10g", g_mute_late_hit_ms);
 	globals_node->add_property ("mute_late_hit_ms", buf);
+	snprintf(buf, sizeof(buf), "%.10g", g_rel_sync_early_ms);
+	globals_node->add_property ("rel_sync_early_ms", buf);
 	//------ albEnd ----------------------------------
 
 	

@@ -14,9 +14,11 @@ and start) the counter is stale until the next pulse, so stock gives a
 loop of the wrong length -- or, when the stale value is over a cycle, a
 recording that never stops.
 
-With the fix, entering Rel Sync marks the counter unknown; a record
-pressed then waits for the next cycle pulse and starts there, and once a
-pulse has passed, records start at once as before.
+With the fix, channel 0 tracks the pulses whatever the Sync setting, and
+entering Rel Sync takes that tracked count, so these presses start at once
+with the right offset.  The count is unknown -- and a record waits for the
+next pulse -- only when it really is; testdef_rel_sync_known_phase.py
+covers which cases those are, and the presses that start at once.
 
 Pulses come from the harness itself (sync_inject_period): one sample of
 2.0 every CYCLE samples, so they never race Python.  CYCLE is not a
@@ -132,16 +134,6 @@ class TestRelSyncStalePhase(RelSyncStalePhaseTestCase):
         self.assertEqual(self.state(), "Recording")
         self.assertWholeCycles(self.finish_recording())
 
-    def testPressRightAfterSyncOn_WaitsForPulse(self):
-        self.toggle_sync()
-        self.press_record()
-        self.assertEqual(self.state(), "WaitStart",
-                         "Rel Sync record started on an unknown offset")
-        self.wait_cycles(1)
-        self.assertEqual(self.state(), "Recording",
-                         "the record did not start at the next pulse")
-        self.assertWholeCycles(self.finish_recording())
-
     def testPressRightAfterSyncOn_WholeCycles(self):
         # The bug's own symptom, whatever the start does: stock gives a
         # wrong length here, or a stop that never comes.
@@ -166,20 +158,6 @@ class TestRelSyncStalePhase(RelSyncStalePhaseTestCase):
         self.wait_cycles(1.3)
         self.press_record()
         self.assertEqual(self.state(), "Recording")
-        self.assertWholeCycles(self.finish_recording())
-
-    def testFromPlainSync_WaitsForPulse(self):
-        # Turning Rel Sync on over plain Sync: the counter was counting,
-        # but entering Rel Sync is treated alike (one press waits).
-        self.looper.set_port(test_engine.Sync, 1.0)
-        self.wait_cycles(1.3)
-        while not (0.05 * self.cycle < self.phase() < 0.15 * self.cycle):
-            self.wait_buffers(1)
-        self.looper.set_port(test_engine.Sync, 2.0)
-        self.wait_buffers(2)
-        self.press_record()
-        self.assertEqual(self.state(), "WaitStart")
-        self.wait_cycles(1)
         self.assertWholeCycles(self.finish_recording())
 
 

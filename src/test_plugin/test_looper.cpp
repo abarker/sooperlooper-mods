@@ -57,6 +57,14 @@ TestLooper::TestLooper (jack_client_t* j, unsigned int index, unsigned int chan_
 	/* -0.7 is the value run() used to hardcode; keep it as the default so
 	 * every test written before injection existed is unaffected. */
 	input_inject_value  = -0.7f;
+	input_ramp          = false;
+	request_at_clock    = -1;
+	request_at_cmd      = -1;
+	last_request_clock  = 0;
+	input_clock         = 0;
+	input_minus_sync    = 0;
+	out_first           = 0.0f;
+	out_first_frame     = 0;
 	reset_output_stats();
 	//------ albEnd ----------------------------------
 	_input_ports = 0;
@@ -232,6 +240,19 @@ TestLooper::get_channel_loop_length (unsigned int index) const
 	}
 	return 0;
 }
+
+float
+TestLooper::get_loop_sample (unsigned int index, unsigned long pos) const
+{
+	if (index < _chan_count && _instances[index]) {
+		SooperLooperI * pLS = (SooperLooperI *) _instances[index];
+		if (pLS->headLoopChunk) {
+			return pLS->pSampleBuf[(pLS->headLoopChunk->lLoopStart + pos)
+			                       & pLS->lBufferSizeMask];
+		}
+	}
+	return 0.0f;
+}
 //------ albEnd ----------------------------------
 
 
@@ -253,6 +274,16 @@ TestLooper::run (jack_nframes_t offset, jack_nframes_t nframes)
 	_slave_sync_port = ports[Sync];
 	//------ albEnd ----------------------------------
 
+	//------ albBegin ----------------------------------
+	input_minus_sync = (long long) input_clock - (long long) sync_clock;
+	if (request_at_clock >= 0 && !request_pending
+	    && (long long) sync_clock >= request_at_clock) {
+		requested_cmd = request_at_cmd;
+		request_pending = true;
+		request_at_clock = -1;
+	}
+	//------ albEnd ----------------------------------
+
 	/* maybe change modes */
 
 	if (request_pending) {
@@ -263,6 +294,9 @@ TestLooper::run (jack_nframes_t offset, jack_nframes_t nframes)
 		} else {
 			ports[Multi] = requested_cmd;
 			request_pending = false;
+			//------ albBegin ----------------------------------
+			last_request_clock = sync_clock;
+			//------ albEnd ----------------------------------
 			//cerr << "requested mode " << requested_cmd << endl;
 		}
 
@@ -276,10 +310,23 @@ TestLooper::run (jack_nframes_t offset, jack_nframes_t nframes)
     LADSPA_Data test_buf[nframes];
     for (int i = 0; i < nframes; ++i)
     {
-        test_buf[i] = input_inject_value;
+        test_buf[i] = input_ramp
+            ? (float) ((input_clock + i) & 0xFFFFF) / 1048576.0f
+            : input_inject_value;
     }
     //------ albEnd ----------------------------------
     //test_buf = (LADSPA_Data *) jack_port_get_buffer(_input_ports[0], nframes);
+
+	//------ albBegin ----------------------------------
+	/* As Looper::run(): the other channels get channel 0's tracked sync
+	 * count (REL_SYNC_STALE_PHASE_FIX, plugin.cc). */
+#if REL_SYNC_STALE_PHASE_FIX
+	for (unsigned int i = 1; i < _chan_count; ++i) {
+		((SooperLooperI *) _instances[i])->lTrackedSinceSync =
+			((SooperLooperI *) _instances[0])->lTrackedSinceSync;
+	}
+#endif
+	//------ albEnd ----------------------------------
 
 	for (unsigned int i=0; i < _chan_count; ++i)
 	{
@@ -335,9 +382,16 @@ TestLooper::run (jack_nframes_t offset, jack_nframes_t nframes)
 				if (s > output_max) output_max = s;
 			}
 			if (nframes > 0) output_last = out_buf[nframes - 1];
+			if (nframes > 0) {
+				out_first = out_buf[0];
+				out_first_frame = input_clock;
+			}
 		}
 		//------ albEnd ----------------------------------
 	}
+	//------ albBegin ----------------------------------
+	input_clock += nframes;
+	//------ albEnd ----------------------------------
 }
 
 //------ albBegin ----------------------------------
