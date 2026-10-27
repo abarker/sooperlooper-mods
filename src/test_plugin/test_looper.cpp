@@ -296,9 +296,12 @@ TestLooper::run (jack_nframes_t offset, jack_nframes_t nframes)
 			/* Late-hit test support: fill sync input buffer before connecting. */
 			//------ albBegin ----------------------------------
 			// Was: the sync_inject_value fill only.
-			if (sync_inject_enabled && _our_syncin_buf && sync_inject_period) {
+			// Read the period once: Python can set it to 0 between a check
+			// and the modulo, which divides by zero.
+			const unsigned long period = sync_inject_period;
+			if (sync_inject_enabled && _our_syncin_buf && period) {
 				for (nframes_t n = 0; n < _buffersize; ++n)
-					_our_syncin_buf[n] = ((sync_clock + n) % sync_inject_period == 0)
+					_our_syncin_buf[n] = ((sync_clock + n) % period == 0)
 						? 2.0f : 0.0f;
 				sync_clock += _buffersize;
 			}

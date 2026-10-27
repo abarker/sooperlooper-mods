@@ -255,6 +255,14 @@ item links to its full description.
   recording that simply runs out of memory already does; a command queued
   to follow the stop (an overdub, say) is dropped.
 
+- **Default loop memory 120 seconds** (was 40).  The engine's ``-t``
+  default and slgui's loop time for new loops.  It is rounded up to a
+  power of two of samples, about 175 seconds at 48 kHz, 32 MB per
+  channel.  Running out of loop memory should never happen in normal use;
+  40 seconds could, with a long phrase at a slow tempo or a multiplied
+  loop.  Loops in a saved session keep their own value, and slgui keeps
+  a loop time already saved in its preferences.
+
 .. rubric:: Realtime-Safety Fixes
 
 - **Fewer xruns on transport locates** (``ALB_RT_SAFE_COND_SIGNAL``).
@@ -303,7 +311,7 @@ needs sync to be active, which means two things together:
 With a JACK or Internal source this also means Quantize set to Cycle or
 8th: with Quantize Off or Loop those sources produce no boundaries.  The
 correction is off under Rel Sync, where a recording deliberately starts
-and ends away from the boundary.  The
+and ends away from the boundary; see `Rel Sync Recordings`_.  The
 window is 100 ms by default; see
 `Record Late-Hit Window Size`_.
 
@@ -350,6 +358,66 @@ exactly as the unpatched version.
 
 How the start and stop corrections work inside the engine is in
 `Late-Hit Record Start and Stop: Implementation`_ in the appendix.
+
+Rel Sync Recordings
+-------------------
+
+With Rel Sync on and the loop's Sync box checked, Record starts at the
+press, and the recording ends when the same distance after a boundary
+comes round again, so the loop is a whole number of cycles that starts off
+the beat.  The late-hit correction does not apply.  Two fixes in this fork
+(``REL_SYNC_STALE_PHASE_FIX`` and ``TRIG_STOP_MEMORY_FIX``, see `What This
+Patch Adds at a Glance`_) cover the cases where the engine does not yet
+know that distance, or never reaches it.
+
+What happens, by situation:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 40 26
+
+   * - Situation
+     - What happens
+     - Way out
+   * - Record and stop pressed with boundaries arriving steadily
+     - The recording starts at the press and ends at the same point after
+       a later boundary: whole cycles, off the beat as played.
+     - --
+   * - The stop is pressed a little after that point
+     - The point has passed, so the recording carries on to the same
+       point a cycle later: the loop is a cycle longer than meant.
+     - Undo, and record again.  ``cancel_record_mute`` does nothing once
+       the stop is pressed.
+   * - Record pressed after Rel Sync comes on (turned on, the loop's Sync
+       box checked, or Sync turned back on) but before the next boundary
+     - That Record waits for the boundary and starts there, as plain Sync
+       would.  A Record pressed after that boundary starts at the press.
+     - --
+   * - The same, with no boundaries arriving at all (transport stopped,
+       or Quantize Off or Loop with a JACK or Internal source)
+     - Record waits and records nothing until boundaries arrive.
+       Pressing Record again does not cancel it.
+     - Undo or ``cancel_record_mute``.
+   * - The sync source or Quantize is changed while Rel Sync stays on,
+       and Record is pressed before the first new boundary
+     - The distance is measured from the old setting's boundaries, so it
+       can be wrong.  Usually the loop comes out the wrong length and
+       drifts against the beat on each pass.  If the end point is never
+       reached, see the next row.
+     - Undo and record again after a boundary.
+   * - The end point is never reached: no boundaries arrive after the
+       recording starts (the transport stopped before or during it), or
+       the case above
+     - Record starts at the press as usual, but the stop waits forever.
+       The recording runs until the loop memory is full (120 seconds by
+       default, about 175 at 48 kHz), then ends there and plays.  The loop is however long
+       that is, not whole cycles.  A command queued to follow the stop,
+       such as an overdub, is dropped.
+     - Undo, soon.  While the stop is still waiting it gives back the
+       loop as it was before the record.  After the end of memory the
+       recording has written over the earlier loop, and Undo leaves the
+       loop empty.  ``cancel_record_mute`` works only until the stop is
+       pressed.
 
 Commands for a Switch's Long or Double Press
 --------------------------------------------

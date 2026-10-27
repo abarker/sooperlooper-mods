@@ -160,8 +160,10 @@ the transport is rolling.  Two cases catch people out:
 
 *Fork fix -- end of loop memory.*  When the waiting press is the one that
 ends a recording, the recording carries on until the loop's memory runs
-out (40 seconds by default, a little more in practice).  It then ends
-there and plays; undo removes it.  An action queued to follow the end,
+out (120 seconds by default, about 175 in practice at 48 kHz).  It then ends
+there and plays.  By then it has written over the loop's earlier
+recordings, so undo leaves the loop empty; undo before that point to get
+the earlier loop back.  An action queued to follow the end,
 such as an overdub, is dropped.  In stock SooperLooper the engine crashes
 at that point.  The same happens if the next boundary simply falls after
 the end of memory, as with a very long cycle.
