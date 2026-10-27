@@ -59,7 +59,14 @@ Transmitter  error (Transmitter::Error);
 
 
 #define DEFAULT_OSC_PORT 9951
-#define DEFAULT_LOOP_TIME 40.0f
+//------ albBegin ----------------------------------
+// STOCK (sooperlooper 1.7.9): #define DEFAULT_LOOP_TIME 40.0f
+// CHANGE: 120 s.  The plugin rounds up to a power of two of samples:
+// 2^23 at 48 kHz, 175 s, 32 MB per channel -- trivial today, and 40 s
+// (2^21, 44 s) is short for a long phrase at a slow tempo or a
+// multiplied loop.  Running out of loop memory is an error condition.
+#define DEFAULT_LOOP_TIME 120.0f
+//------ albEnd ----------------------------------
 
 
 char *optstring = "c:l:j:p:m:t:U:S:D:L:qVh";

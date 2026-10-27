@@ -40,7 +40,12 @@ using namespace SooperLooper;
 
 LoopControl::SpawnConfig::SpawnConfig(const wxString & nm)
 	: name(nm), host(""), port(DEFAULT_OSC_PORT), num_loops(1), num_channels(2),
-	  mem_secs(40.0f), discrete_io(true), exec_name("sooperlooper"), midi_bind_path(""), force_spawn(false), never_spawn(false),
+	  //------ albBegin ----------------------------------
+	  // STOCK (sooperlooper 1.7.9): mem_secs(40.0f).  CHANGE: 120 s, as
+	  // the engine's DEFAULT_LOOP_TIME (sooperlooper.cpp).
+	  mem_secs(120.0f),
+	  //------ albEnd ----------------------------------
+	  discrete_io(true), exec_name("sooperlooper"), midi_bind_path(""), force_spawn(false), never_spawn(false),
 	  never_timeout(false),
 	  jack_name(""),
           window_x_pos(100), window_y_pos(100)

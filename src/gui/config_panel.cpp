@@ -194,7 +194,12 @@ void ConfigPanel::init()
 	
 	statText = new wxStaticText(this, -1, wxT("Loop time (secs minimum):"));
 	setsizer->Add (statText, 0, wxALIGN_RIGHT|wxALIGN_CENTRE_VERTICAL);
-	_secs_per_channel_spin = new wxSpinCtrl(this, -1, wxT("40"), wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 4, 1000, (int)config.mem_secs, wxT("KeyAware"));
+	//------ albBegin ----------------------------------
+	// STOCK (sooperlooper 1.7.9): initial text wxT("40").  CHANGE: "120",
+	// the new default loop time (sooperlooper.cpp DEFAULT_LOOP_TIME).
+	// SetValue below sets the real value from the config either way.
+	_secs_per_channel_spin = new wxSpinCtrl(this, -1, wxT("120"), wxDefaultPosition, wxDefaultSize, wxSP_ARROW_KEYS, 4, 1000, (int)config.mem_secs, wxT("KeyAware"));
+	//------ albEnd ----------------------------------
 	_secs_per_channel_spin->SetValue ((int)config.mem_secs);
 	setsizer->Add (_secs_per_channel_spin, 0);
 
