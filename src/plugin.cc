@@ -964,6 +964,81 @@ static inline unsigned long syncPreRollSamples(const SooperLooperI *pLS,
 #endif
 //------ albEnd ----------------------------------
 
+//------ albBegin ----------------------------------
+// SIGNED_SYNC_POS_FIX: compile-time safety switch for a STOCK bug.
+//
+// The problem: the loop's own boundaries (its sync output, used with Sync
+// off by quantized commands and by loops synced to it) are where
+// (pos + lSyncPos) % unit == 0.  lSyncPos can be negative (stock Rel Sync,
+// the fork's Rel Sync early start, SYNC_PREROLL), and with a Cycle or Loop unit
+// (unsigned long) the negative sum is converted to unsigned, so one
+// position in [0, -lSyncPos) can test as a boundary too: where
+// -lSyncPos - pos == 2^64 mod unit.  Shown in the harness
+// (testdef_signed_sync_pos.py: an extra boundary every pass).  The 8th
+// unit (unsigned int) is promoted to long and was already right.
+//
+// The change: the test is done in signed arithmetic, which is 0 exactly
+// on the grid whatever the sign; for a sum of 0 or more nothing changes
+// (plain Sync's lSyncPos is 0).  Set to 0 for stock.
+#define SIGNED_SYNC_POS_FIX 1
+#if SIGNED_SYNC_POS_FIX
+static inline bool onSyncGrid(long pos, long syncPos, unsigned long unit)
+{
+	return ((pos + syncPos) % (long) unit) == 0;
+}
+#endif
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
+// REL_SYNC_POS_FIX: compile-time safety switch for a STOCK bug.
+//
+// The problem: a Rel Sync recording sets lSyncPos (where the sync grid
+// falls in the loop; a synced Trigger or mute_trigger restarts the loop at
+// -lSyncPos, and with Sync off the loop's own boundaries are there) from
+// the count since the last boundary at its start.  Stock 1.7.9:
+// "since < syncSamples/2 ? since : since - syncSamples".  With a tempo
+// set, syncSamples is HALF the Quantize unit (0 without a tempo, where the
+// result is always `since`, which is right), and both are unsigned int.
+// A start in the unit's second half came out half a unit off, and one in
+// its second quarter wrapped to about 2^32: a restart played about half a
+// cycle out of phase (probed in the harness, testdef_rel_sync_pos.py).
+//
+// The change: from the nearer boundary, in signed arithmetic: `since` in
+// the first half of the unit (2 * syncSamples), `since - unit` in the
+// second, so a restart puts the loop's first boundary after its start on
+// the beat.  The unit comes from the tempo, so it can differ from the real
+// pulse spacing by the tempo's rounding to whole samples (about a sample
+// per eighth).  Set to 0 for stock.
+#define REL_SYNC_POS_FIX 1
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
+// SYNC_COUNT_OFF_BY_ONE_FIX: compile-time safety switch for a STOCK
+// off-by-one.
+//
+// The problem: lSamplesSinceSync is updated once per sample, so read
+// before a block's first sample (a command acting at once) or in
+// STATE_TRIG_START (which counts at the bottom) it is one less than the
+// distance from the pulse (the record late-hit already trims T + 1 for
+// this).  Two stock uses took it as the distance: a synced Trigger or
+// mute_trigger in the slack window (with a tempo set, pressed less than
+// an eighth after a pulse it acts at once, starting the loop
+// lSamplesSinceSync in) came back one sample late; and a Rel Sync
+// recording's sync position put its grid one sample late, so a restart
+// that waited for the pulse came back one sample early.  Measured in the
+// harness (testdef_sync_count_off_by_one.py).
+//
+// The change: add one at both: after the slack-window Trigger's
+// transitionToNext, and in the REL_SYNC_POS_FIX block (so this needs that
+// switch).  A restart that waits for the pulse is unchanged: it acts
+// inside the play loop after that sample's count update, where the count
+// is the distance (0 on the pulse).  Set to 0 for stock.
+#define SYNC_COUNT_OFF_BY_ONE_FIX 1
+#if SYNC_COUNT_OFF_BY_ONE_FIX && !REL_SYNC_POS_FIX
+#error "SYNC_COUNT_OFF_BY_ONE_FIX needs REL_SYNC_POS_FIX (its Rel Sync half is there)"
+#endif
+//------ albEnd ----------------------------------
+
 
 // reads loop audio into buffer, up to frames length, starting from loop_offset.  if fewer frames are
 // available returns amount read.  if 0 is returned loop is done.
@@ -5080,6 +5155,16 @@ runSooperLooper(LADSPA_Handle Instance,
 					prevstate = pLS->state;
 					
 					transitionToNext (pLS, loop, STATE_TRIGGER_PLAY);
+					//------ albBegin ----------------------------------
+#if SYNC_COUNT_OFF_BY_ONE_FIX
+					// Acting at once in the slack window: transitionToNext
+					// added the count, which here, before this block's first
+					// sample, is one less than its distance from the pulse.
+					if (fSyncMode >= 1.0f && pLS->lSamplesSinceSync < eighthSamples) {
+						loop->dCurrPos += (pLS->fCurrRate > 0) ? 1.0 : -1.0;
+					}
+#endif
+					//------ albEnd ----------------------------------
 
 					if (prevstate == STATE_RECORD || prevstate == STATE_TRIG_STOP) {
 						// we need to increment loop position by output latency (+ IL ?)
@@ -5234,6 +5319,22 @@ runSooperLooper(LADSPA_Handle Instance,
 					  loop->lSyncOffset = pLS->lSamplesSinceSync;
 					  // this needs to be adjusted for latency
 					  //loop->lOrigSyncPos = loop->lSyncPos = pLS->lSamplesSinceSync + (unsigned long) (( lOutputLatency + lInputLatency) * fRate); 
+					  //------ albBegin ----------------------------------
+#if REL_SYNC_POS_FIX
+					  // REL_SYNC_POS_FIX (see its comment block near the top
+					  // of this file): from the nearer boundary, signed.
+					  {
+						  const long unit = 2 * (long) syncSamples;
+#if SYNC_COUNT_OFF_BY_ONE_FIX
+						  // The distance since the boundary is the count + 1.
+						  const long since = (long) pLS->lSamplesSinceSync + 1;
+#else
+						  const long since = (long) pLS->lSamplesSinceSync;
+#endif
+						  loop->lOrigSyncPos = loop->lSyncPos =
+							  (unit > 0 && since >= unit / 2) ? since - unit : since;
+					  }
+#else
 					  if (pLS->lSamplesSinceSync < syncSamples/2) {
 						  //loop->lOrigSyncPos = loop->lSyncPos = pLS->lSamplesSinceSync + (unsigned long) (( lOutputLatency + lInputLatency) * fRate); 
 						  loop->lOrigSyncPos = loop->lSyncPos = pLS->lSamplesSinceSync; 
@@ -5242,6 +5343,8 @@ runSooperLooper(LADSPA_Handle Instance,
 						  //loop->lOrigSyncPos = loop->lSyncPos = (pLS->lSamplesSinceSync - syncSamples) + (unsigned long) (( lOutputLatency + lInputLatency) * fRate); 
 						  loop->lOrigSyncPos = loop->lSyncPos = (pLS->lSamplesSinceSync - syncSamples); 
 					  }
+#endif
+					  //------ albEnd ----------------------------------
 					  
 					  DBG(cerr <<  pLS->lLoopIndex << ":" << pLS->lChannelIndex << "   sync offset is: " << loop->lSyncOffset << "  syncpos: " << loop->lSyncPos <<endl);
 				  }
@@ -5774,8 +5877,15 @@ runSooperLooper(LADSPA_Handle Instance,
 		 }
 		 else {
 			 if (fQuantizeMode == QUANT_OFF 
+			     //------ albBegin ----------------------------------
+#if SIGNED_SYNC_POS_FIX
+			     || (fQuantizeMode == QUANT_CYCLE && onSyncGrid((int) rCurrPos, loop->lSyncPos, loop->lCycleLength))
+			     || (fQuantizeMode == QUANT_LOOP && onSyncGrid((int) rCurrPos, loop->lSyncPos, loop->lLoopLength))
+#else
 			     || (fQuantizeMode == QUANT_CYCLE && (((int)rCurrPos + loop->lSyncPos) % loop->lCycleLength) == 0)
 			     || (fQuantizeMode == QUANT_LOOP && (((int) rCurrPos +loop->lSyncPos) % loop->lLoopLength )== 0) 
+#endif
+			     //------ albEnd ----------------------------------
 			     || (fQuantizeMode == QUANT_8TH && (((int) rCurrPos + loop->lSyncPos) % eighthSamples) == 0))
 			 {
 				 pfSyncOutput[lSampleIndex] = 2.0f;
@@ -6019,7 +6129,13 @@ runSooperLooper(LADSPA_Handle Instance,
 		 }
 		 else {
 			 if (fQuantizeMode == QUANT_OFF 
+			     //------ albBegin ----------------------------------
+#if SIGNED_SYNC_POS_FIX
+			     || (fQuantizeMode == QUANT_CYCLE && onSyncGrid((int) rCurrPos, loop->lSyncPos, loop->lCycleLength)))
+#else
 			     || (fQuantizeMode == QUANT_CYCLE && (((int) rCurrPos + loop->lSyncPos) % loop->lCycleLength) == 0))
+#endif
+			     //------ albEnd ----------------------------------
 			 {
 				 pfSyncOutput[lSampleIndex] = 2.0f;
 			 }
@@ -6333,8 +6449,15 @@ runSooperLooper(LADSPA_Handle Instance,
 			 }
 		 }
 		 else if (fQuantizeMode == QUANT_OFF 
+			  //------ albBegin ----------------------------------
+#if SIGNED_SYNC_POS_FIX
+			  || (fQuantizeMode == QUANT_CYCLE && onSyncGrid((int) rCurrPos, loop->lSyncPos, loop->lCycleLength))
+			  || (fQuantizeMode == QUANT_LOOP && onSyncGrid((int) rCurrPos, loop->lSyncPos, loop->lLoopLength))
+#else
 			  || (fQuantizeMode == QUANT_CYCLE && (((int) rCurrPos + loop->lSyncPos) % loop->lCycleLength) == 0)
 			  || (fQuantizeMode == QUANT_LOOP && (((int)rCurrPos + loop->lSyncPos) % loop->lLoopLength)== 0) 
+#endif
+			  //------ albEnd ----------------------------------
 			  || (fQuantizeMode == QUANT_8TH && (((int)rCurrPos + loop->lSyncPos) % eighthSamples) == 0)) {
 			 pfSyncOutput[lSampleIndex] = 2.0f;
 		 }
@@ -6553,8 +6676,15 @@ runSooperLooper(LADSPA_Handle Instance,
 			 }
 		 }
 		 else if (fQuantizeMode == QUANT_OFF 
+			  //------ albBegin ----------------------------------
+#if SIGNED_SYNC_POS_FIX
+			  || (fQuantizeMode == QUANT_CYCLE && onSyncGrid(lCurrPos, loop->lSyncPos, loop->lCycleLength))
+			  || (fQuantizeMode == QUANT_LOOP && onSyncGrid(lCurrPos, loop->lSyncPos, loop->lLoopLength))
+#else
 			  || (fQuantizeMode == QUANT_CYCLE && ((lCurrPos + loop->lSyncPos) % loop->lCycleLength) == 0)
 			  || (fQuantizeMode == QUANT_LOOP && (((lCurrPos + loop->lSyncPos) % loop->lLoopLength) == 0)) 
+#endif
+			  //------ albEnd ----------------------------------
 			  || (fQuantizeMode == QUANT_8TH && ((lCurrPos + loop->lSyncPos) % eighthSamples) == 0)) {
 			 pfSyncOutput[lSampleIndex] = 2.0f;
 		 }
@@ -6835,7 +6965,13 @@ runSooperLooper(LADSPA_Handle Instance,
 		 if (fSyncMode != 0 || fQuantizeMode == QUANT_OFF) {
 			 pfSyncOutput[lSampleIndex] = pfSyncInput[lSampleIndex];
 		 }
+		 //------ albBegin ----------------------------------
+#if SIGNED_SYNC_POS_FIX
+		 else if (onSyncGrid(lCurrPos, loop->lSyncPos, loop->lCycleLength)) {
+#else
 		 else if (((lCurrPos + loop->lSyncPos) % loop->lCycleLength) == 0) {
+#endif
+		 //------ albEnd ----------------------------------
 			 pfSyncOutput[lSampleIndex] = 2.0f;
 		 }
 

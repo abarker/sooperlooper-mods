@@ -139,8 +139,8 @@ class TestSyncPreroll(SyncPrerollTestCase):
     def testTriggerAfterMute_PlaysOnBarGrid(self):
         # A synced Trigger restarts the loop from the top at the next
         # pulse, which may be either bar of a 2-cycle loop: the phase holds
-        # modulo the cycle, not the loop.  (With a tempo set the restart
-        # comes one sample late, with or without a pre-roll.)
+        # modulo the cycle, not the loop.  Exact to the sample with a
+        # tempo set too (SYNC_COUNT_OFF_BY_ONE_FIX).
         pulse = self.start_waiting()
         self.end_early(pulse)
         self.engine.request("MUTE")
@@ -148,7 +148,7 @@ class TestSyncPreroll(SyncPrerollTestCase):
         self.wait_cycles(0.7)
         self.engine.request("TRIGGER")
         self.wait_state("Playing")
-        self.assertPlaysOnGrid(self.cycle, slack=1)
+        self.assertPlaysOnGrid(self.cycle)
 
     def assertPlaysOnGrid(self, unit, slack=0):
         """Each sample played at frame F was recorded a whole number of
@@ -248,13 +248,12 @@ class TestSyncPrerollOwnBoundaries(SyncPrerollTestCase):
     def testOnBarLines(self):
         self.ownBoundaries()
 
-    @unittest.expectedFailure
     def testOnBarLines_PrerollPastWrapRemainder(self):
-        # A negative sync position wraps in the unsigned modulo of the
-        # boundary checks: an extra boundary appears in [0, P) when
+        # A negative sync position wrapped in stock's unsigned modulo of
+        # the boundary checks: an extra boundary in [0, P) when
         # 2^64 mod cycle <= P (1-2% of bar lengths at a 30 ms pre-roll).
         # The harness cycle's remainder is 7804, so P = 165 ms (7920)
-        # shows it.  Fails until the checks use a signed modulo.
+        # shows it (SIGNED_SYNC_POS_FIX).
         test_engine.cvar.g_sync_preroll_ms = 165.0
         self.P = int(165.0 * 0.001 * self.sr)
         self.assertLessEqual(2 ** 64 % self.cycle, self.P)

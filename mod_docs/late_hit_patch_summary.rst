@@ -300,6 +300,36 @@ item links to its full description.
   recording that simply runs out of memory already does; a command queued
   to follow the stop (an overdub, say) is dropped.
 
+- **No stray boundary after a Rel Sync recording**
+  (``SIGNED_SYNC_POS_FIX``, on by default).  With Sync off, a loop marks
+  its own cycle boundaries, which quantized commands and loops synced to
+  it follow.  For a Rel Sync loop whose sync position came out negative
+  (in stock, depending on where in the cycle Record was pressed; with
+  this fork's early start, a press just after a boundary), stock 1.7.9
+  could also mark one
+  extra boundary near the loop's start, depending on the cycle length.
+  The check is now done in signed arithmetic; nothing changes for plain
+  Sync.
+
+- **Rel Sync loops restart in time** (``REL_SYNC_POS_FIX``, on by
+  default).  With a tempo set (always, with JACK transport or MIDI
+  clock), stock 1.7.9 placed a Rel Sync loop's sync grid wrongly when
+  Record was pressed after the first quarter of a cycle: half a cycle
+  off, or far off for a press in the second quarter.  A synced Trigger
+  or ``mute_trigger`` restart of that loop then played about half a cycle
+  out of time with the beat, and with Sync off its own boundaries were
+  off the bar lines.  Now the grid is taken from the nearer boundary: a
+  restart puts the loop's first boundary after its start on the beat.
+
+- **Synced restarts exact to the sample** (``SYNC_COUNT_OFF_BY_ONE_FIX``,
+  on by default).  With a tempo set, a Trigger or ``mute_trigger``
+  pressed less than an eighth note after a beat starts the loop at once,
+  allowing for how late the press was; stock 1.7.9 allowed one sample
+  too little, so the loop came back one sample late.  A Rel Sync loop's
+  grid was one sample late too, so its restarts on the beat came back one
+  sample early.  Inaudible, and it never added up (each restart starts
+  afresh), but now exact.
+
 - **Default loop memory 120 seconds** (was 40).  The engine's ``-t``
   default and slgui's loop time for new loops.  It is rounded up to a
   power of two of samples, about 175 seconds at 48 kHz, 32 MB per
@@ -1376,6 +1406,30 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
      - When 1 (default), a stock 1.7.9 bug fix is active: a recording
        whose stop is still pending when the loop memory runs out ends there
        and plays, instead of crashing the engine.  Set to 0 for stock.
+   * - ``SIGNED_SYNC_POS_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: the loop's own
+       Cycle and Loop boundaries (its sync output with Sync off) are
+       tested in signed arithmetic, so a negative sync position (Rel
+       Sync) no longer gives an extra boundary near the loop's start.
+       Set to 0 for stock.
+   * - ``REL_SYNC_POS_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: a Rel Sync
+       recording's sync position (where a synced restart starts the loop)
+       is taken from the nearer boundary in signed arithmetic, instead of
+       half a cycle off (or wrapped) for a start after the first quarter
+       of a cycle with a tempo set.  Set to 0 for stock.
+   * - ``SYNC_COUNT_OFF_BY_ONE_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 off-by-one fix is active: the
+       samples-since-boundary count, one less than the distance where it
+       is read, gets one added for a Trigger acting at once in the slack
+       window and for a Rel Sync recording's sync position.  Needs
+       ``REL_SYNC_POS_FIX``.  Set to 0 for stock.
    * - ``INTERNAL_SYNC_BOUNDARY_PULSE_FIX``
      - ``engine.cpp``
      - ``1``

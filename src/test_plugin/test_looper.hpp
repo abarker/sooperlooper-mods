@@ -52,6 +52,9 @@ class TestLooper
 	unsigned long get_channel_loop_length (unsigned int index) const;
 	/* The current take's sample at loop position pos (channel index). */
 	float get_loop_sample (unsigned int index, unsigned long pos) const;
+	/* The head loop's lSyncPos (where the sync grid falls in the loop:
+	 * a pulse plays loop position -lSyncPos mod length), 0 if no loop. */
+	long get_channel_sync_pos (unsigned int index) const;
 	//------ albEnd ----------------------------------
 
 	void request_cmd (int cmd);

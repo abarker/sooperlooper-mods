@@ -242,6 +242,16 @@ TestLooper::get_channel_loop_length (unsigned int index) const
 	return 0;
 }
 
+long
+TestLooper::get_channel_sync_pos (unsigned int index) const
+{
+	if (index < _chan_count && _instances[index]) {
+		SooperLooperI * pLS = (SooperLooperI *) _instances[index];
+		return pLS->headLoopChunk ? pLS->headLoopChunk->lSyncPos : 0;
+	}
+	return 0;
+}
+
 float
 TestLooper::get_loop_sample (unsigned int index, unsigned long pos) const
 {

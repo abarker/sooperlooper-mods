@@ -140,6 +140,28 @@ testdef_sync_preroll.py
     0.  Sync output boundaries are read back (syncout_count,
     get_syncout_frame) to check the loop's own boundaries with Sync off.
 
+testdef_rel_sync_pos.py
+    Tests for REL_SYNC_POS_FIX: with a tempo set, a Rel Sync recording
+    started in any quarter of the cycle gets its sync position from the
+    nearer boundary (read back with get_channel_sync_pos); a synced
+    Trigger or mute_trigger restart plays it in phase; with Sync off its
+    own boundaries stay on the bar lines; no tempo unchanged; stereo
+    channels alike.
+
+testdef_sync_count_off_by_one.py
+    Tests for SYNC_COUNT_OFF_BY_ONE_FIX: with a tempo set, every synced
+    Trigger or mute_trigger restart plays the loop exactly in phase,
+    plain Sync and Rel Sync, pressed in the slack window (acting at once)
+    or waiting for the pulse, and repeated restarts stay in phase.
+
+testdef_signed_sync_pos.py
+    Tests for SIGNED_SYNC_POS_FIX: with Sync off, a Rel Sync loop whose
+    sync position is negative (an early start pressed just after a pulse)
+    makes one boundary per cycle, not an extra one near its start; a
+    positive one is unchanged.  The cycle (8008) is chosen so the stock
+    unsigned wrap shows.  Reads channel 0's sync output back
+    (syncout_count, get_syncout_frame).
+
 testdef_trig_stop_memory.py
     Regression tests for TRIG_STOP_MEMORY_FIX: a recording whose stop is
     still pending when the loop memory runs out ends there and plays,
