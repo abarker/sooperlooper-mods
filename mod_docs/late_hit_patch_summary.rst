@@ -1,113 +1,19 @@
 SooperLooper Late-Hit Recording Modification Summary
 ====================================================
 
-This fork of SooperLooper 1.7.9 makes looping to a beat more forgiving and
-more precise.
+This fork of SooperLooper 1.7.9 started with the idea to make beat-synchronized
+looping more forgiving and more precise.  Most synchronized operations that
+land a moment late (after the beat) now count as on time and are corrected
+rather than waiting a full cycle.  Along the way JACK MIDI was added, many
+stock bugs were fixed, and new commands, tools, and settings were added.
 
-- A Record start or stop, Mute or Unmute, or Multiply-end press that lands
-  a moment after the beat counts as on time, instead of waiting a whole
-  cycle.
-- A restart (``trigger``, or ``mute_trigger`` from Mute) or a oneshot plays
-  the loop in time, where stock starts it slightly late.
-- A multiplied loop is recorded to its end, where stock leaves a short
-  dropout at the end on every pass.
-- When synced to JACK transport, loops stay on the transport master's beat
-  through tempo changes.
-- SooperLooper can take commands, and send MIDI clock, over JACK MIDI
-  directly.
-- Two new commands suit a switch's long or double press.  One cancels a
-  recording just started; the other undoes the last overdub, even though
-  the press has already started a new one.
-- An optional timeout cancels a recording left running over a playing
-  loop.
-- A separate large-text display, ``slbigstate``, shows loop state from
-  across the room.
-- A latency tool, ``sllatency``, measures JACK's and SooperLooper's latency
-  with a click and sets SooperLooper's to match.
-
-This document describes each change and how to configure it.  How each is
-implemented, and where the changes are in the source, is in the appendix
-and glossaries at the end.
+This document describes each change and how it can be configured.  Details
+about the implementations, such as where the changes are in the source, are in
+the appendix and glossaries at the end.
 
 .. contents:: Table of Contents
    :local:
    :depth: 3
-
-.. tip:: **Compiling on Ubuntu 24.04**
-
-   The patched source is the ``master`` branch of
-   https://github.com/abarker/sooperlooper-mods, so a plain clone gets it;
-   stock SooperLooper 1.7.9 is the tag ``stock-1.7.9``.  A convenience
-   script ``ubuntu_compile.bash`` at the top level of the repository automates
-   the build.
-
-   For a first build, set all four flags near the top of the script to
-   ``true`` and run it::
-
-       bash ubuntu_compile.bash
-
-   On subsequent recompiles only ``compile_modified_fork=true`` is needed;
-   the other three flags (``install_deps``, ``run_autogen``, ``run_config``)
-   can remain ``false``.  The script prompts before running
-   ``sudo make install``.
-
-.. tip:: **Platform**
-
-   Built and tested only on Ubuntu 24.04, using the script above.  It
-   should compile wherever stock SooperLooper 1.7.9 does.
-
-   It also builds with liblo 0.32 (Arch Linux, and likely newer
-   distributions), which stock 1.7.9 does not; not yet run on a system
-   with 0.32 installed.
-
-   Windows builds under Cygwin; ``windows/README.md`` has the steps and
-   a build script, which has built and run this fork once on Windows 10.
-   MIDI control on Windows should work through the fork's JACK MIDI
-   port; untried.
-
-   Stock's standalone macOS build has one reported startup hang on
-   Catalina, unrelated to this patch, with a workaround:
-   https://github.com/essej/sooperlooper/issues/32.
-
-.. tip:: **Quick Start**
-
-   The late-hit correction works as soon as the fork is built, with no
-   session file changes.  Without the late-hit keys in the session file it
-   uses the built-in defaults: a 100 ms window, with the cycle-fraction cap
-   off (100.0).  Setting ``late_hit_max_quant_unit_fraction`` to, say, 0.5
-   also caps the window at half a quantize cycle, which matters at fast
-   tempos, where 100 ms can be more than half a cycle.
-
-   To change the values:
-
-   1. **Run SooperLooper** with your usual setup and save a session file via
-      *File → Save Session*, then exit.
-
-   2. **Edit the session file** in a text editor. Find the ``<Globals>`` element
-      and add the two late-hit keys at the end of its attribute list, before the
-      closing ``/>``::
-
-          late_hit_max_quant_unit_fraction="0.5" late_hit_window_ms="100"
-
-      A complete ``<Globals>`` element from a real session file looks like
-      this (your other values will differ).  It also has
-      ``record_failsafe_seconds`` and ``mute_late_hit_ms``, two further
-      settings described later, which you do not need to add here::
-
-          <Globals tempo="125" eighth_per_cycle="2" common_dry="0" common_wet="1"
-           input_gain="1" sync_source="-1" auto_disable_latency="1"
-           jack_timebase_master="0" output_midi_clock="0" use_midi_start="0"
-           use_midi_stop="0" send_midi_start_on_trigger="0" smart_eighths="0"
-           late_hit_window_ms="100" late_hit_max_quant_unit_fraction="0.5"
-           record_failsafe_seconds="120.0" mute_late_hit_ms="100"/>
-
-   3. **Restart SooperLooper** with the session file::
-
-          sooperlooper --load-session yourfile.slsess
-
-   All four settings can also be read and changed while SooperLooper runs,
-   over OSC, instead of editing the session file -- see `OSC Control`_.
-
 
 What This Patch Adds at a Glance
 ---------------------------------
@@ -197,9 +103,21 @@ item links to its full description.
 
 - **Five settings, one place.** ``late_hit_window_ms``,
   ``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds``,
-  ``mute_late_hit_ms`` and ``rel_sync_preroll_ms`` are all saved in the session file's ``<Globals>``
-  line, and can be read and set live over OSC.  See `Record Late-Hit
-  Window Size`_ and `OSC Control`_.
+  ``mute_late_hit_ms`` and ``rel_sync_preroll_ms`` are all saved in the session
+  file's ``<Globals>`` line, and can be read and set live over OSC.  See
+  `Record Late-Hit Window Size`_ and `OSC Control`_.
+
+.. rubric:: Tools
+
+- ``slbigstate``: **a large-text loop state display.**  A separate
+  program, installed alongside ``sooperlooper`` and ``slgui``, that shows
+  each loop's state in large, colored text, readable from across a room.
+  See `New Tool: slbigstate`_.
+
+- ``sllatency``: **a latency calibration tool.**  Measures the audio round
+  trip with a click and checks JACK's and SooperLooper's latency settings,
+  including the path SooperLooper is heard through.  See `New Tool:
+  sllatency`_.
 
 .. rubric:: JACK MIDI and JACK Sync
 
@@ -358,16 +276,82 @@ item links to its full description.
   rolling, avoiding a burst of tempo changes, which are not realtime-safe,
   during a locate.
 
-.. rubric:: Tools
 
-- ``slbigstate``: **a large-text loop state display.**  A separate
-  program, installed alongside ``sooperlooper`` and ``slgui``, that shows
-  each loop's state in large, colored text, readable from across a room.
-  See `New Tool: slbigstate`_.
-- ``sllatency``: **a latency calibration tool.**  Measures the audio round
-  trip with a click and checks JACK's and SooperLooper's latency settings,
-  including the path SooperLooper is heard through.  See `New Tool:
-  sllatency`_.
+.. tip:: **Compiling on Ubuntu 24.04**
+
+   The patched source is the ``master`` branch of
+   https://github.com/abarker/sooperlooper-mods, so a plain clone gets it;
+   stock SooperLooper 1.7.9 is the tag ``stock-1.7.9``.  A convenience
+   script ``ubuntu_compile.bash`` at the top level of the repository automates
+   the build.
+
+   For a first build, set all four flags near the top of the script to
+   ``true`` and run it::
+
+       bash ubuntu_compile.bash
+
+   On subsequent recompiles only ``compile_modified_fork=true`` is needed;
+   the other three flags (``install_deps``, ``run_autogen``, ``run_config``)
+   can remain ``false``.  The script prompts before running
+   ``sudo make install``.
+
+.. tip:: **Platform**
+
+   Built and tested only on Ubuntu 24.04, using the script above.  It
+   should compile wherever stock SooperLooper 1.7.9 does.
+
+   It also builds with liblo 0.32 (Arch Linux, and likely newer
+   distributions), which stock 1.7.9 does not; not yet run on a system
+   with 0.32 installed.
+
+   Windows builds under Cygwin; ``windows/README.md`` has the steps and
+   a build script, which has built and run this fork once on Windows 10.
+   MIDI control on Windows should work through the fork's JACK MIDI
+   port; untried.
+
+   Stock's standalone macOS build has one reported startup hang on
+   Catalina, unrelated to this patch, with a workaround:
+   https://github.com/essej/sooperlooper/issues/32.
+
+.. tip:: **Quick Start**
+
+   The late-hit correction works as soon as the fork is built, with no
+   session file changes.  Without the late-hit keys in the session file it
+   uses the built-in defaults: a 100 ms window, with the cycle-fraction cap
+   off (100.0).  Setting ``late_hit_max_quant_unit_fraction`` to, say, 0.5
+   also caps the window at half a quantize cycle, which matters at fast
+   tempos, where 100 ms can be more than half a cycle.
+
+   To change the values:
+
+   1. **Run SooperLooper** with your usual setup and save a session file via
+      *File → Save Session*, then exit.
+
+   2. **Edit the session file** in a text editor. Find the ``<Globals>`` element
+      and add the two late-hit keys at the end of its attribute list, before the
+      closing ``/>``::
+
+          late_hit_max_quant_unit_fraction="0.5" late_hit_window_ms="100"
+
+      A complete ``<Globals>`` element from a real session file looks like
+      this (your other values will differ).  It also has
+      ``record_failsafe_seconds`` and ``mute_late_hit_ms``, two further
+      settings described later, which you do not need to add here::
+
+          <Globals tempo="125" eighth_per_cycle="2" common_dry="0" common_wet="1"
+           input_gain="1" sync_source="-1" auto_disable_latency="1"
+           jack_timebase_master="0" output_midi_clock="0" use_midi_start="0"
+           use_midi_stop="0" send_midi_start_on_trigger="0" smart_eighths="0"
+           late_hit_window_ms="100" late_hit_max_quant_unit_fraction="0.5"
+           record_failsafe_seconds="120.0" mute_late_hit_ms="100"/>
+
+   3. **Restart SooperLooper** with the session file::
+
+          sooperlooper --load-session yourfile.slsess
+
+   All four settings can also be read and changed while SooperLooper runs,
+   over OSC, instead of editing the session file -- see `OSC Control`_.
+
 
 The Late-Hit Sync Problem
 ---------------------------
@@ -905,13 +889,13 @@ such as stopping and restarting the transport. Loops then start and stop
 off the beat, which shows up as a loop landing an eighth note away from
 where it should.
 
-This fork counts beats as the music plays, at whatever tempo JACK reports
-at each moment, so the pulses stay on the master's beat through any number
-of tempo changes; on a relocate it lines up again with where the master
-puts its beat.  One case still goes off: Hydrogen skipping a processing
-cycle (see `Known Issues and Future Work`_).  At a steady tempo it gives the same pulses as stock.  It
-also stops SooperLooper reading some of JACK's transport information from
-uninitialized memory, a stock bug.
+This fork counts beats as the music plays, at whatever tempo JACK reports at
+each moment, so the pulses stay on the master's beat through any number of
+tempo changes; on a relocate it lines up again with where the master puts its
+beat.  One case still goes off: Hydrogen skipping a processing cycle (see
+`Known Issues and Future Work`_).  At a steady tempo it gives the same pulses
+as stock.  It also stops SooperLooper reading some of JACK's transport
+information from uninitialized memory, a stock bug.
 
 On by default (``ALB_JACK_BEAT_TRACKING``), and used through full live
 sessions with frequent tempo changes.  How it works is in `JackSync Beat
