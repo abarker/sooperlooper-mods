@@ -129,6 +129,17 @@ testdef_late_stop_any_command.py
     early, it waits for the pulse; Record's own late stop unchanged;
     stereo channels alike.
 
+testdef_sync_preroll.py
+    Tests for SYNC_PREROLL: with sync_preroll_ms set, a plain Sync record
+    starting on a pulse (waiting for it, or a late-hit start) starts that
+    much before it, ends as much before its closing pulse (on the pulse,
+    Record's late stop, mute_trigger and Overdub late stops), stays whole
+    cycles and plays in phase; with a tempo set too; Trigger, Mute and
+    Sync off afterwards; the Multiply late end; stereo channels alike;
+    none for Quantize Off, a pre-roll too long for the input history, or
+    0.  Sync output boundaries are read back (syncout_count,
+    get_syncout_frame) to check the loop's own boundaries with Sync off.
+
 testdef_trig_stop_memory.py
     Regression tests for TRIG_STOP_MEMORY_FIX: a recording whose stop is
     still pending when the loop memory runs out ends there and plays,

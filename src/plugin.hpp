@@ -47,6 +47,13 @@
 #if REL_SYNC_LATE_HIT && !REL_SYNC_STALE_PHASE_FIX
 #error "REL_SYNC_LATE_HIT needs REL_SYNC_STALE_PHASE_FIX (a start at the press needs a known count)"
 #endif
+// SYNC_PREROLL: compile-time switch for a NEW behaviour (on for the rig
+// trial, inert until sync_preroll_ms is set above 0; set to 0 for the
+// previous behaviour); the writeup is the comment block near the top of
+// plugin.cc.  A plain Sync recording starts sync_preroll_ms before the
+// boundary, from the input history, and ends as much before its closing
+// boundary.  Here, not in plugin.cc, for the LoopChunk field below.
+#define SYNC_PREROLL 1
 //------ albEnd ----------------------------------
 
 // TODO, move the whole looping core into a class
@@ -171,12 +178,16 @@ typedef struct _LoopChunk {
 
 	unsigned long lSyncOffset; // used for rel sync
 	//------ albBegin ----------------------------------
+#if REL_SYNC_LATE_HIT || SYNC_PREROLL
+	// lStartEarly: samples this take started before its anchor -- a Rel
+	// Sync take's press (REL_SYNC_LATE_HIT), a plain Sync take's boundary
+	// (SYNC_PREROLL) -- 0 if none; its end comes as much before its end
+	// point.  Set by plugin.cc.
+	unsigned long lStartEarly;
+#endif
 #if REL_SYNC_LATE_HIT
-	// lRelSyncEarly: samples this Rel Sync take started before its press
-	// (0 if it waited for a pulse); its end comes as much before the end
-	// point.  lRelSyncLastPoint: loop position where the take last passed
-	// its end point while recording.  Both set by plugin.cc.
-	unsigned long lRelSyncEarly;
+	// lRelSyncLastPoint: loop position where a Rel Sync take last passed
+	// its end point while recording.  Set by plugin.cc.
 	unsigned long lRelSyncLastPoint;
 #endif
 	//------ albEnd ----------------------------------

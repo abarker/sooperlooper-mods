@@ -416,6 +416,37 @@ float g_rel_sync_preroll_ms = REL_SYNC_PREROLL_MS_DEFAULT;
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
+// SYNC_PREROLL: compile-time switch for a NEW behaviour (defined in
+// plugin.hpp).
+//
+// The problem: a plain Sync recording starts exactly on the boundary, so
+// a strum attack or pickup played just before the one is not in the loop
+// (the 2026-10-25 rig takes: attacks 7-85 ms before the record start).
+//
+// The change: a plain Sync recording that starts on a boundary pulse
+// starts P = g_sync_preroll_ms earlier: [0, P) is filled from the input
+// history, as the Rel Sync early start does (startTakeEarly()), and the
+// sync position moves back with it (lSyncPos = -P), so a restart or a
+// trigger still puts the boundary at loop position P.  Both start paths:
+// the wait for the pulse (STATE_TRIG_START), and the late-hit start, whose
+// backfill goes back P further.  Every end -- at the pulse
+// (STATE_TRIG_STOP), the Record late stop, the late stop for other
+// commands -- drops P more samples (lStartEarly), so the loop is still
+// whole cycles, P before the boundaries, and playback carries on P into
+// the loop.  The fork's Multiply late end expects a cycle to start on the
+// pulse; it allows for the pre-roll through lSyncPos.  A start that is not
+// on a pulse (Quantize Off or Loop with Sync on) has no pre-roll.
+//
+// g_sync_preroll_ms: saved/loaded as "sync_preroll_ms" in the <Globals>
+// node, settable over OSC, like g_rel_sync_preroll_ms.  Default 0: no
+// pre-roll.  Negative values are refused, as for the other settings.
+//
+// Regression tests: testdef_sync_preroll.py.
+#define SYNC_PREROLL_MS_DEFAULT 0.0f
+float g_sync_preroll_ms = SYNC_PREROLL_MS_DEFAULT;
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
 // TRIG_STOP_MEMORY_FIX: compile-time safety switch for a STOCK bug
 // (stock 1.7.9 has the same unchecked call; probed in the plugin harness).
 //
@@ -868,9 +899,10 @@ static_assert((int) Event::PAUSE_OFF == MULTI_PAUSE_OFF, "Event::command_t drift
 
 
 //------ albBegin ----------------------------------
-#if REL_SYNC_LATE_HIT || LATE_STOP_ANY_COMMAND
+#if REL_SYNC_LATE_HIT || LATE_STOP_ANY_COMMAND || SYNC_PREROLL
 // endTakeTrimmed(): end a take lateSamples before the current position
-// (REL_SYNC_LATE_HIT, LATE_STOP_ANY_COMMAND; see their comment blocks).
+// (REL_SYNC_LATE_HIT, LATE_STOP_ANY_COMMAND, SYNC_PREROLL; see their
+// comment blocks).
 // Sets the length, fades the dropped samples into the loop's start (the late-hit stop's
 // seam fade: after a normal stop STATE_PLAY writes the input following
 // the end into the start, fading it out, index i at 1 - (i + 1) / xfade;
@@ -890,6 +922,44 @@ static inline float endTakeTrimmed(SooperLooperI *pLS, LoopChunk *loop,
 			fGain * pLS->pSampleBuf[(loop->lLoopStart + length + i) & pLS->lBufferSizeMask];
 	}
 	return LIMIT_BETWEEN_0_AND_1 (1.0f - (float) lateSamples / xfadeSamples);
+}
+#endif
+
+#if REL_SYNC_LATE_HIT || SYNC_PREROLL
+// startTakeEarly(): start a new take `early` samples before the sample
+// at ring position histPos of the input history (REL_SYNC_LATE_HIT,
+// SYNC_PREROLL).  Fills [0, early) with the input before it, with the
+// fade-in a normal start gives index i, so recording carries on at
+// `early`; moves the sync position back with the start; returns the
+// fade level STATE_RECORD carries on from.
+static inline float startTakeEarly(SooperLooperI *pLS, LoopChunk *loop,
+                                   const LADSPA_Data *pfHistory, unsigned long histPos,
+                                   unsigned long early, int xfadeSamples)
+{
+	const unsigned long readPos = (histPos + pLS->lInputBufSize - early) & pLS->lInputBufMask;
+	for (unsigned long i = 0; i < early; ++i) {
+		const float fGain = (i + 1 < (unsigned long) xfadeSamples)
+			? (float) (i + 1) / xfadeSamples : 1.0f;
+		pLS->pSampleBuf[(loop->lLoopStart + i) & pLS->lBufferSizeMask] =
+			fGain * pfHistory[(readPos + i) & pLS->lInputBufMask];
+	}
+	loop->dCurrPos = (double) early;
+	loop->lStartEarly = early;
+	loop->lSyncPos -= (long) early;
+	loop->lOrigSyncPos = loop->lSyncPos;
+	return LIMIT_BETWEEN_0_AND_1 ((float) early / xfadeSamples);
+}
+#endif
+
+#if SYNC_PREROLL
+// syncPreRollSamples(): the plain Sync pre-roll, if the input history
+// holds it beyond `already` samples back and this block.
+static inline unsigned long syncPreRollSamples(const SooperLooperI *pLS,
+                                               unsigned long already,
+                                               unsigned long SampleCount)
+{
+	const unsigned long p = (unsigned long) (g_sync_preroll_ms * 0.001f * pLS->fSampleRate);
+	return (p > 0 && already + p + SampleCount <= pLS->lInputBufSize) ? p : 0;
 }
 #endif
 //------ albEnd ----------------------------------
@@ -1124,9 +1194,11 @@ static LoopChunk * pushNewLoopChunk(SooperLooperI* pLS, unsigned long initLength
    DBG(fprintf(stderr, "%u:%u  New head is %08x   start: %lu\n",pLS->lLoopIndex, pLS->lChannelIndex, (unsigned)loop, loop->lLoopStart);)
 
    //------ albBegin ----------------------------------
-#if REL_SYNC_LATE_HIT
    // Chunks are reused: no early start or end point from a previous take.
-   loop->lRelSyncEarly = 0;
+#if REL_SYNC_LATE_HIT || SYNC_PREROLL
+   loop->lStartEarly = 0;
+#endif
+#if REL_SYNC_LATE_HIT
    loop->lRelSyncLastPoint = 0;
 #endif
    //------ albEnd ----------------------------------
@@ -3420,7 +3492,14 @@ runSooperLooper(LADSPA_Handle Instance,
 				      // (the counter resets after that sample's own increment), and a
 				      // normal stop ends the loop just before the pulse sample, so the
 				      // trim is T + 1.  Trimming T left the loop one sample long.
+				      //------ albBegin ----------------------------------
+#if SYNC_PREROLL
+				      // ... and P more after a pre-rolled start.
+				      const unsigned long lateSamples = T + 1 + loop->lStartEarly;
+#else
 				      const unsigned long lateSamples = T + 1;
+#endif
+				      //------ albEnd ----------------------------------
 				      // guard against underflow — require at least xfadeSamples.
 				      unsigned long trimmedLength = 0;
 				      if ((unsigned long)loop->dCurrPos > lateSamples + (unsigned long)xfadeSamples)
@@ -3686,6 +3765,16 @@ runSooperLooper(LADSPA_Handle Instance,
 				 // M <= ~4800 samples at 48 kHz.  The modular arithmetic below
 				 // handles ring-buffer wrap-around correctly.
 				 unsigned long backfillOffset = T + 1;
+				 //------ albBegin ----------------------------------
+#if SYNC_PREROLL
+				 // The plain Sync pre-roll goes back P before the pulse too
+				 // (0 if the history does not hold it as well).
+				 const unsigned long preRoll = syncPreRollSamples(pLS, T + 1, SampleCount);
+				 backfillOffset += preRoll;
+				 loop->lStartEarly = preRoll;
+				 loop->lOrigSyncPos = loop->lSyncPos = -(long) preRoll;
+#endif
+				 //------ albEnd ----------------------------------
 				 unsigned long readPos = (pLS->lInputBufWritePos >= backfillOffset)
 					 ? (pLS->lInputBufWritePos - backfillOffset)
 					 : (pLS->lInputBufSize - (backfillOffset - pLS->lInputBufWritePos));
@@ -3938,7 +4027,15 @@ runSooperLooper(LADSPA_Handle Instance,
 						      unsigned long shiftSamples = effectiveLateHitWindow(pLS, eighthPerCycle);
 						      const long sinceCycle = (long) loop->dCurrPos
 							      - (long) (loop->lLoopLength - loop->lCycleLength);
-						      const long cycleFromBoundary = (long) T + 1 + (long) (lInputLatency + lOutputLatency);
+						      long cycleFromBoundary = (long) T + 1 + (long) (lInputLatency + lOutputLatency);
+						      //------ albBegin ----------------------------------
+#if SYNC_PREROLL
+						      // A pre-rolled loop's cycles start -lSyncPos before the
+						      // pulse (lSyncPos is 0 otherwise under plain Sync, or
+						      // positive after set_sync_pos, left as before).
+						      if (loop->lSyncPos < 0) cycleFromBoundary -= loop->lSyncPos;
+#endif
+						      //------ albEnd ----------------------------------
 						      const bool boundaryIsCycleStart =
 							      labs (sinceCycle - cycleFromBoundary) <= (long) (shiftSamples / 2);
 						      // C2 fix: bLateHitBypassed prevents late-hit firing on slave
@@ -5166,27 +5263,24 @@ runSooperLooper(LADSPA_Handle Instance,
 #if REL_SYNC_LATE_HIT
 				  // Early start: [0, early) is the input before this sample,
 				  // from the input history (a verbatim copy of pfInput, this
-				  // block included), with the fade-in a normal start gives
-				  // index i; recording carries on at early.  The offset stays
-				  // the press's; the sync position moves back with the start.
+				  // block included).  The offset stays the press's.
 				  if (fSyncMode == 2.0f && pLS->lRelSyncPressEarly > 0) {
-					  const unsigned long early = pLS->lRelSyncPressEarly;
-					  const unsigned long readPos =
-						  (pLS->lInputBufWritePos + lSampleIndex + pLS->lInputBufSize - early)
-						  & pLS->lInputBufMask;
-					  for (unsigned long i = 0; i < early; ++i) {
-						  const float fGain = (i + 1 < (unsigned long) xfadeSamples)
-							  ? (float) (i + 1) / xfadeSamples : 1.0f;
-						  pLS->pSampleBuf[(loop->lLoopStart + i) & pLS->lBufferSizeMask] =
-							  fGain * pfInputLatencyBuf[(readPos + i) & pLS->lInputBufMask];
-					  }
-					  loop->dCurrPos = (double) early;
-					  pLS->fLoopFadeAtten = LIMIT_BETWEEN_0_AND_1 ((float) early / xfadeSamples);
-					  loop->lRelSyncEarly = early;
-					  loop->lSyncPos -= (long) early;
-					  loop->lOrigSyncPos = loop->lSyncPos;
+					  pLS->fLoopFadeAtten = startTakeEarly(pLS, loop, pfInputLatencyBuf,
+						  pLS->lInputBufWritePos + lSampleIndex,
+						  pLS->lRelSyncPressEarly, xfadeSamples);
 				  }
 				  pLS->lRelSyncPressEarly = 0;
+#endif
+#if SYNC_PREROLL
+				  // Plain Sync pre-roll: starting on a boundary pulse.
+				  if (fSyncMode == 1.0f && pfSyncInput[lSampleIndex] > 1.5f) {
+					  const unsigned long preRoll = syncPreRollSamples(pLS, 0, SampleCount);
+					  if (preRoll > 0) {
+						  pLS->fLoopFadeAtten = startTakeEarly(pLS, loop, pfInputLatencyBuf,
+							  pLS->lInputBufWritePos + lSampleIndex,
+							  preRoll, xfadeSamples);
+					  }
+				  }
 #endif
 				  //------ albEnd ----------------------------------
 			  }
@@ -5403,12 +5497,12 @@ runSooperLooper(LADSPA_Handle Instance,
 	      // (any: Record, Overdub, a quantized Mute, ...) came at most the
 	      // late-hit window past the take's last end point, and that point
 	      // is a whole Quantize unit or more after the start (the start
-	      // itself is a point, at lRelSyncEarly).  End there now instead of
+	      // itself is a point, at lStartEarly).  End there now instead of
 	      // at the next point.  The take's last point only moves while
 	      // recording, so this can hold only on the first sample here.
 	      const bool relSyncLate = (fSyncMode == 2.0f
 	                                && !pLS->bLateHitBypassed
-	                                && loop->lRelSyncLastPoint > loop->lRelSyncEarly
+	                                && loop->lRelSyncLastPoint > loop->lStartEarly
 	                                && lCurrPos - loop->lRelSyncLastPoint <= lateStopWindow);
 #endif
 #if LATE_STOP_ANY_COMMAND
@@ -5423,7 +5517,11 @@ runSooperLooper(LADSPA_Handle Instance,
 	                                  && !pLS->bLateHitBypassed
 	                                  && lGlobalSyncAtButtonPress > 0
 	                                  && lGlobalSyncAtButtonPress <= lateStopWindow
-	                                  && loop->dCurrPos > (double) (lGlobalSyncAtButtonPress + 1 + xfadeSamples));
+	                                  && loop->dCurrPos > (double) (lGlobalSyncAtButtonPress + 1 + xfadeSamples
+#if SYNC_PREROLL
+	                                                                + loop->lStartEarly
+#endif
+	                                                                ));
 #endif
 	      //------ albEnd ----------------------------------
 	      
@@ -5473,18 +5571,29 @@ runSooperLooper(LADSPA_Handle Instance,
 		      // Before transitionToNext(), so a following overdub copies
 		      // the faded start.
 		      if (fSyncMode == 2.0f) {
-			      const unsigned long lateSamples = loop->lRelSyncEarly
+			      const unsigned long lateSamples = loop->lStartEarly
 				      + (relSyncLate ? lCurrPos - loop->lRelSyncLastPoint : 0);
 			      if (lateSamples > 0 && (unsigned long) lCurrPos > lateSamples) {
 				      pLS->fLoopFadeAtten = endTakeTrimmed(pLS, loop, lateSamples, xfadeSamples);
 			      }
 		      }
 #endif
+#if LATE_STOP_ANY_COMMAND || SYNC_PREROLL
+		      // Plain Sync: a late command ends just before the pulse T + 1
+		      // samples back, as the Record late stop trims
+		      // (LATE_STOP_ANY_COMMAND); a pre-rolled take ends P before
+		      // that (SYNC_PREROLL).
+		      if (fSyncMode == 1.0f) {
+			      unsigned long lateSamples = 0;
 #if LATE_STOP_ANY_COMMAND
-		      // Plain Sync late command: end just before the pulse T + 1
-		      // samples back, as the Record late stop trims.
-		      if (plainSyncLate) {
-			      pLS->fLoopFadeAtten = endTakeTrimmed(pLS, loop, lGlobalSyncAtButtonPress + 1, xfadeSamples);
+			      if (plainSyncLate) lateSamples += lGlobalSyncAtButtonPress + 1;
+#endif
+#if SYNC_PREROLL
+			      lateSamples += loop->lStartEarly;
+#endif
+			      if (lateSamples > 0 && (unsigned long) lCurrPos > lateSamples) {
+				      pLS->fLoopFadeAtten = endTakeTrimmed(pLS, loop, lateSamples, xfadeSamples);
+			      }
 		      }
 #endif
 		      //------ albEnd ----------------------------------
@@ -5567,7 +5676,7 @@ runSooperLooper(LADSPA_Handle Instance,
 
 	   // update loop values (in case we get stopped by an event)
 	   //------ albBegin ----------------------------------
-#if REL_SYNC_LATE_HIT || LATE_STOP_ANY_COMMAND
+#if REL_SYNC_LATE_HIT || LATE_STOP_ANY_COMMAND || SYNC_PREROLL
 	   // Only while still waiting.  After an end above the values are set
 	   // already, possibly trimmed (REL_SYNC_LATE_HIT,
 	   // LATE_STOP_ANY_COMMAND), and `loop` may be a new overdub chunk;

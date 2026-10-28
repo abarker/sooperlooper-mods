@@ -141,6 +141,13 @@ class TestLooper
 	long long input_minus_sync;
 	float out_first;
 	unsigned long long out_first_frame;
+	/* syncout_*: input_clock frames of the boundaries (> 1.5) in channel
+	 * 0's sync output, the last SYNCOUT_KEEP of them, and how many so far
+	 * (get_syncout_frame(k): the k-th, k < syncout_count). */
+	enum { SYNCOUT_KEEP = 64 };
+	unsigned long syncout_count;
+	unsigned long long get_syncout_frame (unsigned long k) const { return _syncout_frames[k % SYNCOUT_KEEP]; }
+	unsigned long long _syncout_frames[SYNCOUT_KEEP];
 
 	float output_min;      /* running min since reset_output_stats() */
 	float output_max;      /* running max since reset_output_stats() */
