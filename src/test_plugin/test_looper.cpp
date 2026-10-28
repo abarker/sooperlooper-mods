@@ -65,6 +65,7 @@ TestLooper::TestLooper (jack_client_t* j, unsigned int index, unsigned int chan_
 	input_minus_sync    = 0;
 	out_first           = 0.0f;
 	out_first_frame     = 0;
+	syncout_count       = 0;
 	reset_output_stats();
 	//------ albEnd ----------------------------------
 	_input_ports = 0;
@@ -241,6 +242,16 @@ TestLooper::get_channel_loop_length (unsigned int index) const
 	return 0;
 }
 
+long
+TestLooper::get_channel_sync_pos (unsigned int index) const
+{
+	if (index < _chan_count && _instances[index]) {
+		SooperLooperI * pLS = (SooperLooperI *) _instances[index];
+		return pLS->headLoopChunk ? pLS->headLoopChunk->lSyncPos : 0;
+	}
+	return 0;
+}
+
 float
 TestLooper::get_loop_sample (unsigned int index, unsigned long pos) const
 {
@@ -385,6 +396,12 @@ TestLooper::run (jack_nframes_t offset, jack_nframes_t nframes)
 			if (nframes > 0) {
 				out_first = out_buf[0];
 				out_first_frame = input_clock;
+			}
+			for (jack_nframes_t n = 0; n < nframes; ++n) {
+				if (_our_syncout_buf[offset + n] > 1.5f) {
+					_syncout_frames[syncout_count % SYNCOUT_KEEP] = input_clock + n;
+					++syncout_count;
+				}
 			}
 		}
 		//------ albEnd ----------------------------------

@@ -129,6 +129,14 @@ testdef_late_stop_any_command.py
     early, it waits for the pulse; Record's own late stop unchanged;
     stereo channels alike.
 
+testdef_signed_sync_pos.py
+    Tests for SIGNED_SYNC_POS_FIX: with Sync off, a Rel Sync loop whose
+    sync position is negative (an early start pressed just after a pulse)
+    makes one boundary per cycle, not an extra one near its start; a
+    positive one is unchanged.  The cycle (8008) is chosen so the stock
+    unsigned wrap shows.  Reads channel 0's sync output back
+    (syncout_count, get_syncout_frame).
+
 testdef_trig_stop_memory.py
     Regression tests for TRIG_STOP_MEMORY_FIX: a recording whose stop is
     still pending when the loop memory runs out ends there and plays,

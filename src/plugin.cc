@@ -894,6 +894,31 @@ static inline float endTakeTrimmed(SooperLooperI *pLS, LoopChunk *loop,
 #endif
 //------ albEnd ----------------------------------
 
+//------ albBegin ----------------------------------
+// SIGNED_SYNC_POS_FIX: compile-time safety switch for a STOCK bug.
+//
+// The problem: the loop's own boundaries (its sync output, used with Sync
+// off by quantized commands and by loops synced to it) are where
+// (pos + lSyncPos) % unit == 0.  lSyncPos can be negative (stock Rel Sync,
+// the fork's Rel Sync early start), and with a Cycle or Loop unit
+// (unsigned long) the negative sum is converted to unsigned, so one
+// position in [0, -lSyncPos) can test as a boundary too: where
+// -lSyncPos - pos == 2^64 mod unit.  Shown in the harness
+// (testdef_signed_sync_pos.py: an extra boundary every pass).  The 8th
+// unit (unsigned int) is promoted to long and was already right.
+//
+// The change: the test is done in signed arithmetic, which is 0 exactly
+// on the grid whatever the sign; for a sum of 0 or more nothing changes
+// (plain Sync's lSyncPos is 0).  Set to 0 for stock.
+#define SIGNED_SYNC_POS_FIX 1
+#if SIGNED_SYNC_POS_FIX
+static inline bool onSyncGrid(long pos, long syncPos, unsigned long unit)
+{
+	return ((pos + syncPos) % (long) unit) == 0;
+}
+#endif
+//------ albEnd ----------------------------------
+
 
 // reads loop audio into buffer, up to frames length, starting from loop_offset.  if fewer frames are
 // available returns amount read.  if 0 is returned loop is done.
@@ -5665,8 +5690,15 @@ runSooperLooper(LADSPA_Handle Instance,
 		 }
 		 else {
 			 if (fQuantizeMode == QUANT_OFF 
+			     //------ albBegin ----------------------------------
+#if SIGNED_SYNC_POS_FIX
+			     || (fQuantizeMode == QUANT_CYCLE && onSyncGrid((int) rCurrPos, loop->lSyncPos, loop->lCycleLength))
+			     || (fQuantizeMode == QUANT_LOOP && onSyncGrid((int) rCurrPos, loop->lSyncPos, loop->lLoopLength))
+#else
 			     || (fQuantizeMode == QUANT_CYCLE && (((int)rCurrPos + loop->lSyncPos) % loop->lCycleLength) == 0)
 			     || (fQuantizeMode == QUANT_LOOP && (((int) rCurrPos +loop->lSyncPos) % loop->lLoopLength )== 0) 
+#endif
+			     //------ albEnd ----------------------------------
 			     || (fQuantizeMode == QUANT_8TH && (((int) rCurrPos + loop->lSyncPos) % eighthSamples) == 0))
 			 {
 				 pfSyncOutput[lSampleIndex] = 2.0f;
@@ -5910,7 +5942,13 @@ runSooperLooper(LADSPA_Handle Instance,
 		 }
 		 else {
 			 if (fQuantizeMode == QUANT_OFF 
+			     //------ albBegin ----------------------------------
+#if SIGNED_SYNC_POS_FIX
+			     || (fQuantizeMode == QUANT_CYCLE && onSyncGrid((int) rCurrPos, loop->lSyncPos, loop->lCycleLength)))
+#else
 			     || (fQuantizeMode == QUANT_CYCLE && (((int) rCurrPos + loop->lSyncPos) % loop->lCycleLength) == 0))
+#endif
+			     //------ albEnd ----------------------------------
 			 {
 				 pfSyncOutput[lSampleIndex] = 2.0f;
 			 }
@@ -6224,8 +6262,15 @@ runSooperLooper(LADSPA_Handle Instance,
 			 }
 		 }
 		 else if (fQuantizeMode == QUANT_OFF 
+			  //------ albBegin ----------------------------------
+#if SIGNED_SYNC_POS_FIX
+			  || (fQuantizeMode == QUANT_CYCLE && onSyncGrid((int) rCurrPos, loop->lSyncPos, loop->lCycleLength))
+			  || (fQuantizeMode == QUANT_LOOP && onSyncGrid((int) rCurrPos, loop->lSyncPos, loop->lLoopLength))
+#else
 			  || (fQuantizeMode == QUANT_CYCLE && (((int) rCurrPos + loop->lSyncPos) % loop->lCycleLength) == 0)
 			  || (fQuantizeMode == QUANT_LOOP && (((int)rCurrPos + loop->lSyncPos) % loop->lLoopLength)== 0) 
+#endif
+			  //------ albEnd ----------------------------------
 			  || (fQuantizeMode == QUANT_8TH && (((int)rCurrPos + loop->lSyncPos) % eighthSamples) == 0)) {
 			 pfSyncOutput[lSampleIndex] = 2.0f;
 		 }
@@ -6444,8 +6489,15 @@ runSooperLooper(LADSPA_Handle Instance,
 			 }
 		 }
 		 else if (fQuantizeMode == QUANT_OFF 
+			  //------ albBegin ----------------------------------
+#if SIGNED_SYNC_POS_FIX
+			  || (fQuantizeMode == QUANT_CYCLE && onSyncGrid(lCurrPos, loop->lSyncPos, loop->lCycleLength))
+			  || (fQuantizeMode == QUANT_LOOP && onSyncGrid(lCurrPos, loop->lSyncPos, loop->lLoopLength))
+#else
 			  || (fQuantizeMode == QUANT_CYCLE && ((lCurrPos + loop->lSyncPos) % loop->lCycleLength) == 0)
 			  || (fQuantizeMode == QUANT_LOOP && (((lCurrPos + loop->lSyncPos) % loop->lLoopLength) == 0)) 
+#endif
+			  //------ albEnd ----------------------------------
 			  || (fQuantizeMode == QUANT_8TH && ((lCurrPos + loop->lSyncPos) % eighthSamples) == 0)) {
 			 pfSyncOutput[lSampleIndex] = 2.0f;
 		 }
@@ -6726,7 +6778,13 @@ runSooperLooper(LADSPA_Handle Instance,
 		 if (fSyncMode != 0 || fQuantizeMode == QUANT_OFF) {
 			 pfSyncOutput[lSampleIndex] = pfSyncInput[lSampleIndex];
 		 }
+		 //------ albBegin ----------------------------------
+#if SIGNED_SYNC_POS_FIX
+		 else if (onSyncGrid(lCurrPos, loop->lSyncPos, loop->lCycleLength)) {
+#else
 		 else if (((lCurrPos + loop->lSyncPos) % loop->lCycleLength) == 0) {
+#endif
+		 //------ albEnd ----------------------------------
 			 pfSyncOutput[lSampleIndex] = 2.0f;
 		 }
 

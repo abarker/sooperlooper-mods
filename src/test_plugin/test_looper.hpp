@@ -52,6 +52,9 @@ class TestLooper
 	unsigned long get_channel_loop_length (unsigned int index) const;
 	/* The current take's sample at loop position pos (channel index). */
 	float get_loop_sample (unsigned int index, unsigned long pos) const;
+	/* The head loop's lSyncPos (where the sync grid falls in the loop:
+	 * a pulse plays loop position -lSyncPos mod length), 0 if no loop. */
+	long get_channel_sync_pos (unsigned int index) const;
 	//------ albEnd ----------------------------------
 
 	void request_cmd (int cmd);
@@ -141,6 +144,13 @@ class TestLooper
 	long long input_minus_sync;
 	float out_first;
 	unsigned long long out_first_frame;
+	/* syncout_*: input_clock frames of the boundaries (> 1.5) in channel
+	 * 0's sync output, the last SYNCOUT_KEEP of them, and how many so far
+	 * (get_syncout_frame(k): the k-th, k < syncout_count). */
+	enum { SYNCOUT_KEEP = 64 };
+	unsigned long syncout_count;
+	unsigned long long get_syncout_frame (unsigned long k) const { return _syncout_frames[k % SYNCOUT_KEEP]; }
+	unsigned long long _syncout_frames[SYNCOUT_KEEP];
 
 	float output_min;      /* running min since reset_output_stats() */
 	float output_max;      /* running max since reset_output_stats() */
