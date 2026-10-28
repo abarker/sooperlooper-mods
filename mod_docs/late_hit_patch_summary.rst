@@ -323,6 +323,14 @@ item links to its full description.
   sample early.  Inaudible, and it never added up (each restart starts
   afresh), but now exact.
 
+- **A slightly late Once plays in time** (``ONESHOT_SLACK_FIX``, on by
+  default).  With Sync on and a tempo set, a Once (one-shot) pressed
+  less than an eighth note after a beat starts at once.  Stock 1.7.9
+  started it from the very top there, so the whole pass played as far
+  behind the beat as the press was late (up to an eighth note).  Now it
+  starts that far into the loop, as Trigger does: in time with the beat,
+  with its first moment skipped.
+
 - **Default loop memory 120 seconds** (was 40).  The engine's ``-t``
   default and slgui's loop time for new loops.  It is rounded up to a
   power of two of samples, about 175 seconds at 48 kHz, 32 MB per
@@ -1375,6 +1383,14 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        is read, gets one added for a Trigger acting at once in the slack
        window and for a Rel Sync recording's sync position.  Needs
        ``REL_SYNC_POS_FIX``.  Set to 0 for stock.
+   * - ``ONESHOT_SLACK_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: a Once pressed
+       in the slack window (less than an eighth after a beat, tempo set)
+       starts as far into the loop as the press was late, as Trigger
+       does, instead of from the top, so the pass is in time.  Set to 0
+       for stock.
    * - ``INTERNAL_SYNC_BOUNDARY_PULSE_FIX``
      - ``engine.cpp``
      - ``1``

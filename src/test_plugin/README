@@ -143,6 +143,11 @@ testdef_sync_count_off_by_one.py
     plain Sync and Rel Sync, pressed in the slack window (acting at once)
     or waiting for the pulse, and repeated restarts stay in phase.
 
+testdef_oneshot_slack.py
+    Tests for ONESHOT_SLACK_FIX: with a tempo set, a Once pressed in the
+    slack window (acting at once) or waiting for the pulse plays its pass
+    exactly in phase, plain Sync and Rel Sync, and still ends in Mute.
+
 testdef_signed_sync_pos.py
     Tests for SIGNED_SYNC_POS_FIX: with Sync off, a Rel Sync loop whose
     sync position is negative (an early start pressed just after a pulse)
