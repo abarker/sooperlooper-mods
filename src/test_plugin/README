@@ -129,6 +129,14 @@ testdef_late_stop_any_command.py
     early, it waits for the pulse; Record's own late stop unchanged;
     stereo channels alike.
 
+testdef_rel_sync_pos.py
+    Tests for REL_SYNC_POS_FIX: with a tempo set, a Rel Sync recording
+    started in any quarter of the cycle gets its sync position from the
+    nearer boundary (read back with get_channel_sync_pos); a synced
+    Trigger or mute_trigger restart plays it in phase; with Sync off its
+    own boundaries stay on the bar lines; no tempo unchanged; stereo
+    channels alike.
+
 testdef_signed_sync_pos.py
     Tests for SIGNED_SYNC_POS_FIX: with Sync off, a Rel Sync loop whose
     sync position is negative (an early start pressed just after a pulse)

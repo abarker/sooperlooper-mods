@@ -919,6 +919,29 @@ static inline bool onSyncGrid(long pos, long syncPos, unsigned long unit)
 #endif
 //------ albEnd ----------------------------------
 
+//------ albBegin ----------------------------------
+// REL_SYNC_POS_FIX: compile-time safety switch for a STOCK bug.
+//
+// The problem: a Rel Sync recording sets lSyncPos (where the sync grid
+// falls in the loop; a synced Trigger or mute_trigger restarts the loop at
+// -lSyncPos, and with Sync off the loop's own boundaries are there) from
+// the count since the last boundary at its start.  Stock 1.7.9:
+// "since < syncSamples/2 ? since : since - syncSamples".  With a tempo
+// set, syncSamples is HALF the Quantize unit (0 without a tempo, where the
+// result is always `since`, which is right), and both are unsigned int.
+// A start in the unit's second half came out half a unit off, and one in
+// its second quarter wrapped to about 2^32: a restart played about half a
+// cycle out of phase (probed in the harness, testdef_rel_sync_pos.py).
+//
+// The change: from the nearer boundary, in signed arithmetic: `since` in
+// the first half of the unit (2 * syncSamples), `since - unit` in the
+// second, so a restart puts the loop's first boundary after its start on
+// the beat.  The unit comes from the tempo, so it can differ from the real
+// pulse spacing by the tempo's rounding to whole samples (about a sample
+// per eighth).  Set to 0 for stock.
+#define REL_SYNC_POS_FIX 1
+//------ albEnd ----------------------------------
+
 
 // reads loop audio into buffer, up to frames length, starting from loop_offset.  if fewer frames are
 // available returns amount read.  if 0 is returned loop is done.
@@ -5162,6 +5185,17 @@ runSooperLooper(LADSPA_Handle Instance,
 					  loop->lSyncOffset = pLS->lSamplesSinceSync;
 					  // this needs to be adjusted for latency
 					  //loop->lOrigSyncPos = loop->lSyncPos = pLS->lSamplesSinceSync + (unsigned long) (( lOutputLatency + lInputLatency) * fRate); 
+					  //------ albBegin ----------------------------------
+#if REL_SYNC_POS_FIX
+					  // REL_SYNC_POS_FIX (see its comment block near the top
+					  // of this file): from the nearer boundary, signed.
+					  {
+						  const long unit = 2 * (long) syncSamples;
+						  const long since = (long) pLS->lSamplesSinceSync;
+						  loop->lOrigSyncPos = loop->lSyncPos =
+							  (unit > 0 && since >= unit / 2) ? since - unit : since;
+					  }
+#else
 					  if (pLS->lSamplesSinceSync < syncSamples/2) {
 						  //loop->lOrigSyncPos = loop->lSyncPos = pLS->lSamplesSinceSync + (unsigned long) (( lOutputLatency + lInputLatency) * fRate); 
 						  loop->lOrigSyncPos = loop->lSyncPos = pLS->lSamplesSinceSync; 
@@ -5170,6 +5204,8 @@ runSooperLooper(LADSPA_Handle Instance,
 						  //loop->lOrigSyncPos = loop->lSyncPos = (pLS->lSamplesSinceSync - syncSamples) + (unsigned long) (( lOutputLatency + lInputLatency) * fRate); 
 						  loop->lOrigSyncPos = loop->lSyncPos = (pLS->lSamplesSinceSync - syncSamples); 
 					  }
+#endif
+					  //------ albEnd ----------------------------------
 					  
 					  DBG(cerr <<  pLS->lLoopIndex << ":" << pLS->lChannelIndex << "   sync offset is: " << loop->lSyncOffset << "  syncpos: " << loop->lSyncPos <<endl);
 				  }

@@ -304,6 +304,16 @@ item links to its full description.
   The check is now done in signed arithmetic; nothing changes for plain
   Sync.
 
+- **Rel Sync loops restart in time** (``REL_SYNC_POS_FIX``, on by
+  default).  With a tempo set (always, with JACK transport or MIDI
+  clock), stock 1.7.9 placed a Rel Sync loop's sync grid wrongly when
+  Record was pressed after the first quarter of a cycle: half a cycle
+  off, or far off for a press in the second quarter.  A synced Trigger
+  or ``mute_trigger`` restart of that loop then played about half a cycle
+  out of time with the beat, and with Sync off its own boundaries were
+  off the bar lines.  Now the grid is taken from the nearer boundary: a
+  restart puts the loop's first boundary after its start on the beat.
+
 - **Default loop memory 120 seconds** (was 40).  The engine's ``-t``
   default and slgui's loop time for new loops.  It is rounded up to a
   power of two of samples, about 175 seconds at 48 kHz, 32 MB per
@@ -1340,6 +1350,14 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        tested in signed arithmetic, so a negative sync position (Rel
        Sync) no longer gives an extra boundary near the loop's start.
        Set to 0 for stock.
+   * - ``REL_SYNC_POS_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: a Rel Sync
+       recording's sync position (where a synced restart starts the loop)
+       is taken from the nearer boundary in signed arithmetic, instead of
+       half a cycle off (or wrapped) for a start after the first quarter
+       of a cycle with a tempo set.  Set to 0 for stock.
    * - ``INTERNAL_SYNC_BOUNDARY_PULSE_FIX``
      - ``engine.cpp``
      - ``1``
