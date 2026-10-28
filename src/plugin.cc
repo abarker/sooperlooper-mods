@@ -383,7 +383,7 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 // The change:
 //
 // * Early start.  A Rel Sync record that starts at the press (the count
-//   is known) starts E = trigger_latency + g_rel_sync_early_ms samples
+//   is known) starts E = trigger_latency + g_rel_sync_preroll_ms samples
 //   earlier: [0, E) is filled from the input history, as the late-hit
 //   start backfill does, and recording carries on at E.  The offset
 //   stays the press's, so the stop still comes at whole Quantize units
@@ -405,14 +405,14 @@ float g_mute_late_hit_ms = MUTE_LATE_HIT_MS_DEFAULT;
 //   it waits for the end point as now.  (The plain Sync late stop is
 //   still Record presses only.)
 //
-// g_rel_sync_early_ms: the extra early start, for a press made on the
+// g_rel_sync_preroll_ms: the extra early start, for a press made on the
 // first note.  A setup-time preference saved/loaded as the XML property
-// "rel_sync_early_ms" in the <Globals> node, like g_mute_late_hit_ms.
+// "rel_sync_preroll_ms" in the <Globals> node, like g_mute_late_hit_ms.
 // Default 0: only trigger_latency, which is the measured pedal delay.
 //
 // Regression tests: testdef_rel_sync_late_hit.py.
-#define REL_SYNC_EARLY_MS_DEFAULT 0.0f
-float g_rel_sync_early_ms = REL_SYNC_EARLY_MS_DEFAULT;
+#define REL_SYNC_PREROLL_MS_DEFAULT 0.0f
+float g_rel_sync_preroll_ms = REL_SYNC_PREROLL_MS_DEFAULT;
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
@@ -3755,7 +3755,7 @@ runSooperLooper(LADSPA_Handle Instance,
 				 const float fTrigLat = *pLS->pfTriggerLatency;
 				 const unsigned long early =
 					 (unsigned long) (fTrigLat > 0.0f ? fTrigLat : 0.0f)
-					 + (unsigned long) (g_rel_sync_early_ms * 0.001f * pLS->fSampleRate);
+					 + (unsigned long) (g_rel_sync_preroll_ms * 0.001f * pLS->fSampleRate);
 				 pLS->lRelSyncPressEarly =
 					 (fSyncMode == 2.0f && early + SampleCount <= pLS->lInputBufSize) ? early : 0;
 			 }

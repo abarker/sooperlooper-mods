@@ -39,7 +39,7 @@
 // REL_SYNC_LATE_HIT: compile-time switch for a NEW behaviour (on for the
 // rig trial; set to 0 for the previous behaviour); the writeup is the
 // comment block near the top of plugin.cc.  A Rel Sync record that starts at the press starts
-// trigger_latency + rel_sync_early_ms earlier, from the input history,
+// trigger_latency + rel_sync_preroll_ms earlier, from the input history,
 // and ends as much earlier; a Record stop pressed just past the take's
 // end point ends it there instead of recording another Quantize unit.
 // Here, not in plugin.cc, for the LoopChunk fields below.

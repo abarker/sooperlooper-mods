@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 """
 Tests for REL_SYNC_LATE_HIT (plugin.cc): a Rel Sync record that starts at
-the press starts trigger_latency + rel_sync_early_ms earlier, from the
+the press starts trigger_latency + rel_sync_preroll_ms earlier, from the
 input history, and ends as much earlier; a command ending the take
 (Record, Overdub, a quantized Mute or mute_trigger) at most the late-hit
 window past the take's end point ends it there at once instead of
@@ -33,21 +33,21 @@ def frame_of(sample):
 class RelSyncLateHitTestCase(RelSyncKnownPhaseTestCase):
 
     TRIG_LATENCY = 0     # samples
-    EARLY_MS = 0.0
+    PREROLL_MS = 0.0
 
     def setUp(self):
         super().setUp()
         test_engine.cvar.g_late_hit_window_ms = WINDOW_MS
-        test_engine.cvar.g_rel_sync_early_ms = self.EARLY_MS
+        test_engine.cvar.g_rel_sync_preroll_ms = self.PREROLL_MS
         self.looper.set_port(test_engine.TriggerLatency, float(self.TRIG_LATENCY))
         self.looper.set_port(test_engine.DryLevel, 0.0)
         self.looper.input_ramp = True
-        self.early = self.TRIG_LATENCY + int(round(self.EARLY_MS * 0.001 * self.sr))
+        self.early = self.TRIG_LATENCY + int(round(self.PREROLL_MS * 0.001 * self.sr))
         self.window = int(WINDOW_MS * 0.001 * self.sr)
         self.wait_cycles(0.5)
 
     def tearDown(self):
-        test_engine.cvar.g_rel_sync_early_ms = 0.0
+        test_engine.cvar.g_rel_sync_preroll_ms = 0.0
         self.looper.input_ramp = False
         self.looper.request_at_clock = -1
         super().tearDown()
@@ -140,7 +140,7 @@ class RelSyncLateHitTestCase(RelSyncKnownPhaseTestCase):
 class TestRelSyncEarlyStart(RelSyncLateHitTestCase):
 
     TRIG_LATENCY = 500
-    EARLY_MS = 10.0      # 480 samples at 48 kHz
+    PREROLL_MS = 10.0      # 480 samples at 48 kHz
 
     def testStartsEarlyFromInputHistory(self):
         s0 = self.start_take()
@@ -237,7 +237,7 @@ class TestRelSyncLateStop(RelSyncLateHitTestCase):
 class TestRelSyncLateStopWithEarlyStart(RelSyncLateHitTestCase):
 
     TRIG_LATENCY = 500
-    EARLY_MS = 10.0
+    PREROLL_MS = 10.0
 
     def testLateStopInWindow_EndsAtPointLessEarly(self):
         s0 = self.start_take()

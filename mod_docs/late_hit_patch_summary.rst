@@ -197,7 +197,7 @@ item links to its full description.
 
 - **Five settings, one place.** ``late_hit_window_ms``,
   ``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds``,
-  ``mute_late_hit_ms`` and ``rel_sync_early_ms`` are all saved in the session file's ``<Globals>``
+  ``mute_late_hit_ms`` and ``rel_sync_preroll_ms`` are all saved in the session file's ``<Globals>``
   line, and can be read and set live over OSC.  See `Record Late-Hit
   Window Size`_ and `OSC Control`_.
 
@@ -276,7 +276,7 @@ item links to its full description.
 - **Rel Sync late-hit: early start, late stop** (``REL_SYNC_LATE_HIT``,
   new in this fork, on in this build).  A Rel Sync recording that starts
   at the press now starts earlier by the trigger latency (the pedal's
-  delay) plus an optional extra, ``rel_sync_early_ms``, so the first notes
+  delay) plus an optional extra, ``rel_sync_preroll_ms``, so the first notes
   played on the press are in the loop, and it ends that much earlier
   too, so it is still a whole number of cycles.  And a command that ends
   the recording just after its end point -- up to the late-hit window --
@@ -429,7 +429,7 @@ in the loop's latency settings.  So a recording that starts at the press
 starts that much earlier, taking the missing audio from SooperLooper's
 continuous input history, and the first notes played on the press are in
 the loop.  For a press made right on the first note, a further
-``rel_sync_early_ms`` (default 0) starts it earlier still; it adds to the
+``rel_sync_preroll_ms`` (default 0) starts it earlier still; it adds to the
 trigger latency, so leave the trigger latency out of it.  The recording
 ends the same amount earlier, so it is still a whole number of cycles.
 On the first time round, playback joins the loop that far in: you have
@@ -447,7 +447,7 @@ start does not end a loop of no cycles: it waits for the first full
 cycle.  With mute quant off, Mute ends the recording at once wherever it
 is pressed, as in stock, so the loop is not a whole number of cycles.
 
-Set ``rel_sync_early_ms`` like the other settings: in the session file's
+Set ``rel_sync_preroll_ms`` like the other settings: in the session file's
 ``<Globals>`` line, or over OSC with ``/set`` (see `OSC Control`_).
 
 What happens, by situation:
@@ -797,7 +797,7 @@ OSC Control
 
 All five settings -- ``late_hit_window_ms``,
 ``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds``,
-``mute_late_hit_ms`` and ``rel_sync_early_ms`` -- can be read and changed while SooperLooper runs,
+``mute_late_hit_ms`` and ``rel_sync_preroll_ms`` -- can be read and changed while SooperLooper runs,
 with the same global OSC ``/set`` and ``/get`` messages used for ``tempo``,
 ``eighth_per_cycle`` and the other ``<Globals>`` values:
 
@@ -1304,15 +1304,15 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
      - ``1``
      - New behaviour, on in this build for trial: a Rel Sync recording
        that starts at the press starts trigger latency +
-       ``rel_sync_early_ms`` earlier and ends as much earlier, and a
+       ``rel_sync_preroll_ms`` earlier and ends as much earlier, and a
        command ending the recording within the late-hit window after the
        end point ends it there (see `Rel Sync Recordings`_).  Needs
        ``REL_SYNC_STALE_PHASE_FIX``.  Set to 0 for the previous
        behaviour.
-   * - ``REL_SYNC_EARLY_MS_DEFAULT``
+   * - ``REL_SYNC_PREROLL_MS_DEFAULT``
      - ``plugin.cc``
      - ``0.0f``
-     - Compile-time initial value for ``g_rel_sync_early_ms``, the extra
+     - Compile-time initial value for ``g_rel_sync_preroll_ms``, the extra
        early start added to the trigger latency.  Overridden at runtime
        by the session file or OSC ``/set``.
    * - ``TRIG_STOP_MEMORY_FIX``

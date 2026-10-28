@@ -112,7 +112,7 @@ testdef_rel_sync_known_phase.py
 
 testdef_rel_sync_late_hit.py
     Tests for REL_SYNC_LATE_HIT: a Rel Sync record started at the press
-    starts trigger_latency + rel_sync_early_ms earlier, from the input
+    starts trigger_latency + rel_sync_preroll_ms earlier, from the input
     history, ends as much earlier (whole cycles) and plays in phase; one
     that waits for a pulse does not start early; a command ending the
     take (Record, Overdub, quantized Mute or mute_trigger) within the

@@ -463,7 +463,7 @@ Two more changes in this fork, for playing on the press:
   recording that starts at the press starts that much earlier, so the
   notes you played as you pressed are in the loop.  If you press right on
   the first note and it still clips, the session setting
-  ``rel_sync_early_ms`` starts it earlier still.  The recording ends the
+  ``rel_sync_preroll_ms`` starts it earlier still.  The recording ends the
   same amount earlier, so it is still whole cycles.
 - **A slightly late stop is caught.**  Ending the recording just after
   the end point (within the late-hit window, 100 ms by default) ends it
