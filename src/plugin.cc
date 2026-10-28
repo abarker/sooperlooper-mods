@@ -1039,6 +1039,23 @@ static inline bool onSyncGrid(long pos, long syncPos, unsigned long unit)
 #endif
 //------ albEnd ----------------------------------
 
+//------ albBegin ----------------------------------
+// ONESHOT_SLACK_FIX: compile-time safety switch for a STOCK bug.
+//
+// The problem: with Sync on and a tempo set, a Once (one-shot) pressed
+// less than an eighth after a pulse acts at once (the slack window), but
+// unlike Trigger it started the loop from the top without allowing for
+// the time since the pulse, so the whole pass played that much behind the
+// beat (up to an eighth; measured in the harness,
+// testdef_oneshot_slack.py).
+//
+// The change: start as far in as the press is past the pulse, as Trigger
+// does (with SYNC_COUNT_OFF_BY_ONE_FIX's count + 1): a late press sounds
+// like an on-time one with the first moment skipped.  A Once that waits
+// for the pulse is unchanged.  Set to 0 for stock.
+#define ONESHOT_SLACK_FIX 1
+//------ albEnd ----------------------------------
+
 
 // reads loop audio into buffer, up to frames length, starting from loop_offset.  if fewer frames are
 // available returns amount read.  if 0 is returned loop is done.
@@ -5091,6 +5108,21 @@ runSooperLooper(LADSPA_Handle Instance,
 					      loop->dCurrPos = (loop->lLoopLength - loop->lSyncPos)  + fSyncOffsetSamples;
 				      else
 					      loop->dCurrPos = (loop->lLoopLength - loop->lSyncPos) - 1 - fSyncOffsetSamples;
+				      //------ albBegin ----------------------------------
+#if ONESHOT_SLACK_FIX
+				      // ONESHOT_SLACK_FIX (see its comment block near the top
+				      // of this file): acting at once in the slack window,
+				      // start as far in as the press is past the pulse (the
+				      // count + 1, read before this block's first sample), as
+				      // Trigger does, so the pass is in time with the beat.
+				      if (fSyncMode >= 1.0f && pLS->lSamplesSinceSync < eighthSamples) {
+					      if (pLS->fCurrRate > 0)
+						      loop->dCurrPos += pLS->lSamplesSinceSync + 1;
+					      else
+						      loop->dCurrPos -= pLS->lSamplesSinceSync + 1;
+				      }
+#endif
+				      //------ albEnd ----------------------------------
 				      
 				      // wrap
 				      loop->dCurrPos = fmod(loop->dCurrPos, loop->lLoopLength);
