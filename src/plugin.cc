@@ -942,6 +942,33 @@ static inline bool onSyncGrid(long pos, long syncPos, unsigned long unit)
 #define REL_SYNC_POS_FIX 1
 //------ albEnd ----------------------------------
 
+//------ albBegin ----------------------------------
+// SYNC_COUNT_OFF_BY_ONE_FIX: compile-time safety switch for a STOCK
+// off-by-one.
+//
+// The problem: lSamplesSinceSync is updated once per sample, so read
+// before a block's first sample (a command acting at once) or in
+// STATE_TRIG_START (which counts at the bottom) it is one less than the
+// distance from the pulse (the record late-hit already trims T + 1 for
+// this).  Two stock uses took it as the distance: a synced Trigger or
+// mute_trigger in the slack window (with a tempo set, pressed less than
+// an eighth after a pulse it acts at once, starting the loop
+// lSamplesSinceSync in) came back one sample late; and a Rel Sync
+// recording's sync position put its grid one sample late, so a restart
+// that waited for the pulse came back one sample early.  Measured in the
+// harness (testdef_sync_count_off_by_one.py).
+//
+// The change: add one at both: after the slack-window Trigger's
+// transitionToNext, and in the REL_SYNC_POS_FIX block (so this needs that
+// switch).  A restart that waits for the pulse is unchanged: it acts
+// inside the play loop after that sample's count update, where the count
+// is the distance (0 on the pulse).  Set to 0 for stock.
+#define SYNC_COUNT_OFF_BY_ONE_FIX 1
+#if SYNC_COUNT_OFF_BY_ONE_FIX && !REL_SYNC_POS_FIX
+#error "SYNC_COUNT_OFF_BY_ONE_FIX needs REL_SYNC_POS_FIX (its Rel Sync half is there)"
+#endif
+//------ albEnd ----------------------------------
+
 
 // reads loop audio into buffer, up to frames length, starting from loop_offset.  if fewer frames are
 // available returns amount read.  if 0 is returned loop is done.
@@ -5031,6 +5058,16 @@ runSooperLooper(LADSPA_Handle Instance,
 					prevstate = pLS->state;
 					
 					transitionToNext (pLS, loop, STATE_TRIGGER_PLAY);
+					//------ albBegin ----------------------------------
+#if SYNC_COUNT_OFF_BY_ONE_FIX
+					// Acting at once in the slack window: transitionToNext
+					// added the count, which here, before this block's first
+					// sample, is one less than its distance from the pulse.
+					if (fSyncMode >= 1.0f && pLS->lSamplesSinceSync < eighthSamples) {
+						loop->dCurrPos += (pLS->fCurrRate > 0) ? 1.0 : -1.0;
+					}
+#endif
+					//------ albEnd ----------------------------------
 
 					if (prevstate == STATE_RECORD || prevstate == STATE_TRIG_STOP) {
 						// we need to increment loop position by output latency (+ IL ?)
@@ -5191,7 +5228,12 @@ runSooperLooper(LADSPA_Handle Instance,
 					  // of this file): from the nearer boundary, signed.
 					  {
 						  const long unit = 2 * (long) syncSamples;
+#if SYNC_COUNT_OFF_BY_ONE_FIX
+						  // The distance since the boundary is the count + 1.
+						  const long since = (long) pLS->lSamplesSinceSync + 1;
+#else
 						  const long since = (long) pLS->lSamplesSinceSync;
+#endif
 						  loop->lOrigSyncPos = loop->lSyncPos =
 							  (unit > 0 && since >= unit / 2) ? since - unit : since;
 					  }

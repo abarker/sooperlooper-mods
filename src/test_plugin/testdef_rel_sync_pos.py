@@ -69,9 +69,9 @@ class RelSyncPosTestCase(RelSyncLateHitTestCase):
         return offs
 
     def assertSyncPos(self, phase, ch=0):
-        """lSyncPos is the count since the boundary (which reads one less
-        than the press's phase) from the nearer boundary."""
-        since = phase - 1
+        """lSyncPos is the distance since the boundary (the press's phase;
+        SYNC_COUNT_OFF_BY_ONE_FIX) from the nearer boundary."""
+        since = phase
         expected = since if since < CYCLE // 2 else since - CYCLE
         self.assertEqual(self.looper.get_channel_sync_pos(ch), expected)
 
@@ -92,11 +92,8 @@ class TestRelSyncPos(RelSyncPosTestCase):
         self.wait_cycles(1.3)
         self.engine.request(command)
         self.wait_state("Playing", units=2)
-        # Within the Rel Sync grid's one sample (stock, the count reads
-        # one less than the distance).
         offs = self.playback_offsets()
-        self.assertTrue(offs <= {0, CYCLE - 1},
-                        f"restart out of phase by {sorted(offs)} samples")
+        self.assertEqual(offs, {0}, f"restart out of phase by {sorted(offs)} samples")
 
     def testQuarter1_MuteTrigger(self):
         self.restartInPhase(0, "MUTE_TRIGGER")
@@ -129,9 +126,9 @@ class TestRelSyncPos(RelSyncPosTestCase):
     def testOwnBoundariesOnBarLines_EachQuarter(self):
         for q in range(4):
             with self.subTest(quarter=q):
-                self.assertEqual(self.ownBoundaries(q), {1},
+                self.assertEqual(self.ownBoundaries(q), {0},
                                  "with Sync off the loop's boundaries should stay on the"
-                                 " bar lines (the Rel Sync grid's one sample late)")
+                                 " bar lines")
                 self.engine.request("UNDO_ALL")
                 self.looper.set_port(test_engine.Sync, 2.0)
                 self.wait_cycles(2)
@@ -147,7 +144,7 @@ class TestRelSyncPosNoTempo(RelSyncPosTestCase):
         for q in range(4):
             with self.subTest(quarter=q):
                 phase = self.record_at_phase(*QUARTERS[q], cycles=1)
-                self.assertEqual(self.looper.get_channel_sync_pos(0), phase - 1)
+                self.assertEqual(self.looper.get_channel_sync_pos(0), phase)
                 self.engine.request("UNDO_ALL")
                 self.wait_cycles(1)
 

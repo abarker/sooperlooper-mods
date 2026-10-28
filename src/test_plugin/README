@@ -137,6 +137,12 @@ testdef_rel_sync_pos.py
     own boundaries stay on the bar lines; no tempo unchanged; stereo
     channels alike.
 
+testdef_sync_count_off_by_one.py
+    Tests for SYNC_COUNT_OFF_BY_ONE_FIX: with a tempo set, every synced
+    Trigger or mute_trigger restart plays the loop exactly in phase,
+    plain Sync and Rel Sync, pressed in the slack window (acting at once)
+    or waiting for the pulse, and repeated restarts stay in phase.
+
 testdef_signed_sync_pos.py
     Tests for SIGNED_SYNC_POS_FIX: with Sync off, a Rel Sync loop whose
     sync position is negative (an early start pressed just after a pulse)
