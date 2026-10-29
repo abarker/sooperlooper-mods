@@ -101,11 +101,12 @@ item links to its full description.
   an empty loop, or one started from Mute or Pause.  See
   `New Feature: record failsafe`_.
 
-- **Five settings, one place.** ``late_hit_window_ms``,
+- **Six settings, one place.** ``late_hit_window_ms``,
   ``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds``,
-  ``mute_late_hit_ms`` and ``rel_sync_preroll_ms`` are all saved in the session
-  file's ``<Globals>`` line, and can be read and set live over OSC.  See
-  `Record Late-Hit Window Size`_ and `OSC Control`_.
+  ``mute_late_hit_ms``, ``rel_sync_preroll_ms`` and ``sync_preroll_ms``
+  are all saved in the session file's ``<Globals>`` line, and can be read
+  and set live over OSC.  See `Record Late-Hit Window Size`_ and `OSC
+  Control`_.
 
 .. rubric:: Tools
 
@@ -201,6 +202,13 @@ item links to its full description.
   ends it there at once, instead of recording another whole cycle: Record,
   Overdub, or a quantized Mute or ``mute_trigger``.  See `Rel Sync
   Recordings`_.
+
+- **Sync pre-roll** (``SYNC_PREROLL``, new in this fork, on in this
+  build, inactive until ``sync_preroll_ms`` is set).  A plain Sync
+  recording keeps the ``sync_preroll_ms`` just before the boundary it
+  starts on, so a strum attack or pickup played just ahead of the one is
+  in the loop, and it ends as much before its closing boundary, so it is
+  still a whole number of cycles.  See `Sync Pre-Roll`_.
 
 - **No crash when a pending stop outlasts the loop memory**
   (``TRIG_STOP_MEMORY_FIX``, on by default).  A recording waiting for its
@@ -433,6 +441,40 @@ exactly as the unpatched version.
 
 How the start and stop corrections work inside the engine is in
 `Late-Hit Record Start and Stop: Implementation`_ in the appendix.
+
+Sync Pre-Roll
+~~~~~~~~~~~~~
+
+A plain Sync recording starts exactly on the boundary, so anything played
+just before it -- a strum whose attack comes a little ahead of the one, a
+pickup into the first bar -- is not in the loop.  With
+``sync_preroll_ms`` set, the recording starts that much before the
+boundary instead, taking the audio from SooperLooper's continuous input
+history, and ends the same amount before its closing boundary, so it is
+still a whole number of cycles.  The pre-roll plays just before each
+boundary on every pass, as it was played the first time.
+
+* On the first time round after the stop, playback joins the loop that
+  far in: that stretch was just played live.
+* What was played in the last ``sync_preroll_ms`` before the closing
+  boundary is replaced by the loop's own pre-roll.  Usually that is the
+  pickup into the next round, which is what should repeat.
+* Both starts get it: a Record that waits for the boundary, and a late
+  Record start just after it.  Every end allows for it: on the boundary,
+  and the late stop by Record or by any other command.
+* A recording that does not start on a boundary (Quantize Off or Loop
+  with Sync on) has no pre-roll; nor does one whose pre-roll, plus how
+  late a late start came, is more than the input history holds (about
+  682 ms at 48 kHz).
+* Default 0: no pre-roll.  Negative values are refused: a loop starting
+  after the one is a different mechanism (in effect Rel Sync with a fixed
+  offset), not provided.
+* From the code, not tried: a loop saved to a file and loaded again
+  loses its pre-roll offset and plays as if it started on the boundary,
+  ``sync_preroll_ms`` early.
+
+Set ``sync_preroll_ms`` like the other settings: in the session file's
+``<Globals>`` line, or over OSC with ``/set`` (see `OSC Control`_).
 
 Rel Sync Recordings
 -------------------
@@ -817,9 +859,10 @@ fraction alone governs at all normal tempos.
 OSC Control
 ~~~~~~~~~~~
 
-All five settings -- ``late_hit_window_ms``,
+All six settings -- ``late_hit_window_ms``,
 ``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds``,
-``mute_late_hit_ms`` and ``rel_sync_preroll_ms`` -- can be read and changed while SooperLooper runs,
+``mute_late_hit_ms``, ``rel_sync_preroll_ms`` and ``sync_preroll_ms`` --
+can be read and changed while SooperLooper runs,
 with the same global OSC ``/set`` and ``/get`` messages used for ``tempo``,
 ``eighth_per_cycle`` and the other ``<Globals>`` values:
 
@@ -1337,6 +1380,19 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
      - Compile-time initial value for ``g_rel_sync_preroll_ms``, the extra
        early start added to the trigger latency.  Overridden at runtime
        by the session file or OSC ``/set``.
+   * - ``SYNC_PREROLL``
+     - ``plugin.hpp``
+     - ``1``
+     - New behaviour, on in this build for trial, inactive while
+       ``sync_preroll_ms`` is 0: a plain Sync recording that starts on a
+       boundary starts ``sync_preroll_ms`` before it and ends as much
+       before its closing boundary (see `Sync Pre-Roll`_).  Set to 0 for
+       the previous behaviour.
+   * - ``SYNC_PREROLL_MS_DEFAULT``
+     - ``plugin.cc``
+     - ``0.0f``
+     - Compile-time initial value for ``g_sync_preroll_ms``.  Overridden
+       at runtime by the session file or OSC ``/set``.
    * - ``TRIG_STOP_MEMORY_FIX``
      - ``plugin.cc``
      - ``1``
