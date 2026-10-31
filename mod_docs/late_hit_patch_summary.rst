@@ -48,22 +48,22 @@ item links to its full description.
 - **Pause from Mute fix.** With mute-quantize on, pressing Pause while Muted
   now ends up Paused, as it already does without quantize; stock 1.7.9 ends
   up Playing.  Controlled by the ``PAUSE_FROM_MUTE_FIX`` build flag (on).
-  See `Quantized Pause from Muted Now Resolves to Paused`_ in the appendix.
+  See `Pause from Mute Fix`_ in the appendix.
 
 - **Restart timing fix.** A restart (``trigger``, or ``mute_trigger``
   from Mute) or a oneshot (``once``) now plays the loop in time.  Stock
   1.7.9 starts it late by the input plus output latency (31 ms at
   743/743), with sync on too, so the loop then sits that far behind the
   drums until the next restart.  Controlled by the
-  ``RESTART_POSITION_FIX`` build flag (on).  See `Restarts Now Play in
-  Time`_ in the appendix.
+  ``RESTART_POSITION_FIX`` build flag (on).  See `Restart Position
+  Fix`_ in the appendix.
 
 - **Multiply end fix.** A multiplied loop no longer drops out just before
   its start on every pass: stock 1.7.9 leaves the last input plus output
   latency of the new loop (31 ms at 743/743) unrecorded.  The loop also
   plays in time after a late Multiply end, which this fork's correction
   had left late.  Controlled by the ``MULTIPLY_END_FIX`` build flag (on).
-  See `Multiplied Loops Now End Cleanly`_ in the appendix.
+  See `Multiply End Fix`_ in the appendix.
 
 - **Adjustable window.** How late a press can be and still count as on
   time is set in milliseconds, optionally also capped at a fraction of the
@@ -1333,8 +1333,8 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
      - ``1``
      - When 1 (default), a stock 1.7.9 bug fix is active: quantized
        Pause from Muted correctly resolves to Paused instead of
-       Playing (see `Quantized Pause from Muted Now Resolves to
-       Paused`_ in the appendix, below).  Set to 0 to revert to exact stock (buggy)
+       Playing (see `Pause from Mute Fix`_
+       in the appendix, below).  Set to 0 to revert to exact stock (buggy)
        behavior.  Unlike the other flags/globals here, this is a bug
        fix with an escape hatch, not a tunable parameter -- no
        session-file or OSC equivalent.
@@ -1443,8 +1443,8 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
      - ``1``
      - When 1 (default), a stock 1.7.9 bug fix is active: a trigger into
        play or a oneshot starts input + output latency into the loop, as
-       playback after a record does, so it is heard in time (see `Restarts
-       Now Play in Time`_ in the appendix).  Set to 0 to revert to stock
+       playback after a record does, so it is heard in time (see `Restart
+       Position Fix`_ in the appendix).  Set to 0 to revert to stock
        behavior.  A bug fix with an escape hatch, not a tunable: no
        session-file or OSC equivalent.  Unrelated to the
        ``trigger_latency`` setting.
@@ -1454,7 +1454,7 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
      - When 1 (default), a stock 1.7.9 bug fix is active: a Multiply end
        finishes when recording, not playback, reaches the loop's end, so
        the new loop is recorded to its end, and playback carries on in
-       time (see `Multiplied Loops Now End Cleanly`_ in the appendix).
+       time (see `Multiply End Fix`_ in the appendix).
        It also corrects this fork's late Multiply end, which played late.
        Set to 0 to revert to stock behavior, and to the old late Multiply
        end.  A bug fix with an escape hatch, not a tunable: no
@@ -1973,8 +1973,8 @@ unlinked from the undo history, so ``redo`` cannot bring it back.  Tests:
 ``testdef_cancel_overdub_undo.py``, one per case above, each checking the
 loop's audio, including after ``redo``.
 
-Quantized Pause from Muted Now Resolves to Paused
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Pause from Mute Fix
+~~~~~~~~~~~~~~~~~~~
 
 **A stock SooperLooper 1.7.9 bug, not introduced by this fork.**
 
@@ -1996,8 +1996,8 @@ second in ``transitionToNext()``'s ``STATE_PAUSED`` case.
 (``plugin.cc``, default ``1``).  Set it to ``0`` and rebuild to revert to
 stock behavior.  Regression tests: ``testdef_pause_from_mute.py``.
 
-Restarts Now Play in Time
-~~~~~~~~~~~~~~~~~~~~~~~~~
+Restart Position Fix
+~~~~~~~~~~~~~~~~~~~~
 
 **A stock SooperLooper 1.7.9 bug, not introduced by this fork** -- stock
 1.7.9 and this fork behaved identically before the fix, measured on a
@@ -2046,8 +2046,8 @@ of its eleven tests fail with the flag at 0; the other four guard a
 trigger or oneshot that ends a record, a oneshot still ending Muted, and
 zero latency).
 
-Late-Hit Takes Now Match On-Time Ones
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Late-Hit Take Length and Fades Fix
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **A bug in this fork's late-hit code, fixed.**  A late Record start or
 stop now gives the same loop an on-time press would: the same length, to
@@ -2087,8 +2087,8 @@ tests: ``TestLateHitExact`` in ``testdef_late_hit.py``, three of whose four
 tests fail on the old code.  The harness gained an option for
 single-sample sync pulses (``sync_inject_single``) for them.
 
-Multiplied Loops Now End Cleanly
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Multiply End Fix
+~~~~~~~~~~~~~~~~
 
 **A stock SooperLooper 1.7.9 bug, with a form of it in this fork's late
 Multiply end** -- stock 1.7.9 and this fork with the fix switched off
@@ -2096,7 +2096,7 @@ behaved identically for the stock part, measured on a dummy JACK server.
 
 **The bug.**  While multiplying, SooperLooper records input plus output
 latency (IL + OL) behind the play position, as it does after a record (see
-`Restarts Now Play in Time`_).  A Multiply end that finishes at the end of
+`Restart Position Fix`_).  A Multiply end that finishes at the end of
 the new loop -- with Round on, or when the end waits for a sync boundary
 -- finished when the play position got there, with recording still IL +
 OL short of it.  So:
@@ -2125,7 +2125,7 @@ filled from the original as playback passes it; playback now skips that
 stretch, so the finish fills it.  A late Multiply end finishes at once,
 since recording is already past the boundary, and the input that followed
 the boundary is faded into the loop's start, as after a late Record stop
-(see `Late-Hit Takes Now Match On-Time Ones`_).  The finish is one small
+(see `Late-Hit Take Length and Fades Fix`_).  The finish is one small
 function, ``finishRoundedMultiply()``, used by both.
 
 **What you hear.**  No dropout at the end of a multiplied loop, and the
@@ -2614,7 +2614,7 @@ Known Issues and Future Work
 -  **Playback sync plays loops late (stock bug, not fixed yet).**
    With ``playback_sync`` on, SooperLooper snaps a playing loop to the top
    of its buffer at a sync point, without the input plus output latency
-   offset that the restart fix adds (see `Restarts Now Play in Time`_).
+   offset that the restart fix adds (see `Restart Position Fix`_).
    Measured on stock and on this fork: every loop then plays exactly the
    input plus output latency behind the beat (31 ms at 743/743), from its
    first repeat on.  Leave ``playback_sync`` off until it is fixed.
@@ -2641,8 +2641,8 @@ Known Issues and Future Work
    same input history limits the sync pre-roll.
 
 -  **Multiply end:** the late-hit correction is tested on a dummy JACK server,
-   together with the ``MULTIPLY_END_FIX`` fix (see `Multiplied Loops Now End
-   Cleanly`_) (disable with ``LATE_HIT_MULTIPLY_CORRECTION 0`` if
+   together with the ``MULTIPLY_END_FIX`` fix (see `Multiply End
+   Fix`_) (disable with ``LATE_HIT_MULTIPLY_CORRECTION 0`` if
    regressions appear).  On the rig, with sync boundaries every beat and a
    4-beat loop cycle, it fired after any beat: a press just after a beat
    inside a cycle took back a cycle that had not just been added, so the

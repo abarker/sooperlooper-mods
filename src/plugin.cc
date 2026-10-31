@@ -2938,8 +2938,9 @@ runSooperLooper(LADSPA_Handle Instance,
   }
   // C1 fix: when fTempo is known and sync is active, override
   // lLastSyncPeriodSamples with the authoritative tempo-derived value.
-  // The pulse scanner (BLOCK 8) can be polluted by loop-coordination 2.0f
-  // events that arrive in quick succession at state transitions (recording
+  // The pulse scanner (the lGlobalSamplesSinceSync loop further on) can be
+  // polluted by loop-coordination 2.0f events that arrive in quick
+  // succession at state transitions (recording
   // end, undo, etc.) and can leave lLastSyncPeriodSamples at a tiny value
   // that effectively disables the late-hit window for subsequent presses.
   // Computing directly from fTempo is immune to this and tracks live
@@ -3450,8 +3451,10 @@ runSooperLooper(LADSPA_Handle Instance,
 	  // almost certainly loop-coordination 2.0f events at state transitions
 	  // (recording end, undo, etc.), not true tempo-clock boundaries.  The
 	  // floor prevents those from corrupting lLastSyncPeriodSamples.
-	  // When fTempo > 0 the authoritative value set in BLOCK 7 supersedes
-	  // anything written here, so the floor only matters when fTempo == 0.
+	  // When fTempo > 0 the tempo-derived value (C1 fix, above) is set again
+	  // at the start of the next buffer, replacing anything written here, so
+	  // the floor only matters when fTempo == 0.  (Within this buffer a
+	  // press still sees the pulse-measured value: review item C1a, open.)
 	  const unsigned long lMinPlausiblePeriod =
 	      (unsigned long)(pLS->fSampleRate / 40.0f);
 	  for (unsigned long n = 0; n < SampleCount; ++n) {
@@ -3498,7 +3501,7 @@ runSooperLooper(LADSPA_Handle Instance,
 	   // Capture whether this press is interrupting an actively playing,
 	   // unmuted loop -- BEFORE the switch below changes pLS->state to
 	   // STATE_RECORD or STATE_TRIG_START.  Read later by the
-	   // record_failsafe gate ahead of the remap chain (BLOCK 0 area).
+	   // record_failsafe counter ahead of the remap chain.
 	   // See plugin.hpp's comment on the field.
 	   pLS->bRecordEnteredFromActivePlay =
 	       (pLS->state == STATE_PLAY || pLS->state == STATE_ONESHOT);
@@ -3560,7 +3563,7 @@ runSooperLooper(LADSPA_Handle Instance,
 			      // trimming to the pulse gave a loop that was not a whole number
 			      // of cycles.
 			      // C2 fix: bLateHitBypassed prevents late-hit firing on slave
-			      // channels in internal sync mode; see Looper::run() BLOCK 5.
+			      // channels in internal sync mode; it is set in Looper::run().
 			      bool stopWithinWindow = (T > 0
 			                               && T <= shiftSamples
 			                               && fSyncMode == 1.0f
@@ -3742,8 +3745,8 @@ runSooperLooper(LADSPA_Handle Instance,
 		 // window press the loop is backfilled and recording starts immediately.
 		 // STATE_TRIG_START remains the fallback for out-of-window presses,
 		 // preserving stock behaviour for normal (on-time) presses.
-		 // NOTE: the { on the next line adds the scope that BLOCK 10 requires
-		 // for its local variables.  Stock default: had no surrounding brace.
+		 // NOTE: the { on the next line adds the scope that the late-start
+		 // block below requires for its local variables.  Stock default: had no surrounding brace.
 		 {
 		 // Late-start window check: when RECORD is first pressed (from any state
 		 // other than STATE_RECORD/STATE_MULTIPLY/etc.), check if the press arrived
@@ -3768,7 +3771,7 @@ runSooperLooper(LADSPA_Handle Instance,
 		 // starts where it is pressed and its offset from the pulse is the
 		 // point; moving the start back to the pulse would defeat that.
 		 // C2 fix: bLateHitBypassed prevents late-hit firing on slave
-		 // channels in internal sync mode; see Looper::run() BLOCK 5.
+		 // channels in internal sync mode; it is set in Looper::run().
 		 // The backfill reads T + 1 samples back from this block in the
 		 // input ring, which this block has already partly overwritten.
 		 bool withinWindow = (T > 0
@@ -4131,7 +4134,7 @@ runSooperLooper(LADSPA_Handle Instance,
 						      const bool boundaryIsCycleStart =
 							      labs (sinceCycle - cycleFromBoundary) <= (long) (shiftSamples / 2);
 						      // C2 fix: bLateHitBypassed prevents late-hit firing on slave
-						      // channels in internal sync mode; see Looper::run() BLOCK 5.
+						      // channels in internal sync mode; it is set in Looper::run().
 						      // Rel Sync fix: fSyncMode == 1 only, as for the record
 						      // start and stop (Rel Sync is 2).
 						      bool multStopInWindow = (T > 0

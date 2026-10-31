@@ -407,14 +407,15 @@ typedef struct {
 	//------ albBegin ----------------------------------
 	// C2 fix: per-channel bypass flag set by Looper::run() each buffer.
 	// True on slave channels (index > 0) when the loop uses its own
-	// sync buffers (internal sync mode).  Gates the three withinWindow
-	// checks in BLOCKS 9, 10, 11 of plugin.cc: when true, the late-hit
+	// sync buffers (internal sync mode).  Gates the three late-hit window
+	// checks in plugin.cc (withinWindow, stopWithinWindow,
+	// multStopInWindow): when true, the late-hit
 	// correction is skipped, preventing stereo divergence between a
 	// master channel (fSyncMode=0, always immediate) and its slave
 	// (fSyncMode=1, late-hit could otherwise fire).
 	// In JACK sync mode this flag is always false: zero JACK regression
-	// risk.  calloc() zeroes the struct so default is false; BLOCK 6
-	// in plugin.cc also sets it explicitly for clarity.
+	// risk.  calloc() zeroes the struct so default is false;
+	// activateSooperLooper() also sets it explicitly for clarity.
 	bool bLateHitBypassed;
 	//------ albEnd ----------------------------------
 
@@ -434,7 +435,7 @@ typedef struct {
 	// MULTI_RECORD case of plugin.cc's remap chain -- before the inner
 	// switch(state) dispatches, so it is correct regardless of which path
 	// (immediate late-hit entry or deferred STATE_TRIG_START) the press
-	// then takes. Gates the record_failsafe counter (BLOCK 0 area,
+	// then takes. Gates the record_failsafe counter (runSooperLooper(),
 	// ahead of the remap chain): the failsafe now only ever fires for a
 	// record that cut off a playing take, not a first/fresh recording
 	// from an empty loop.

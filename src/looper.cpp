@@ -223,8 +223,8 @@ Looper::initialize (unsigned int index, unsigned int chan_count, float loopsecs,
 	//   _slave_sync_port = (_relative_sync && ports[Sync]) ? 2.0f : 1.0f;
 	// CHANGE: trailing 1.0f → ports[Sync] so the initial value is
 	// consistent with the per-loop Sync port (0 at construction = sync
-	// off by default, matching the user checkbox).  See BLOCK 4 in run()
-	// for the same fix applied to the per-buffer refresh path.
+	// off by default, matching the user checkbox).  See the
+	// _slave_sync_port refresh in run() for the same fix applied per buffer.
 	_slave_sync_port = (_relative_sync && ports[Sync]) ? 2.0f : ports[Sync];
 	//------ albEnd ----------------------------------
 
@@ -1173,8 +1173,8 @@ Looper::run (nframes_t offset, nframes_t nframes)
 	// L/R divergence of up to g_late_hit_window_ms on the stereo pair.
 	//
 	// Fix: when in internal sync mode, set bLateHitBypassed=true on all
-	// slave instances so the withinWindow checks in BLOCKS 9, 10, 11 of
-	// plugin.cc evaluate to false.  Both channels then take the immediate
+	// slave instances so the late-hit window checks in plugin.cc
+	// (withinWindow, stopWithinWindow, multStopInWindow) evaluate to false.  Both channels then take the immediate
 	// path — identical to stock SooperLooper behaviour, which already
 	// achieves sample-accurate alignment via the master's pfSyncOutput
 	// pulse on STATE_RECORD entry.
@@ -1248,9 +1248,9 @@ Looper::run (nframes_t offset, nframes_t nframes)
 //   bSyncPulseReceived  = false  -> withinWindow stays false until a
 //                                   real pulse from the new source arrives
 //   lGlobalSamplesSinceSync = 0  -> T = 0 on first press; no correction
-//   lLastSyncPeriodSamples  = ULONG_MAX  -> sentinel; BLOCK 7 reseeds
-//                                   from fTempo on the very next buffer
-// bLateHitBypassed is NOT reset here: BLOCK 5 in run() overwrites it
+//   lLastSyncPeriodSamples  = ULONG_MAX  -> sentinel; runSooperLooper()
+//                                   reseeds it from fTempo on the very next buffer
+// bLateHitBypassed is NOT reset here: run() above overwrites it
 // unconditionally on every buffer, so it self-corrects within 10 ms.
 void
 Looper::reset_late_hit_state()
