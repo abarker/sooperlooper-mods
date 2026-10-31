@@ -1565,12 +1565,15 @@ Where the Changes Are in the Source
 | **Modified files:** ``src/plugin.cc``, ``src/plugin.hpp``, ``src/engine.cpp``,
 | ``src/engine.hpp``, ``src/looper.cpp``, ``src/looper.hpp``, ``src/audio_driver.hpp``,
 | ``src/jack_audio_driver.hpp``, ``src/jack_audio_driver.cpp``, ``src/event.hpp``,
-| ``src/command_map.cpp``, ``src/event.cpp``, and some test files in
-| ``src/test_plugin``.
+| ``src/command_map.cpp``, ``src/event.cpp``, ``src/control_osc.cpp``,
+| ``src/control_osc.hpp``, ``src/slconsole.cpp``, ``src/sooperlooper.cpp``,
+| several files in ``src/gui/``, and some test files in ``src/test_plugin``.
 | **New files** (not modifications, so not listed above) are documented in
 | their own sections: ``src/big_state_display/`` in `New Tool: slbigstate`_,
-| ``src/beat_tracker.hpp`` in `JackSync Beat Tracking`_, new test files in
-| `Test Suite`_.
+| ``src/beat_tracker.hpp`` and its tests in ``src/test_beat_tracker/`` in
+| `JackSync Beat Tracking`_, ``tools/sllatency.py`` in `New Tool: sllatency`_,
+| the build scripts (``ubuntu_compile.bash``, ``windows/``) in
+| `What This Patch Adds at a Glance`_, new test files in `Test Suite`_.
 | **Version:** ``1.7.9-mods.N``, set by ``BETA=-mods.N`` in ``configure.ac``
 | (stock leaves ``BETA`` empty).  Configure puts it into ``version.h``'s
 | ``sooperlooper_version``, so it shows in slgui's title, About box and
@@ -1633,8 +1636,8 @@ first-play handling is needed.
 
 **Gating.**  All new code paths are gated by ``withinWindow`` /
 ``stopWithinWindow`` / ``multStopInWindow``.  These flags are false when the
-press is on time, when sync is off (``fSyncMode == 0``), or when no sync
-pulse has arrived recently (*T* exceeds the window), and the engine then
+press is on time, when sync is off or Rel Sync (``fSyncMode`` 0 or 2), or
+when no sync pulse has arrived recently (*T* exceeds the window), and the engine then
 behaves identically to the unpatched version.  Quantize mode is not a
 condition.
 
@@ -1694,8 +1697,8 @@ loop's content is already sitting at the correct phase throughout), so
 this is a pure branch-selection decision -- immediate vs. wait -- not a
 backfill/trim operation.
 
-Same non-LADSPA-port mechanism as the other three globals (see `Why Not
-a LADSPA Port`_ below): a plain ``extern`` global, saved/loaded as the
+Same non-LADSPA-port mechanism as the other settings globals (see `Why
+Not a LADSPA Port`_ below): a plain ``extern`` global, saved/loaded as the
 ``mute_late_hit_ms`` property in the ``<Globals>`` node by
 ``engine.cpp``'s ``save_session``/``load_session``.
 
@@ -1742,9 +1745,10 @@ measured with a mic on its switch showed the command 685 samples after the
 press at 256 frames, so that was removed.)  ``TriggerLatency`` is read only
 where overdub, multiply and insert (and replace and substitute, through
 overdub) start taking input (``lFramesUntilInput = input_latency −
-trigger_latency``); plain record, the end of an overdub, mute and trigger
-do not use it.  The setup guide's "Trigger latency" section says what value
-to use.
+trigger_latency``), and where a Rel Sync record that starts at the press
+takes its early start (see `Rel Sync Recordings`_); a plain Sync record,
+the end of an overdub, mute and trigger do not use it.  The setup guide's
+"Trigger latency" section says what value to use.
 
 **MIDI clock on the JACK MIDI input.**  Clock, Start and Stop messages on
 ``midi_in`` go through the same path as commands, into SooperLooper's MIDI
@@ -1972,55 +1976,25 @@ loop's audio, including after ``redo``.
 Quantized Pause from Muted Now Resolves to Paused
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**A stock SooperLooper 1.7.9 bug, not introduced by this fork** --
-confirmed present verbatim in the untouched upstream reference copy
-kept in this tree. Found by accident while testing the mute/unmute
-late-hit feature earlier in this document, then fixed on its own merits since it is
-unrelated to late-hit correction.
+**A stock SooperLooper 1.7.9 bug, not introduced by this fork.**
 
-**The bug:** with mute-quantize on and sync active, pressing Pause while
-a loop is Muted has to wait for the next sync boundary before acting --
-the same "wait for sync" mechanism mute-quantize always uses. Once that
-boundary arrived, the loop ended up **Playing**, not **Paused**. The
-performer pressed Pause and got audible playback instead.
+**The bug.**  With mute-quantize on and sync active, Pause pressed while a
+loop is Muted waits for the next sync boundary, as mute-quantize always
+does.  At the boundary the loop ended up Playing, not Paused.  Acting at
+once (mute-quantize or sync off), the same press goes to Paused, and Mute
+pressed while Paused goes back to Muted; the deferred version handled only
+the second of these.
 
-**Why this was confidently a bug, not intended behavior:** SooperLooper
-already handles this exact transition correctly when it acts
-*immediately* (mute-quantize off, or sync/quantize off) -- pressing
-Pause while Muted goes straight to Paused, explicitly, and the reverse
-(pressing Mute while Paused) goes straight back to Muted, also
-explicitly. Both directions, named in the code, deliberate. The
-*deferred* "wait for sync" version of the same logic only implemented
-one of those two symmetric directions; the other silently fell through
-to the same generic branch used for an ordinary unmute. Quantization is
-only supposed to delay *when* an action happens, never change *what*
-the action resolves to -- a deferred press and an immediate press
-pressing the same button in the same state should always end up in the
-same place, just possibly later. Implementing only one of two mirrored
-cases the code already implements immediately above is the signature of
-an omission made when that deferred branch was originally written, not
-a deliberate design choice.
+**The fix.**  The missing case is added, so a deferred Pause from Muted
+resolves to Paused.  The flag that records whether the loop was muted
+before it changed state is also set correctly for it, so an Undo fired
+while paused resumes Muted rather than Playing.  About four lines: the
+first in the ``MULTI_MUTE`` / ``MULTI_PAUSE`` case's wait for sync, the
+second in ``transitionToNext()``'s ``STATE_PAUSED`` case.
 
-**The fix has two parts.** The obvious one -- adding the missing case so
-a deferred Mute->Pause resolves to Paused -- turned out to have a
-non-obvious second half: the engine also tracks whether a loop *was*
-muted before it changed state, so that a later Undo can correctly put it
-back in Mute rather than Play. That tracking needed fixing too, or the
-primary fix alone would have landed in the right state but with an Undo
-fired later resuming to the wrong place. Both parts sit inside the same
-generic function the engine already uses for every other deferred state
-transition, so the fix is small and self-contained -- about four lines
-total, not counting the safety switch below.
-
-**Guarded by a compile-time flag, off if wanted.** ``PAUSE_FROM_MUTE_FIX``
-(``plugin.cc``, default ``1``) wraps both parts, matching
-``LATE_HIT_MULTIPLY_CORRECTION``'s own established role in this file: a
-correction with its own independent escape hatch, in case it ever needs
-pulling without touching anything else. Set it to ``0`` and rebuild to
-revert to exact stock (buggy) behavior. This is compile-time, not a
-session-file/OSC value like the four late-hit globals -- there is nothing to
-tune, only a bug to have fixed or not, so a rebuild-time switch fits
-better than a runtime one.
+**Guarded by a compile-time flag.**  ``PAUSE_FROM_MUTE_FIX``
+(``plugin.cc``, default ``1``).  Set it to ``0`` and rebuild to revert to
+stock behavior.  Regression tests: ``testdef_pause_from_mute.py``.
 
 Restarts Now Play in Time
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -2171,8 +2145,10 @@ and to the old late Multiply end.  Regression tests:
 ``testdef_multiply_end.py`` (three of its four tests fail with the flag at
 0; the fourth guards an end by Overdub).  They cover on-time ends, and a
 fifth (``TestLateEndMidCycle``) a late end just after a boundary inside a
-cycle, which must wait for the cycle's end; the late end at a cycle's
-start is covered by the dummy-server probes only.
+cycle, which must wait for the cycle's end.  The late end at a cycle's
+start is covered by ``TestSyncPrerollMultiply`` in
+``testdef_sync_preroll.py`` (with pre-roll on) and by the dummy-server
+probes.
 
 Why Not a LADSPA Port
 ~~~~~~~~~~~~~~~~~~~~~
@@ -2182,9 +2158,10 @@ allocates a float, calls ``connect_port()``, and ``plugin.cc`` reads it via a po
 ``SooperLooperI``. That is the correct mechanism for a value that needs full GUI exposure
 (a slider in ``slgui``) or push-on-change OSC updates.
 
-The four globals themselves -- ``g_late_hit_window_ms``,
-``g_late_hit_max_quant_unit_fraction``, ``g_record_failsafe_seconds``, and
-``g_mute_late_hit_ms`` -- are intentionally **not** LADSPA ports. Each is a plain
+The six settings globals -- ``g_late_hit_window_ms``,
+``g_late_hit_max_quant_unit_fraction``, ``g_record_failsafe_seconds``,
+``g_mute_late_hit_ms``, ``g_sync_preroll_ms`` and ``g_rel_sync_preroll_ms``
+-- are intentionally **not** LADSPA ports. Each is a plain
 file-scope global in ``plugin.cc``, declared ``extern`` in ``engine.cpp``, written during
 session load from the ``<Globals>`` node, and also reachable through the engine's generic
 ``/set``/``/get`` dispatch (see `OSC Control`_ earlier in this document). This still avoids
@@ -2192,11 +2169,11 @@ the LADSPA port descriptor table and ``slgui`` wiring. The trade-off is that it 
 in the standalone build where both translation units share an address space. When
 ``plugin.cc`` is loaded as a true LADSPA plugin inside a DAW, ``engine.cpp`` is absent and
 the value stays at the compile-time default for the session, which is acceptable
-behavior. If any of the four is ever promoted to a GUI control, the correct migration
+behavior. If any of the six is ever promoted to a GUI control, the correct migration
 path is to add a proper LADSPA port and remove the global.
 
 For OSC this is a smaller step than full exposure: no ``command_map.cpp``
-``add_global_control`` registration was added for any of the four, so none
+``add_global_control`` registration was added for any of the six, so none
 appear in ``slgui``, and ``/register_auto_update`` -- which keys a
 listener's registration off ``CommandMap::to_control_t()`` -- will not
 target them by name.  A negative value sent to ``/set`` is ignored by the
@@ -2214,9 +2191,9 @@ resolution status tracked explicitly.  It was written before most of its
 own findings were addressed, so it now reads as a closed-out historical
 record rather than a live list of concerns -- every CRITICAL item is
 either implemented or deliberately deferred with stated rationale.  It is
-kept, and referenced here, because two source-code comments (in
-``looper.cpp`` and ``plugin.cc``) cite specific findings by issue number,
-e.g. ``C1``.
+kept, and referenced here, because source-code comments in
+``looper.cpp`` and ``plugin.cc`` cite its findings by issue number
+(``C1`` fix, ``C2`` fix and so on).
 
 
 Glossaries
@@ -2239,8 +2216,11 @@ General Terminology
    * - sync mode (per channel)
      - Controls how a channel responds to a button press. Mode 0 (sync checkbox
        off) means "act immediately on the press." Mode 1 (sync checkbox on) means
-       "wait for the next sync boundary before acting." The late-hit correction only
-       activates in mode 1.
+       "wait for the next sync boundary before acting." Mode 2 (Rel Sync) starts a
+       record at the press and ends it a whole number of cycles later.  The
+       late-hit Record start and stop and the Multiply end correction only
+       activate in mode 1; Rel Sync has its own late stop (see `Rel Sync
+       Recordings`_).
    * - sync source
      - The signal that generates sync boundaries. Can be JACK Transport, MIDI
        clock, an internal tempo generator, or another loop channel. With no source
@@ -2382,45 +2362,45 @@ exists per loop channel.
    * - ``lGlobalSamplesSinceSync``
      - **[NEW]**
      - ``unsigned long long``
-     - Continuously-running sample counter that increments every sample in **all** engine
-       states and resets to zero on each sync pulse (``pfSyncInput[n] > 1.5``). Valid at
-       button-press time regardless of which state the engine is in. Contrast with the
-       pre-existing ``lSamplesSinceSync``, which only increments during ``STATE_RECORD``
-       and ``STATE_PLAY`` and is therefore useless at button-press time from
-       ``STATE_OFF``. Widened to ``unsigned long long`` (from ``unsigned int``) to
-       eliminate overflow at slow tempos or long gaps between syncs.
+     - Sample counter that increments every sample in **all** engine states while
+       the loop's Sync is on, and resets to zero on each sync pulse
+       (``pfSyncInput[n] > 1.5``).  Valid at button-press time regardless of which
+       state the engine is in. Contrast with the pre-existing ``lSamplesSinceSync``,
+       which only increments during ``STATE_RECORD`` and ``STATE_PLAY`` and is
+       therefore useless at button-press time from ``STATE_OFF``.  While Sync is off
+       it stops; switching Sync back on resets it (see `Late-Hit Correction
+       Robustness`_).
    * - ``bSyncPulseReceived``
      - **[NEW]**
      - ``bool``
-     - Set to ``true`` when the first sync pulse arrives after instantiation or after a
-       sync-source change. Guards against the startup case where
-       ``lGlobalSamplesSinceSync`` is counting "time since engine start" rather than
-       "time since last pulse." All three window conditions include
+     - Set to ``true`` when the first sync pulse arrives after instantiation, after a
+       sync-source change, or after Sync is switched back on. Guards against the
+       startup case where ``lGlobalSamplesSinceSync`` is counting "time since engine
+       start" rather than "time since last pulse." All three window conditions include
        ``&& pLS->bSyncPulseReceived``. Reset to ``false`` by ``reset_late_hit_state()``
-       on sync-source change.
+       on a sync-source change, and when Sync is switched back on.
    * - ``lLastSyncPeriodSamples``
      - **[NEW]**
      - ``unsigned long``
-     - Most recently measured full-cycle sync period in samples. Seeded from
-       ``fTempo`` every buffer (BLOCK 7, immune to loop-coordination pulse noise) and
-       updated from pulse measurement when a pulse passes the sanity floor (BLOCK 8).
-       Used by ``effectiveLateHitWindow()`` to compute the fraction cap. Initialized to
+     - The full-cycle sync period in samples, used by ``effectiveLateHitWindow()``
+       to compute the fraction cap.  When a tempo is set it is computed from
+       ``fTempo`` every buffer.  It is not simply measured between pulses because
+       the sync bus also carries loop-coordination pulses (2.0, above the 1.5
+       threshold) in quick bursts at state changes such as the end of a recording
+       or an undo, which made the measured period tiny and shut the window.  With
+       no tempo it is measured between pulses, ignoring any interval shorter than
+       a 32nd note at 300 BPM. Initialized to
        ``ULONG_MAX`` (sentinel meaning "no period known yet"); reset to ``ULONG_MAX``
-       by ``reset_late_hit_state()`` on sync-source change.
+       by ``reset_late_hit_state()`` on a sync-source change, and when Sync is
+       switched back on.
    * - ``bLateHitBypassed``
      - **[NEW]**
      - ``bool``
      - Set ``true`` by ``Looper::run()`` on slave channels (index > 0) when in internal
        loop-sync mode (one looper driving another). Prevents late-hit correction on those
        channels to avoid L/R divergence; both channels then behave identically using the
-       stock timing path. Set unconditionally each buffer by ``looper.cpp`` BLOCK 5 so it
-       self-corrects within one buffer period if sync mode changes.
-   * - ``bLateStartPending``
-     - removed
-     - ``bool``
-     - Was present in an earlier design where the late-stop correction applied a different
-       formula when preceded by a late start. That distinction was eliminated; the late-
-       stop formula is now the same regardless of whether the start was late. Removed.
+       stock timing path. Set every buffer by ``Looper::run()``, before the loops
+       run, so it follows a sync change within one buffer.
    * - ``lSamplesSinceSync``
      - pre-existing
      - ``unsigned long``
@@ -2464,20 +2444,11 @@ single channel for overdub layers.
      - Status
      - Type
      - Description
-   * - [STRIKEOUT:``lFirstPlayOffset``]
-     - removed
-     - ``unsigned long``
-     - Was present from an earlier design where the late-stop correction used a per-play
-       rewind. That design was abandoned; the field was always 0 and never read. Removed.
-   * - [STRIKEOUT:``hasFirstPlayOffset``]
-     - removed
-     - ``bool``
-     - Companion flag to ``lFirstPlayOffset``. Also always ``false``, never read. Removed.
    * - ``dCurrPos``
      - pre-existing
      - ``double``
      - Current read/write position within the loop buffer, in samples. In the late-stop
-       path this is advanced by *T* beyond the normal ``STATE_TRIG_STOP`` value to
+       path this is advanced by *T* + 1 beyond the normal ``STATE_TRIG_STOP`` value to
        compensate for entering ``STATE_PLAY`` *T* + 1 samples late in real time.
    * - ``lLoopLength``
      - pre-existing
@@ -2488,7 +2459,8 @@ single channel for overdub layers.
      - pre-existing
      - ``unsigned long``
      - Absolute start offset of this loop in ``pSampleBuf``. The backfill writes to
-       ``pSampleBuf[(lLoopStart + i) & lBufferSizeMask]`` for ``i`` in ``[0 .. T)``.
+       ``pSampleBuf[(lLoopStart + i) & lBufferSizeMask]`` for ``i`` in ``[0 .. T]``
+       (*T* + 1 samples).
 
 
 Buffer Variables (local to ``runSooperLooper()``)
@@ -2525,13 +2497,15 @@ Buffer Variables (local to ``runSooperLooper()``)
    * - ``withinWindow``
      - **[NEW]**
      - ``bool`` (local)
-     - Late-start gate: true when ``T > 0 && T ≤ shiftSamples && fSyncMode > 0 &&
-       bSyncPulseReceived && !bLateHitBypassed``. Quantize mode is not a condition; the
+     - Late-start gate: true when ``T > 0 && T ≤ shiftSamples && T + 1 + SampleCount ≤
+       lInputBufSize && fSyncMode == 1 && bSyncPulseReceived && !bLateHitBypassed``.
+       The third term keeps the backfill clear of the part of the input ring this
+       block has already overwritten.  Quantize mode is not a condition; the
        correction fires for any external sync source.
    * - ``stopWithinWindow``
      - **[NEW]**
      - ``bool`` (local)
-     - Late-stop gate: ``T > 0 && T ≤ shiftSamples && fSyncMode > 0 &&
+     - Late-stop gate: ``T > 0 && T ≤ shiftSamples && fSyncMode == 1 &&
        bSyncPulseReceived && loop ≠ NULL && !bLateHitBypassed``.
    * - ``trimmedLength``
      - **[NEW]**
@@ -2546,15 +2520,18 @@ Buffer Variables (local to ``runSooperLooper()``)
        ``lInputBufWritePos − (T + 1)``. The ``lInputLatency`` term that appears in the normal
        recording path is absent here: ``pfInputLatencyBuf`` stores samples written at
        physical time, and matching the sample that normal recording would have captured
-       from the sync boundary works out to ``lInputBufWritePos − T`` with no additional
-       offset. Wrap-around handled for all valid values of T up to ``lInputBufSize − 1``.
+       from the sync boundary works out to ``lInputBufWritePos − (T + 1)`` with no
+       additional offset.  With a sync pre-roll it reads that much further back.
+       Wrap-around handled for all valid values of T up to ``lInputBufSize − 1``.
    * - ``multStopInWindow``
      - **[NEW]**
      - ``bool`` (local)
-     - Multiply-end gate: ``T > 0 && T ≤ shiftSamples && fSyncMode > 0 &&
-       bSyncPulseReceived && lCycles ≥ 2 && !bLateHitBypassed``.
-       The ``lCycles ≥ 2`` guard prevents decrementing to a zero-length loop. Only active
-       when ``LATE_HIT_MULTIPLY_CORRECTION`` is 1.
+     - Multiply-end gate: ``T > 0 && T ≤ shiftSamples && fSyncMode == 1 &&
+       bSyncPulseReceived && lCycles ≥ 2 && boundaryIsCycleStart && !bLateHitBypassed``.
+       The ``lCycles ≥ 2`` guard prevents decrementing to a zero-length loop;
+       ``boundaryIsCycleStart`` requires the boundary just passed to be where the
+       current cycle began, not a beat inside it (see `Known Issues and Future Work`_).
+       Only active when ``LATE_HIT_MULTIPLY_CORRECTION`` is 1.
    * - ``pfInputLatencyBuf``
      - pre-existing
      - ``LADSPA_Data*``
@@ -2567,80 +2544,46 @@ Buffer Variables (local to ``runSooperLooper()``)
        pulse. Scanned every block to maintain ``lGlobalSamplesSinceSync``.
    * - ``xfadeSamples``
      - pre-existing
-     - ``unsigned long`` (local)
-     - Minimum safe loop length for crossfade purposes (128 samples). Used as the lower
-       bound in the trim guard.
+     - ``int`` (local)
+     - The loop's fade length in samples, read from the ``FadeSamples`` control each
+       block.  Used for the record fades and the seam crossfade, and as the lower
+       bound in the trim guard: a late stop that would leave no more than this falls
+       back to ``STATE_TRIG_STOP``.
 
 
 
-Session File Key (``engine.cpp``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Session File Keys (``engine.cpp``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Each setting global is a floating-point property in the ``<Globals>`` node of
+the ``.slsess`` session file, the same node as ``tempo`` and
+``eighth_per_cycle``, under the setting's own name.  ``Engine::save_session()``
+writes it and ``Engine::load_session()`` reads it; a negative value is
+ignored, and a key that is absent (older session files) leaves the
+compile-time default.  A value edited in the file takes effect when the
+session is next loaded; OSC ``/set`` changes it at once (see `OSC Control`_).
 
 .. list-table::
    :header-rows: 1
 
    * - Key
-     - Status
-     - Description
+     - Default
    * - ``late_hit_window_ms``
-     - **[NEW]**
-     - Floating-point XML property in the ``<Globals>`` node of the ``.slsess`` session
-       file — the same node as ``tempo`` and ``eighth_per_cycle``. Written by
-       ``Engine::save_session()`` and read by ``Engine::load_session()``. If absent (older
-       session files), the compile-time default is used. Edit with a text editor; a
-       restart of the engine is required for the change to take effect.
+     - 100
    * - ``late_hit_max_quant_unit_fraction``
-     - **[NEW]**
-     - Floating-point XML property in the ``<Globals>`` node of the ``.slsess`` session
-       file. Written by ``Engine::save_session()`` and read by
-       ``Engine::load_session()``. If absent, the compile-time default
-       ``LATE_HIT_MAX_QUANT_UNIT_FRACTION`` (100.0) is used. Edit with a text editor;
-       a restart is required. Note: the older key ``late_hit_max_8th_fraction`` had
-       different units (fraction of one eighth note rather than one full cycle); session
-       files containing the old key will use the compile-time default on load.
+     - 100.0 (no fraction cap)
+   * - ``record_failsafe_seconds``
+     - 0 (off)
+   * - ``mute_late_hit_ms``
+     - 100
+   * - ``sync_preroll_ms``
+     - 0 (off)
+   * - ``rel_sync_preroll_ms``
+     - 0
 
-Architecture Notes
-------------------
-
--  **Why** ``lGlobalSamplesSinceSync`` **instead of** ``lSamplesSinceSync``:
-   ``lSamplesSinceSync`` only increments during ``STATE_RECORD`` and ``STATE_PLAY``.
-   Pressing Record from ``STATE_OFF`` gives a value of 0, which makes it impossible to
-   distinguish an on-time press from a late one. The new counter runs in all states.
-
--  **Why a pre-buffer snapshot:** LADSPA processes audio in blocks. A sync pulse mid-
-   block should not alter the phase measurement for a button press that arrived at the
-   block boundary. The snapshot captures the phase as of the start of the current block.
-
--  **Why backfill rather than a playback offset for late start:** The input ring buffer
-   already contains the audio from the boundary onward. Copying it into the loop buffer
-   directly is simpler and more robust than skipping the first *T* + 1 samples on every
-   play pass with a per-play offset.
-
--  **Why** ``dCurrPos += T + 1`` **rather than** ``lFirstPlayOffset`` **for late stop:** Detecting
-   the "first wrap" reliably to apply a rewind proved fragile (the wrap check fires
-   inside a ``recenter`` guard at the wrong moment). Advancing ``dCurrPos`` by *T* + 1 at
-   entry to ``STATE_PLAY`` achieves the same correction with no wrap detection needed.
-
--  **Why a global for** ``g_late_hit_window_ms`` **rather than a LADSPA port:** See
-   `Why Not a LADSPA Port`_ above and the comment block in ``plugin.cc``. The short
-   version: it is a setup-time preference, not a real-time control, and avoiding the port
-   system keeps the change entirely within ``plugin.cc`` and ``engine.cpp``.
-
--  **Why the backfill read position is** ``lInputBufWritePos − (T + 1)`` **(no lInputLatency):**
-   ``pfInputLatencyBuf`` is a verbatim copy of ``pfInput`` with its write pointer at the
-   current physical time. Normal recording from the sync boundary would have captured
-   physical audio at ``T_sync − lInputLatency + i`` for sample *i*, where the boundary
-   sample ``T_sync`` is *T* + 1 samples before the block.  Working backwards from
-   ``lInputBufWritePos`` (which points to physical time ``T_now − lInputLatency``) this
-   maps to offset ``lInputBufWritePos − (T + 1) + i``, so ``readPos =
-   lInputBufWritePos − (T + 1)``. The ``lInputLatency`` term cancels exactly.
-
--  **Why** ``lLastSyncPeriodSamples`` **is seeded from tempo rather than measured pulses:**
-   The sync bus carries two kinds of pulses above the 1.5 threshold: the true beat
-   boundaries and lower-amplitude loop-coordination signals. Seeding from ``fTempo``
-   (BLOCK 7) gives a period that is immune to these sub-threshold pulses, while BLOCK 8
-   provides a measured update gated by a sanity floor to catch cases where no tempo is
-   available.
+The older key ``late_hit_max_8th_fraction`` had different units (a fraction
+of one eighth note rather than one full cycle); it is not read, so a session
+file that has only it gets the default fraction.
 
 Known Issues and Future Work
 ----------------------------
@@ -2679,9 +2622,9 @@ Known Issues and Future Work
 -  **Only tested on Ubuntu 24.04:** no other environments yet tested.
 
 -  **Only tested in basic looping setups:** only basic looping and overdubs have
-   currently been tested.  Multi-loop setups not yet tested (but should revert
-   to stock behavior for syncing to a loop).  Tests with syncing assume the sync
-   source is Jack.
+   been tested live.  Multi-loop setups are not yet tested (but should revert
+   to stock behavior for syncing to a loop).  Live testing has used the JACK
+   sync source; MIDI clock and Rel Sync are covered by the regression tests.
 
 -  **Internal sync mode:** when SooperLooper drives itself (one loop as the sync source
    for others), late-hit correction is **disabled on all slave channels**. Both channels
@@ -2694,11 +2637,8 @@ Known Issues and Future Work
    743 ms at 44.1 kHz, 341 ms at 96 kHz. Setting ``late_hit_window_ms`` above this
    value is silently clamped; it effectively makes the fraction cap dominant for all
    musically relevant tempos. To raise the ceiling, increase ``lInputBufSize`` in
-   ``instantiate()`` (inexpensive: 128 KB per channel at 48 kHz).
-
--  **Spurious trigger at startup:** ``bSyncPulseReceived`` (see Glossary) prevents the
-   window condition from evaluating until at least one real sync pulse has arrived, so a
-   press shortly after startup cannot trigger a spurious correction.
+   ``instantiate()`` (inexpensive: 32768 floats is 128 KB per channel).  The
+   same input history limits the sync pre-roll.
 
 -  **Multiply end:** the late-hit correction is tested on a dummy JACK server,
    together with the ``MULTIPLY_END_FIX`` fix (see `Multiplied Loops Now End
@@ -2720,46 +2660,6 @@ Known Issues and Future Work
    cycle boundary on its own (a forward wait, not a missed boundary).
 
 -  **Insert start:** deferred for the same reason as Multiply start.
-
--  **Double log lines:** each button press produces two identical log entries because
-   both channel instances (0:0 and 0:1) receive the same event and log independently.
-   Expected behavior, not a bug.
-
--  **Sync-source change:** the late-hit state (``bSyncPulseReceived``,
-   ``lGlobalSamplesSinceSync``, ``lLastSyncPeriodSamples``) is reset to its initial
-   condition whenever ``Engine::update_sync_source()`` is called — i.e., whenever the
-   user changes the sync source. This prevents stale period measurements from the old
-   source affecting the first presses on the new one.
-
--  ``SYNCWDEBUG`` **is off by default.** Uncomment ``//#define SYNCWDEBUG``
-   in ``plugin.cc`` to enable all debug output.  When enabled:
-
-   - a ``sl_loaded.txt`` sentinel is written at binary-load time confirming
-     the experimental build is running.
-   - ``sl_debug.log`` is created and overwritten fresh on each engine
-     start. Both files land in ``$HOME/.sooperlooper/logs/`` (created if it
-     does not already exist -- SooperLooper's own per-user directory, the
-     same one ``ALB_SYNC_PULSE_LOG`` uses), falling back to ``/tmp`` if
-     ``$HOME`` is unset or that directory can't be created; the debug log
-     falls back further to ``stderr`` as a last resort.
-   - ``SL_LOG`` startup banners (instantiate, activate) go to the log file.
-   - ``SYNCWDBG()``-wrapped ``SL_LOG_RT()`` calls write per-press timing
-     diagnostics to the same file.
-
-   To watch the log in real time::
-
-       tail -f ~/.sooperlooper/logs/sl_debug.log
-
-   When ``SYNCWDEBUG`` is enabled, ``SL_LOG_RT`` calls ``fflush()`` after
-   every write.  This forces an immediate kernel ``write()`` syscall on every
-   button press, acquiring the C stdio mutex.  Both operations can block the
-   RT thread; **xruns are the expected cost of enabling this mode.**  The
-   fflush ensures log data is flushed to disk even if the process crashes
-   mid-session, which makes post-mortem diagnosis reliable.  When
-   ``SYNCWDEBUG`` is not defined (the default), none of this code exists:
-   ``SL_LOG`` / ``SL_LOG_RT`` / ``SYNCWDBG`` expand to nothing, and the only
-   output is the ``fprintf(stderr, ...)`` banner in ``engine.cpp`` after
-   session load.
 
 
 Test Suite
