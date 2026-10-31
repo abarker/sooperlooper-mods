@@ -62,6 +62,9 @@ site-packages.  To run a single file::
 Test files
 ----------
 
+The docstring at the top of each file gives its background and setup,
+and each test's docstring the case it checks.
+
 testdef_simple_state.py
     Basic state transitions: RECORD from STATE_OFF.
 
@@ -93,6 +96,37 @@ testdef_cancel_record_mute.py
     pending states (sync on, no pulse -- WaitStart and WaitStop), and audio
     content via the input-injection / output-readback support in
     TestLooper.  See ../../mod_docs/late_hit_patch_summary.rst.
+
+testdef_cancel_overdub_undo.py
+    Tests for CANCEL_OVERDUB_UNDO ("cancel_overdub_undo"), the overdub
+    button's long-press companion: undoes the overdub press just before
+    it, and only when that was the last command; never removes a loop's
+    first take, and redo cannot bring back the discarded layer.  Checks
+    the audio layer by layer.
+
+testdef_record_failsafe.py
+    Tests for the record failsafe (g_record_failsafe_seconds): a record
+    that interrupted an unmuted, playing loop and runs past the limit is
+    cancelled as by cancel_record_mute; a first record, or one started
+    from Muted, runs on; 0 turns it off.
+
+testdef_late_hit.py
+    Tests for Record's late-hit correction: a Record start or stop just
+    after a sync pulse acts as if on the pulse; none with sync off,
+    before any pulse, outside the window or on time, or under Rel Sync;
+    the window edge is exact; late takes are whole buffers long and play
+    back flat, like on-time ones.
+
+testdef_mute_late_hit.py
+    Tests for the mute/unmute late-hit correction (g_mute_late_hit_ms): a
+    quantized Mute pressed just after a pulse mutes or unmutes at once
+    instead of waiting for the next pulse; outside the window or with
+    the window 0 it waits; Pause and Record are unaffected.
+
+testdef_stale_sync_counter_after_toggle.py
+    Tests that the samples-since-pulse counter, frozen while Sync is
+    off, does not trigger a late-hit Record or unmute when Sync comes
+    back on with no pulse since.
 
 testdef_rel_sync_stale_phase.py
     Regression tests for REL_SYNC_STALE_PHASE_FIX: a Rel Sync record
@@ -174,8 +208,40 @@ testdef_trig_stop_memory.py
     with ``SL_SAMPLE_TIME=3`` (5.46 s of memory), so a crash fails the
     test rather than pytest.
 
-testdef_late_hit.py
-    Regression tests for the late-hit recording correction patch.
-    Requires the sync injection fields added to TestLooper (see
-    test_looper.hpp).  JACK must be running.  These tests are
-    timing-sensitive; see the timing notes in the file header.
+
+testdef_multiply_end.py
+    Tests for MULTIPLY_END_FIX: a multiply end leaves no silent stretch
+    at the end of the multiplied loop (Round on and off, ended by
+    Overdub, Undo and Redo afterwards); a multiply end just after a
+    pulse inside a cycle is not taken as a late hit.
+
+testdef_restart_position.py
+    Tests for RESTART_POSITION_FIX: every trigger into play (Trigger,
+    mute_trigger, Once; immediate, in the slack window or on the pulse)
+    starts input + output latency into the loop, as playback after a
+    record does, except from Record, where it is not doubled.
+
+testdef_pause_from_mute.py
+    Tests for PAUSE_FROM_MUTE_FIX: a quantized Pause pressed while Muted
+    resolves to Paused, not Playing, with the position frozen, and an
+    Undo from there resumes Muted; an unquantized Pause is unchanged.
+
+testdef_eighth_cycle_runaway.py
+    Tests for the clamp on eighths-per-cycle in Engine::set_tempo()
+    (engine.cpp) when the tempo goes below 60 or above 240 BPM.  Needs
+    neither JACK nor _test_engine.so: it checks the shape of the source
+    text and simulates the rule over tempo ramps.
+
+
+Not covered
+-----------
+
+The harness builds plugin.cc but not looper.cpp, so two late-hit details
+that looper.cpp handles are untested here:
+
+-  In internal sync, channels above 0 skip the late-hit correction
+   (``bLateHitBypassed``, set by ``Looper::run()``; TestLooper never sets
+   it).
+-  A sync source change resets the late-hit state
+   (``Looper::reset_late_hit_state()``, called from
+   ``Engine::update_sync_source()``).
