@@ -227,6 +227,12 @@ testdef_multiply_end.py
     pulse inside a cycle is not taken as a late hit.  Presses and single
     pulses go in at exact frames (request_at_clock, sync_pulse_at).
 
+testdef_multiply_after_late_stop.py
+    A multiply after a Record late stop keeps the loop's content: the
+    output stays non-silent over two passes of the multiplied loop, for a
+    waiting or late-hit start, a waiting or late stop, and a late multiply
+    end, with and without a pre-roll.  The waiting stops are controls.
+
 testdef_restart_position.py
     Tests for RESTART_POSITION_FIX: every trigger into play (Trigger,
     mute_trigger, Once; immediate, in the slack window or on the pulse)

@@ -3694,7 +3694,15 @@ runSooperLooper(LADSPA_Handle Instance,
 				      pLS->fLoopFadeDelta   = -1.0f / xfadeSamples;
 				      pLS->fPlayFadeDelta   =  1.0f / xfadeSamples;
 				      pLS->fLoopSrcFadeDelta = -1.0f / xfadeSamples;
-				      pLS->fFeedSrcFadeDelta = -1.0f / xfadeSamples;
+				      // The feedback fades as the normal stop sets them
+				      // (transitionToNext(STATE_PLAY)).  This used to set
+				      // fFeedSrcFadeDelta to -1, the record start's value, and
+				      // leave fFeedFadeDelta alone: the source-loop fade went to
+				      // 0 and stayed there, and the next Multiply, which rewrites
+				      // the source loop through it, wiped the take
+				      // (testdef_multiply_after_late_stop.py).
+				      pLS->fFeedFadeDelta    =  1.0f / xfadeSamples;
+				      pLS->fFeedSrcFadeDelta =  1.0f / xfadeSamples;
 
 				      pfSyncOutput[0] = 2.0f;
 
