@@ -93,7 +93,7 @@ class TestRelSyncKnownPhase(RelSyncKnownPhaseTestCase):
         half = self.cycle // 2
         self.wait_cycles(0.5)
         self.looper.sync_inject_period = 0
-        self.looper.set_port(test_engine.Quantize, 3.0)          # 8th
+        self.looper.set_port(test_engine.Quantize, 2.0)          # 8th
         self.looper.sync_clock = half * 7 + 300                  # next in half - 300
         self.looper.sync_inject_period = half
         self.wait_buffers(1)
