@@ -298,15 +298,21 @@ item links to its full description.
    script ``ubuntu_compile.bash`` at the top level of the repository automates
    the build.
 
-   For a first build, set all four flags near the top of the script to
-   ``true`` and run it::
+   For a first build, set all three flags near the top of the script
+   (``install_deps``, ``run_autogen``, ``run_config``) to ``true`` and run
+   it::
 
        bash ubuntu_compile.bash
 
-   On subsequent recompiles only ``compile_modified_fork=true`` is needed;
-   the other three flags (``install_deps``, ``run_autogen``, ``run_config``)
-   can remain ``false``.  The script prompts before running
+   On subsequent recompiles all three can be ``false``.  The script prompts
+   before running
    ``sudo make install``.
+
+   If a rebuilt program crashes on startup or misbehaves after a source
+   change, clean and rebuild.  To clean only the SooperLooper programs
+   (engine and GUI), the part this fork changes, run ``make -C src clean``.
+   To clean everything, including the bundled libraries in ``libs/``, run
+   ``make clean``.
 
 .. tip:: **Platform**
 
