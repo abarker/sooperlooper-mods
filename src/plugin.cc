@@ -103,18 +103,18 @@ using namespace SooperLooper;
 // LADSPA port (matching all the other parameters) and remove this global.
 float g_late_hit_window_ms = LATE_HIT_WINDOW_MS;
 
-// Maximum fraction of one quantize cycle that the late-hit window may span.
+// Maximum fraction of one Quantize unit that the late-hit window may span.
 // effectiveLateHitWindow() always evaluates both limits and returns the
 // smaller:
 //
 //     min( g_late_hit_window_ms * 0.001 * sampleRate,
-//          g_late_hit_max_quant_unit_fraction * lLastSyncPeriodSamples )
+//          min(g_late_hit_max_quant_unit_fraction, 0.5) * lLastSyncPeriodSamples )
 //
-// lLastSyncPeriodSamples is the full quantize-cycle period in samples
-// (eighthSamples * eighthPerCycle for QUANT_CYCLE, eighthSamples for
-// QUANT_8TH), so the fraction term is relative to one complete cycle
-// regardless of Eighths/Cycle or quantize mode.  A value of 0.25 means
-// "at most 25 % of one cycle", directly and intuitively.
+// lLastSyncPeriodSamples is the Quantize unit in samples (eighthSamples *
+// eighthPerCycle for QUANT_CYCLE, eighthSamples for QUANT_8TH), so the
+// fraction term is relative to the spacing of the boundaries the Quantize
+// setting gives.  A value of 0.25 means "at most 25 % of one unit".  Values
+// above 0.5 act as 0.5: the nearer boundary always wins.
 //
 // Setting either parameter to a sufficiently large value renders that term
 // larger than any practical T, so the other term wins exclusively:
@@ -126,13 +126,8 @@ float g_late_hit_window_ms = LATE_HIT_WINDOW_MS;
 // minimum is zero and the late-hit window is disabled entirely, reverting to
 // stock SooperLooper behaviour.  Setting BOTH to zero has the same effect.
 //
-// The default (100.0 = 100 cycles) is intentionally large so that the
-// fraction term is always much larger than the ms term at any musical tempo,
-// giving the same behaviour as before this parameter was added.
-//
-// A value of 0.5 caps the window at 50 % of one quantize cycle, which
-// prevents a late press from snapping back to the *previous* boundary when
-// the ms window would otherwise span more than half the cycle.
+// The default (100.0) acts as 0.5, so by default only the ms cap and the
+// half-unit cap apply.
 //
 // lLastSyncPeriodSamples is initialised to ULONG_MAX in activate() so that
 // the fraction term is effectively infinite before the first complete sync
@@ -187,19 +182,13 @@ float g_record_failsafe_seconds = RECORD_FAILSAFE_SECONDS_DEFAULT;
 // boundary (up to a full quantize cycle later). See "New Feature:
 // mute/unmute late-hit correction" in mod_docs/late_hit_patch_summary.rst.
 //
-// Deliberately a PLAIN ms-only value, unlike g_late_hit_window_ms's dual
-// ms/cycle-fraction cap (see g_late_hit_max_quant_unit_fraction above).
-// That fraction cap exists to keep a late RECORD press unambiguously
-// attributed to a single boundary before backfilling/trimming real buffer
-// content. Mute/unmute never reconstructs content -- it only chooses
-// immediate-vs-wait -- so that content-correctness risk does not apply
-// here. T (lGlobalSamplesSinceSync) is itself always bounded to one
-// quantize cycle by construction (reset at every sync pulse), so a
-// too-generous g_mute_late_hit_ms only ever degrades gracefully --
-// mute-quantize is effectively bypassed at that tempo, never
-// mis-corrected -- and is self-limiting for any value a performer would
-// actually set (tens of ms of button-press slop, not a fraction of a
-// cycle).
+// A plain ms value, with no fraction setting of its own (unlike
+// g_late_hit_window_ms, see g_late_hit_max_quant_unit_fraction above).
+// Mute/unmute never reconstructs content -- it only chooses immediate vs
+// wait.  It does share Record's half-unit cap: a window past the middle of
+// the Quantize unit would act at once on a press meant for the next
+// boundary, muting or unmuting early.  With the cap the nearer boundary
+// wins here too.
 //
 // Same non-LADSPA-port mechanism as the other late-hit/failsafe globals
 // above, and for the same reasons: a setup-time preference, not a
@@ -444,6 +433,29 @@ float g_rel_sync_preroll_ms = REL_SYNC_PREROLL_MS_DEFAULT;
 // Regression tests: testdef_sync_preroll.py.
 #define SYNC_PREROLL_MS_DEFAULT 0.0f
 float g_sync_preroll_ms = SYNC_PREROLL_MS_DEFAULT;
+
+// The input history: stock's input-latency ring, which late starts, the
+// sync pre-roll and the Rel Sync early start also copy from, so its length
+// limits them.  instantiate() makes it at least this long, rounded up to a
+// power of two (the ring wraps with a mask), and never shorter than
+// stock's 32768 samples (683 ms at 48 kHz).  Default 4 s: half of a 4-beat
+// cycle at 60 BPM plus a pre-roll; 262144 samples, 1 MB per channel, at
+// 48 kHz.  Set from the command line (--input-history, sooperlooper.cpp)
+// before any loop is made; it cannot change for a loop that exists, since
+// the ring is allocated with it.
+#define INPUT_HISTORY_SECONDS_DEFAULT 4.0f
+float g_input_history_seconds = INPUT_HISTORY_SECONDS_DEFAULT;
+
+// The input history's length in samples at this sample rate (also used by
+// engine.cpp to warn about settings it cannot hold).
+unsigned long sl_input_history_samples(unsigned long sample_rate)
+{
+	unsigned long size = 32768;
+	const double want = (double) g_input_history_seconds * (double) sample_rate;
+	while (size < want && size < (1UL << 26))
+		size <<= 1;
+	return size;
+}
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
@@ -733,13 +745,16 @@ static void sl_dbg_open() {
 // Always evaluates both limits and returns the smaller:
 //
 //     min( g_late_hit_window_ms * 0.001 * sampleRate,
-//          g_late_hit_max_quant_unit_fraction * lLastSyncPeriodSamples )
+//          min(g_late_hit_max_quant_unit_fraction, 0.5) * lLastSyncPeriodSamples )
 //
-// lLastSyncPeriodSamples is the full quantize-cycle period (one cycle =
-// eighthPerCycle eighth-notes for QUANT_CYCLE; one eighth-note for QUANT_8TH).
-// Multiplying by g_late_hit_max_quant_unit_fraction therefore expresses the
-// cap as a direct fraction of one cycle: 0.25 → 25 % of a cycle, regardless
-// of Eighths/Cycle or quantize mode.
+// lLastSyncPeriodSamples is the Quantize unit, the spacing of the boundaries
+// the Quantize setting gives (one cycle = eighthPerCycle eighth-notes for
+// QUANT_CYCLE; one eighth-note for QUANT_8TH).  The fraction is of that
+// unit: 0.25 → 25 % of it.  It is capped at 0.5 whatever the setting, so
+// the nearer boundary always wins: a press past the middle of the unit is
+// early for the next boundary, never late for the one before.  (A wider
+// window took such a press as late for the previous boundary and gave a
+// take one unit too long or too short.)
 //
 // The intermediate product is kept in double to handle the ULONG_MAX sentinel
 // that activate() stores in lLastSyncPeriodSamples before the first measured
@@ -748,24 +763,31 @@ static void sl_dbg_open() {
 //
 // The eighthPerCycle parameter is retained in the signature for call-site
 // compatibility but is no longer used in the formula.
-static inline unsigned long effectiveLateHitWindow(const SooperLooperI *pLS,
-                                                    unsigned int eighthPerCycle) {
-    (void)eighthPerCycle; // formerly used for / eighthPerCycle division; now unused
-    unsigned long msLimit =
+// lateHitWindowWanted(): the window the settings ask for, before the
+// input-history limit below; effectiveLateHitWindow() is what applies.  A
+// press between the two is one a longer history would have corrected
+// (noteHistoryShort()).
+static inline unsigned long lateHitWindowWanted(const SooperLooperI *pLS) {
+    const unsigned long msLimit =
         (unsigned long)(g_late_hit_window_ms * 0.001f * pLS->fSampleRate);
-    // Hard cap: backfill reads from pfInputLatencyBuf which is lInputBufSize
-    // samples deep.  A window wider than the ring buffer would read garbage.
-    // This cap makes the constraint self-enforcing regardless of the value
-    // of g_late_hit_window_ms.  The fraction cap below can only reduce the
-    // window further, never enlarge it, so one cap here is sufficient.
-    if (msLimit >= pLS->lInputBufSize)
-        msLimit = pLS->lInputBufSize - 1;
-    double fractionLimit = (double)g_late_hit_max_quant_unit_fraction
-                           * (double)pLS->lLastSyncPeriodSamples;
+    // At most half the Quantize unit: the nearer boundary wins.  A press
+    // past the middle of the unit is early for the next boundary, never
+    // late for the one before it.
+    const double fraction = std::min ((double) g_late_hit_max_quant_unit_fraction, 0.5);
+    double fractionLimit = fraction * (double) pLS->lLastSyncPeriodSamples;
     // If fractionLimit >= msLimit the ms term wins; cast is safe because
     // fractionLimit < msLimit guarantees it fits in unsigned long.
     if (fractionLimit >= (double)msLimit) return msLimit;
     return (unsigned long)fractionLimit;
+}
+
+static inline unsigned long effectiveLateHitWindow(const SooperLooperI *pLS,
+                                                    unsigned int eighthPerCycle) {
+    (void)eighthPerCycle; // formerly used for / eighthPerCycle division; now unused
+    // Hard cap: backfill reads from pfInputLatencyBuf which is lInputBufSize
+    // samples deep.  A window wider than the ring buffer would read garbage.
+    const unsigned long wanted = lateHitWindowWanted (pLS);
+    return (wanted >= pLS->lInputBufSize) ? pLS->lInputBufSize - 1 : wanted;
 }
 //------ albEnd ----------------------------------
 
@@ -925,6 +947,16 @@ static inline float endTakeTrimmed(SooperLooperI *pLS, LoopChunk *loop,
 }
 #endif
 
+// noteHistoryShort(): a late start, pre-roll or Rel Sync early start was
+// refused because the input history is too short; `needed` samples would
+// have done.  The engine's main loop prints a warning (RT-safe: two stores).
+static inline void noteHistoryShort(SooperLooperI *pLS, unsigned long needed)
+{
+	if (needed > pLS->lHistoryShortNeeded)
+		pLS->lHistoryShortNeeded = needed;
+	pLS->lHistoryShortCount = pLS->lHistoryShortCount + 1;
+}
+
 #if REL_SYNC_LATE_HIT || SYNC_PREROLL
 // startTakeEarly(): start a new take `early` samples before the sample
 // at ring position histPos of the input history (REL_SYNC_LATE_HIT,
@@ -954,12 +986,16 @@ static inline float startTakeEarly(SooperLooperI *pLS, LoopChunk *loop,
 #if SYNC_PREROLL
 // syncPreRollSamples(): the plain Sync pre-roll, if the input history
 // holds it beyond `already` samples back and this block.
-static inline unsigned long syncPreRollSamples(const SooperLooperI *pLS,
+static inline unsigned long syncPreRollSamples(SooperLooperI *pLS,
                                                unsigned long already,
                                                unsigned long SampleCount)
 {
 	const unsigned long p = (unsigned long) (g_sync_preroll_ms * 0.001f * pLS->fSampleRate);
-	return (p > 0 && already + p + SampleCount <= pLS->lInputBufSize) ? p : 0;
+	if (p > 0 && already + p + SampleCount > pLS->lInputBufSize) {
+		noteHistoryShort (pLS, already + p + SampleCount);
+		return 0;
+	}
+	return p;
 }
 #endif
 //------ albEnd ----------------------------------
@@ -1477,7 +1513,14 @@ instantiateSooperLooper(const LADSPA_Descriptor * Descriptor,
    pLS->lastLoopChunk = pLS->pLoopChunks + pLS->lLoopChunkCount - 1;
 
    // this is the input buffer to handle input latency.  32k max samples of input latency
-   pLS->lInputBufSize = 32768;
+   //------ albBegin ----------------------------------
+   // STOCK (sooperlooper 1.7.9): pLS->lInputBufSize = 32768;
+   // CHANGE: at least g_input_history_seconds (see its comment), as a power
+   // of two, never shorter than stock's.
+   pLS->lInputBufSize = sl_input_history_samples (SampleRate);
+   pLS->lHistoryShortCount = 0;
+   pLS->lHistoryShortNeeded = 0;
+   //------ albEnd ----------------------------------
    pLS->lInputBufMask = pLS->lInputBufSize - 1;
    pLS->pInputBuf = (LADSPA_Data *) calloc(pLS->lInputBufSize, sizeof(LADSPA_Data));
    pLS->lInputBufWritePos = 0;
@@ -2955,8 +2998,10 @@ runSooperLooper(LADSPA_Handle Instance,
   // Gated on fSyncMode: completely inactive when sync is disabled.  This
   // means zero impact on JACK-mode usage without the sync checkbox.
   if (fSyncMode >= 1.0f && fTempo > 0.0f && eighthPerCycle > 0) {
+      // The Quantize unit: one eighth with Quantize 8th, one cycle otherwise.
+      const float unitEighths = (fQuantizeMode == QUANT_8TH) ? 1.0f : (float) eighthPerCycle;
       pLS->lLastSyncPeriodSamples =
-          (unsigned long)(pLS->fSampleRate * 30.0f / fTempo * (float)eighthPerCycle);
+          (unsigned long)(pLS->fSampleRate * 30.0f / fTempo * unitEighths);
   }
   //------ albEnd ----------------------------------
 
@@ -3570,6 +3615,12 @@ runSooperLooper(LADSPA_Handle Instance,
 			                               && pLS->bSyncPulseReceived
 			                               && loop != NULL
 			                               && !pLS->bLateHitBypassed);
+			      // Late enough for the settings, but the window was limited
+			      // to the input history.
+			      if (!stopWithinWindow && T > shiftSamples && T <= lateHitWindowWanted (pLS)
+			          && fSyncMode == 1.0f && pLS->bSyncPulseReceived && loop != NULL
+			          && !pLS->bLateHitBypassed)
+				      noteHistoryShort (pLS, T + 1);
 
 			      SYNCWDBG(SL_LOG_RT(
 					  "\n%u:%u  STOP button: lGlobalSyncAtButtonPress=%llu  windowSamples=%lu"
@@ -3774,12 +3825,16 @@ runSooperLooper(LADSPA_Handle Instance,
 		 // channels in internal sync mode; it is set in Looper::run().
 		 // The backfill reads T + 1 samples back from this block in the
 		 // input ring, which this block has already partly overwritten.
-		 bool withinWindow = (T > 0
+		 const bool lateCanFire = (T > 0
+		                           && fSyncMode == 1.0f
+		                           && pLS->bSyncPulseReceived
+		                           && !pLS->bLateHitBypassed);
+		 bool withinWindow = (lateCanFire
 		                      && T <= shiftSamples
-		                      && T + 1 + SampleCount <= pLS->lInputBufSize
-		                      && fSyncMode == 1.0f
-		                      && pLS->bSyncPulseReceived
-		                      && !pLS->bLateHitBypassed);
+		                      && T + 1 + SampleCount <= pLS->lInputBufSize);
+		 // Late enough for the settings, but the input history is too short.
+		 if (lateCanFire && !withinWindow && T <= lateHitWindowWanted (pLS))
+			 noteHistoryShort (pLS, T + 1 + SampleCount);
 
 		 SYNCWDBG(SL_LOG_RT(
 		     "\n%u:%u  RECORD button: lGlobalSyncAtButtonPress=%llu  windowSamples=%lu"
@@ -3942,6 +3997,8 @@ runSooperLooper(LADSPA_Handle Instance,
 					 + (unsigned long) (g_rel_sync_preroll_ms * 0.001f * pLS->fSampleRate);
 				 pLS->lRelSyncPressEarly =
 					 (fSyncMode == 2.0f && early + SampleCount <= pLS->lInputBufSize) ? early : 0;
+				 if (fSyncMode == 2.0f && early > 0 && pLS->lRelSyncPressEarly == 0)
+					 noteHistoryShort (pLS, early + SampleCount);
 			 }
 #endif
 			 SYNCWDBG(SL_LOG_RT(
@@ -4507,6 +4564,11 @@ runSooperLooper(LADSPA_Handle Instance,
 	   // for why the cycle-fraction cap does not apply here.
 	   unsigned long muteShiftSamples =
 	       (unsigned long)(g_mute_late_hit_ms * 0.001f * pLS->fSampleRate);
+	   // At most half the Quantize unit, as for Record: the nearer
+	   // boundary wins.
+	   if (pLS->lLastSyncPeriodSamples != ULONG_MAX
+	       && muteShiftSamples > pLS->lLastSyncPeriodSamples / 2)
+		   muteShiftSamples = pLS->lLastSyncPeriodSamples / 2;
 	   unsigned long muteT = lGlobalSyncAtButtonPress;
 	   bool withinMuteWindow = (muteT > 0
 	                            && muteT <= muteShiftSamples

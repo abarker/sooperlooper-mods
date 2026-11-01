@@ -107,7 +107,7 @@ testdef_cancel_overdub_undo.py
 testdef_record_failsafe.py
     Tests for the record failsafe (g_record_failsafe_seconds): a record
     that interrupted an unmuted, playing loop and runs past the limit is
-    cancelled as by cancel_record_mute; a first record, or one started
+    canceled as by cancel_record_mute; a first record, or one started
     from Muted, runs on; 0 turns it off.
 
 testdef_late_hit.py
@@ -116,6 +116,17 @@ testdef_late_hit.py
     before any pulse, outside the window or on time, or under Rel Sync;
     the window edge is exact; late takes are whole buffers long and play
     back flat, like on-time ones.
+
+testdef_late_hit_half_unit.py
+    Tests for the late-hit window's limits against the Quantize unit (an
+    eighth with Quantize 8th, a cycle with Quantize Cycle): a press a little
+    before a pulse starts on it even with a window over half the unit (the
+    nearer pulse wins), Record and Mute alike; late presses under half the
+    unit are still corrected; the fraction setting is a fraction of the unit,
+    not of the cycle.  With a window longer than the shortest input history
+    (32768 samples), a press beyond it is not corrected and is counted for
+    the engine's warning; with g_input_history_seconds (--input-history) set
+    to 2 it is corrected.
 
 testdef_mute_late_hit.py
     Tests for the mute/unmute late-hit correction (g_mute_late_hit_ms): a
@@ -213,7 +224,8 @@ testdef_multiply_end.py
     Tests for MULTIPLY_END_FIX: a multiply end leaves no silent stretch
     at the end of the multiplied loop (Round on and off, ended by
     Overdub, Undo and Redo afterwards); a multiply end just after a
-    pulse inside a cycle is not taken as a late hit.
+    pulse inside a cycle is not taken as a late hit.  Presses and single
+    pulses go in at exact frames (request_at_clock, sync_pulse_at).
 
 testdef_restart_position.py
     Tests for RESTART_POSITION_FIX: every trigger into play (Trigger,

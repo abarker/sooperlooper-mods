@@ -402,6 +402,12 @@ typedef struct {
 	// if it starts at the press; 0 once it waits instead.
 	unsigned long lRelSyncPressEarly;
 #endif
+	// How many times a late start, a pre-roll or a Rel Sync early start
+	// was refused because the input history (lInputBufSize) was too short,
+	// and the most samples one of them needed.  Written only by the audio
+	// thread; Looper::take_history_shortfall() reads them for the warning.
+	volatile unsigned long lHistoryShortCount;
+	volatile unsigned long lHistoryShortNeeded;
 	//------ albEnd ----------------------------------
 
 	//------ albBegin ----------------------------------

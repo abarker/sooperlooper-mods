@@ -44,6 +44,7 @@ LoopControl::SpawnConfig::SpawnConfig(const wxString & nm)
 	  // STOCK (sooperlooper 1.7.9): mem_secs(40.0f).  CHANGE: 120 s, as
 	  // the engine's DEFAULT_LOOP_TIME (sooperlooper.cpp).
 	  mem_secs(120.0f),
+	  input_history_secs(0.0),
 	  //------ albEnd ----------------------------------
 	  discrete_io(true), exec_name("sooperlooper"), midi_bind_path(""), force_spawn(false), never_spawn(false),
 	  never_timeout(false),
@@ -73,6 +74,11 @@ XMLNode& LoopControl::SpawnConfig::get_state () const
 
 	snprintf(buf, sizeof(buf), "%f", mem_secs);
 	node->add_property ("mem_secs", buf);
+
+	//------ albBegin ----------------------------------
+	snprintf(buf, sizeof(buf), "%f", input_history_secs);
+	node->add_property ("input_history_secs", buf);
+	//------ albEnd ----------------------------------
 
 	node->add_property ("discrete_io", discrete_io ? "yes": "no");
 
@@ -121,6 +127,11 @@ int LoopControl::SpawnConfig::set_state (const XMLNode& node)
 			if ((prop = child_node->property ("mem_secs")) != 0) {
 				mem_secs = atof (prop->value().c_str());
 			}
+			//------ albBegin ----------------------------------
+			if ((prop = child_node->property ("input_history_secs")) != 0) {
+				input_history_secs = atof (prop->value().c_str());
+			}
+			//------ albEnd ----------------------------------
 			if ((prop = child_node->property ("discrete_io")) != 0) {
 				if (prop->value() == "yes") {
 				        discrete_io = true;
@@ -609,6 +620,13 @@ bool LoopControl::spawn_looper()
 		);
 	
 	cmdstr += tmpbuf;
+
+	//------ albBegin ----------------------------------
+	if (_spawn_config.input_history_secs > 0.0) {
+		snprintf(tmpbuf, sizeof(tmpbuf), " --input-history=%g", _spawn_config.input_history_secs);
+		cmdstr += tmpbuf;
+	}
+	//------ albEnd ----------------------------------
 	
 	if (!_spawn_config.midi_bind_path.empty()) {
 		snprintf(tmpbuf, sizeof(tmpbuf), " -m \"%s\"", _spawn_config.midi_bind_path.c_str());	

@@ -91,6 +91,9 @@ static const wxCmdLineEntryDesc cmdLineDesc[] =
 	{ wxCMD_LINE_OPTION, wxT_2("l"), wxT_2("loopcount"), wxT_2("number of loopers to create (default is 1)"), wxCMD_LINE_VAL_NUMBER },
 	{ wxCMD_LINE_OPTION, wxT_2("c"), wxT_2("channels"), wxT_2("channel count for each looper (default is 2)"), wxCMD_LINE_VAL_NUMBER },
 	{ wxCMD_LINE_OPTION, wxT_2("t"), wxT_2("looptime"), wxT_2("number of seconds of loop memory per channel"), wxCMD_LINE_VAL_NUMBER },
+	//------ albBegin ----------------------------------
+	{ wxCMD_LINE_OPTION, wxT_2(""), wxT_2("input-history"), wxT_2("seconds of input the engine keeps per channel for late-hit starts and pre-roll"), wxCMD_LINE_VAL_DOUBLE },
+	//------ albEnd ----------------------------------
 	{ wxCMD_LINE_OPTION, wxT_2("H"), wxT_2("connect-host"), wxT_2("connect to sooperlooper engine on given host (default is localhost)")},
 	{ wxCMD_LINE_OPTION, wxT_2("P"), wxT_2("connect-port"), wxT_2("connect to sooperlooper engine on given port (default is 9951)"), wxCMD_LINE_VAL_NUMBER },
 	{ wxCMD_LINE_OPTION, wxT_2("m"), wxT_2("load-midi-binding"), wxT_2("loads midi binding from file")},
@@ -162,6 +165,14 @@ GuiApp::parse_options (int argc, wxChar **argv)
 		}
 		_mem_secs = (float) longval;
 	}
+	//------ albBegin ----------------------------------
+	{
+		double secs = 0.0;
+		if (parser.Found (wxT("input-history"), &secs) && secs > 0.0) {
+			_input_history_secs = secs;
+		}
+	}
+	//------ albEnd ----------------------------------
 
 	parser.Found (wxT("H"), &_host);
 
@@ -214,6 +225,9 @@ GuiApp::GuiApp()
 	_loop_count = 0;
 	_channels = 0;
 	_mem_secs = 0.0f;
+	//------ albBegin ----------------------------------
+	_input_history_secs = 0.0;
+	//------ albEnd ----------------------------------
 	_stay_on_top = false;
         _override_screenpos = false;
         _screen_pos = wxPoint(100, 100);
@@ -321,6 +335,11 @@ bool GuiApp::OnInit()
 	if (_mem_secs != 0) {
 		loopctrl.get_spawn_config().mem_secs = _mem_secs;
 	}
+	//------ albBegin ----------------------------------
+	if (_input_history_secs > 0.0) {
+		loopctrl.get_spawn_config().input_history_secs = _input_history_secs;
+	}
+	//------ albEnd ----------------------------------
         if (_override_screenpos) {
                 _frame->get_main_panel()->set_default_position(_screen_pos);
         }

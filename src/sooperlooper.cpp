@@ -68,6 +68,15 @@ Transmitter  error (Transmitter::Error);
 #define DEFAULT_LOOP_TIME 120.0f
 //------ albEnd ----------------------------------
 
+//------ albBegin ----------------------------------
+// --input-history=<seconds> (long only): the input history that late-hit
+// starts and pre-rolls copy from (g_input_history_seconds, plugin.cc).
+// Below 255, which parse_options() takes as the end of the options, and
+// not a letter, so there is no short form.
+#define INPUT_HISTORY_OPT 200
+extern float g_input_history_seconds;
+//------ albEnd ----------------------------------
+
 
 char *optstring = "c:l:j:p:m:t:U:S:D:L:qVh";
 
@@ -85,6 +94,9 @@ struct option long_options[] = {
 	{ "load-midi-binding", 1, 0, 'm' },
 	{ "ping-url", 1, 0, 'U' },
 	{ "version", 0, 0, 'V' },
+	//------ albBegin ----------------------------------
+	{ "input-history", 1, 0, INPUT_HISTORY_OPT },
+	//------ albEnd ----------------------------------
 	{ 0, 0, 0, 0 }
 };
 
@@ -124,6 +136,10 @@ static void usage(char *argv0)
 	fprintf(stderr, "  -l <num> , --loopcount=<num> number of loopers to create (default is 1)\n");
 	fprintf(stderr, "  -c <num> , --channels=<num>  channel count for each looper (default is 2)\n");
 	fprintf(stderr, "  -t <numsecs> , --looptime=<num>  number of seconds of loop memory per channel (default is %g), at least\n", DEFAULT_LOOP_TIME);
+	//------ albBegin ----------------------------------
+	fprintf(stderr, "  --input-history=<numsecs>    seconds of input kept per channel for late-hit starts and pre-roll\n"
+	                "                               (default 4, rounded up to a power of two of samples; at least 32768)\n");
+	//------ albEnd ----------------------------------
 	fprintf(stderr, "  -L <pathname> , --load-session=<pathname> load initial session from pathname\n");
 	fprintf(stderr, "  -D <yes/no>, --discrete-io=[yes]  initial loops should have discrete input and output ports (default yes)\n");
 	fprintf(stderr, "  -p <num> , --osc-port=<num>  udp port number for OSC server (default is %d)\n", DEFAULT_OSC_PORT);
@@ -178,6 +194,16 @@ static void parse_options (int argc, char **argv, OptionInfo & option_info)
 		case 't':
 			sscanf(optarg, "%f", &option_info.loopsecs);
 			break;
+		//------ albBegin ----------------------------------
+		case INPUT_HISTORY_OPT:
+			{
+				float secs = 0.0f;
+				if (sscanf(optarg, "%f", &secs) == 1 && secs >= 0.0f) {
+					g_input_history_seconds = secs;
+				}
+			}
+			break;
+		//------ albEnd ----------------------------------
 		case 'p':
 			option_info.oscport = atoi(optarg);
 			break;

@@ -62,6 +62,10 @@ class LoopControl
 		long        num_loops; 
 		long        num_channels;
 		double      mem_secs;
+		//------ albBegin ----------------------------------
+		// The engine's --input-history (seconds); 0 leaves its default.
+		double      input_history_secs;
+		//------ albEnd ----------------------------------
 		bool        discrete_io;
 		
 		std::string   exec_name;

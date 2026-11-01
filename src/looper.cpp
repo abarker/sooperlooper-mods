@@ -66,6 +66,9 @@ static const int SrcAudioQuality = SRC_LINEAR;
 Looper::Looper (AudioDriver * driver, unsigned int index, unsigned int chan_count, float loopsecs, bool discrete)
 	: _driver (driver), _index(index), _chan_count(chan_count), _loopsecs(loopsecs)
 {
+	//------ albBegin ----------------------------------
+	_history_short_seen = 0;
+	//------ albEnd ----------------------------------
 	initialize (index, chan_count, loopsecs, discrete);
 }
 
@@ -1266,6 +1269,24 @@ Looper::reset_late_hit_state()
 		pLS->lTrackedSyncPeriod       = 0;
 #endif
 	}
+}
+
+bool
+Looper::take_history_shortfall(unsigned long & needed, unsigned long & have)
+{
+	bool short_seen = false;
+	needed = 0;
+	for (unsigned int ci = 0; ci < _chan_count; ++ci) {
+		SooperLooperI * pLS = static_cast<SooperLooperI *>(_instances[ci]);
+		if (ci == 0) {
+			short_seen = (pLS->lHistoryShortCount != _history_short_seen);
+			_history_short_seen = pLS->lHistoryShortCount;
+			have = pLS->lInputBufSize;
+		}
+		if (pLS->lHistoryShortNeeded > needed)
+			needed = pLS->lHistoryShortNeeded;
+	}
+	return short_seen;
 }
 //------ albEnd ----------------------------------
 

@@ -16,7 +16,12 @@ never comes, and the multiply finishes where the bug was: when the play
 position reaches the loop's end (as on a rig, where it gets there IL + OL
 before the beat).  With sync off a Round-off or Overdub end would take
 effect at once and miss that path.  The late multiply end (late-hit) is
-covered by the dummy-server probes, except for TestLateEndMidCycle below.
+covered by testdef_sync_preroll.py and the dummy-server probes, except for
+TestLateEndMidCycle below.
+
+Presses and pulses go in at exact frames (TestLooper.request_at_clock,
+sync_pulse_at, with the pulse generator running but its period too long to
+come round), so the tests do not depend on how promptly Python runs.
 """
 
 import time
@@ -29,6 +34,7 @@ class MultiplyEndTestCase(unittest.TestCase):
 
     IL, OL = 300, 500
     LEVEL = 0.5
+    NO_PULSES = 1 << 60     # a generator period that never comes round
 
     def setUp(self):
         self.engine = engine_wrapper.Engine("SL_test_multend")
@@ -36,6 +42,10 @@ class MultiplyEndTestCase(unittest.TestCase):
         self.buf = int(self.looper.get_buffer_size())
         self.sr = int(self.engine.get_sample_rate())
         self.looper.sync_inject_value = 0.0      # armed before Sync goes on
+        self.looper.sync_inject_period = 0
+        self.looper.sync_clock = 1                # no pulse at clock 0
+        self.looper.sync_pulse_at = -1
+        self.looper.sync_inject_period = self.NO_PULSES
         self.looper.sync_inject_enabled = True
         self.looper.set_port(test_engine.Sync, 0.0)
         self.looper.set_port(test_engine.DryLevel, 0.0)
@@ -46,6 +56,8 @@ class MultiplyEndTestCase(unittest.TestCase):
         self.looper.set_port(test_engine.Quantize, 1.0)       # cycle
 
     def tearDown(self):
+        self.looper.request_at_clock = -1
+        self.looper.sync_pulse_at = -1
         del self.engine
 
     def wait_buffers(self, n, timeout=5.0):
@@ -57,6 +69,48 @@ class MultiplyEndTestCase(unittest.TestCase):
                 raise RuntimeError(
                     f"Timed out waiting for {n} JACK callbacks "
                     f"(process_count stuck at {self.looper.process_count})")
+
+    def now(self):
+        return self.looper.sync_clock
+
+    def press_at(self, command, clock):
+        """Press `command` in the first block starting at or after sync
+        frame `clock`; return the frame of the block it landed in."""
+        self.assertGreater(clock, self.now(), "press_at: that frame has gone by")
+        if command in engine_wrapper.commands:
+            num = engine_wrapper.commands.index(command)
+        else:
+            num = engine_wrapper.command_ordinals[command]
+        self.looper.request_at_cmd = num
+        self.looper.request_at_clock = clock
+        while self.looper.request_at_clock >= 0 or self.looper.request_pending:
+            self.wait_buffers(1)
+        self.wait_buffers(2)
+        return self.looper.last_request_clock
+
+    def pulse_then_press(self, pulse, command, clock):
+        """A single pulse at sync frame `pulse`, and `command` pressed in
+        the first block at or after `clock` (both set up beforehand, so a
+        press just after the pulse is not missed).  Returns the press's
+        block frame."""
+        self.assertGreater(pulse, self.now(), "pulse_then_press: that frame has gone by")
+        self.looper.request_at_cmd = engine_wrapper.commands.index(command)
+        self.looper.request_at_clock = clock
+        self.looper.sync_pulse_at = pulse
+        while (self.looper.sync_pulse_at >= 0 or self.looper.request_at_clock >= 0
+               or self.looper.request_pending):
+            self.wait_buffers(1)
+        self.wait_buffers(2)
+        return self.looper.last_request_clock
+
+    def pulse_at(self, clock):
+        """A single sync pulse at sync frame `clock`; returns once it has
+        gone by."""
+        self.assertGreater(clock, self.now(), "pulse_at: that frame has gone by")
+        self.looper.sync_pulse_at = clock
+        while self.looper.sync_pulse_at >= 0:
+            self.wait_buffers(1)
+        return clock
 
     def assertState(self, state):
         actual = self.engine.getState()
@@ -72,10 +126,9 @@ class MultiplyEndTestCase(unittest.TestCase):
 
     def record_take(self):
         self.looper.input_inject_value = self.LEVEL
-        self.engine.request("RECORD")
-        self.wait_buffers(self.take_bufs())
-        self.engine.request("RECORD")
-        self.wait_buffers(3)
+        s0 = self.press_at("RECORD", self.now() + 2 * self.buf)
+        self.press_at("RECORD", s0 + self.take_bufs() * self.buf)
+        self.wait_buffers(1)
         self.assertState("Playing")
         self.take = self.loop_len()
         self.looper.input_inject_value = 0.0      # silence from here on
@@ -84,15 +137,11 @@ class MultiplyEndTestCase(unittest.TestCase):
     def multiply(self, end_with="MULTIPLY"):
         """Multiply for about one and a half takes, then end it."""
         tb = self.take // self.buf + 1
-        self.engine.request("MULTIPLY")
-        self.wait_buffers(2)
-        self.looper.sync_inject_value = 2.0       # the one pulse: start
-        self.wait_buffers(2)                      # one whole callback sees it
-        self.looper.sync_inject_value = 0.0
+        m = self.press_at("MULTIPLY", self.now() + 2 * self.buf)
+        start = self.pulse_at(m + 4 * self.buf + self.buf // 2)   # the one pulse
         self.wait_buffers(2)
         self.assertState("Multiplying")
-        self.wait_buffers(tb + tb // 2)
-        self.engine.request(end_with)
+        self.press_at(end_with, start + (tb + tb // 2) * self.buf)
         self.wait_buffers(2 * tb)                 # rounding to the cycle end
 
     def assertSteadyPass(self, what):
@@ -181,20 +230,13 @@ class TestLateEndMidCycle(MultiplyEndTestCase):
         self.looper.set_port(test_engine.Round, 1.0)
         self.record_take()
         tb = self.take // self.buf + 1
-        self.engine.request("MULTIPLY")
-        self.wait_buffers(2)
-        self.looper.sync_inject_value = 2.0       # start
-        self.wait_buffers(2)
-        self.looper.sync_inject_value = 0.0
+        m = self.press_at("MULTIPLY", self.now() + 2 * self.buf)
+        start = self.pulse_at(m + 4 * self.buf + self.buf // 2)   # start
         self.wait_buffers(2)
         self.assertState("Multiplying")
-        self.wait_buffers(tb + tb // 2)           # mid second cycle
-        self.looper.sync_inject_value = 2.0       # a pulse inside the cycle
-        self.wait_buffers(2)
-        self.looper.sync_inject_value = 0.0
-        self.wait_buffers(1)                      # well inside the window
-        self.engine.request("MULTIPLY")
-        self.wait_buffers(3)
+        mid = start + self.take + self.take // 2  # inside the second cycle
+        self.pulse_then_press(mid, "MULTIPLY", mid + self.buf)   # well inside the window
+        self.wait_buffers(1)
         self.assertState("Multiplying")           # waiting, not trimmed to one take
         self.wait_buffers(2 * tb)
         self.assertState("Playing")

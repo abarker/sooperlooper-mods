@@ -51,6 +51,7 @@ TestLooper::TestLooper (jack_client_t* j, unsigned int index, unsigned int chan_
 	//------ albBegin ----------------------------------
 	sync_inject_period  = 0;
 	sync_clock          = 0;
+	sync_pulse_at       = -1;
 	//------ albEnd ----------------------------------
 	process_count       = 0;
 	//------ albBegin ----------------------------------
@@ -242,6 +243,24 @@ TestLooper::get_channel_loop_length (unsigned int index) const
 	return 0;
 }
 
+unsigned long
+TestLooper::get_channel_history_size (unsigned int index) const
+{
+	if (index < _chan_count && _instances[index]) {
+		return ((SooperLooperI *) _instances[index])->lInputBufSize;
+	}
+	return 0;
+}
+
+unsigned long
+TestLooper::get_channel_history_short_count (unsigned int index) const
+{
+	if (index < _chan_count && _instances[index]) {
+		return ((SooperLooperI *) _instances[index])->lHistoryShortCount;
+	}
+	return 0;
+}
+
 long
 TestLooper::get_channel_sync_pos (unsigned int index) const
 {
@@ -358,9 +377,13 @@ TestLooper::run (jack_nframes_t offset, jack_nframes_t nframes)
 			// and the modulo, which divides by zero.
 			const unsigned long period = sync_inject_period;
 			if (sync_inject_enabled && _our_syncin_buf && period) {
+				const long long pulse_at = sync_pulse_at;
 				for (nframes_t n = 0; n < _buffersize; ++n)
-					_our_syncin_buf[n] = ((sync_clock + n) % period == 0)
+					_our_syncin_buf[n] = ((sync_clock + n) % period == 0
+					                      || (long long) (sync_clock + n) == pulse_at)
 						? 2.0f : 0.0f;
+				if (pulse_at >= 0 && (long long) (sync_clock + _buffersize) > pulse_at)
+					sync_pulse_at = -1;
 				sync_clock += _buffersize;
 			}
 			else if (sync_inject_enabled && _our_syncin_buf) {

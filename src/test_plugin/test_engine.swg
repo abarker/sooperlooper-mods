@@ -9,6 +9,7 @@ extern float g_record_failsafe_seconds;
 extern float g_mute_late_hit_ms;
 extern float g_rel_sync_preroll_ms;
 extern float g_sync_preroll_ms;
+extern float g_input_history_seconds;
 using namespace SooperLooper;
 %}
 
@@ -23,6 +24,7 @@ extern float g_mute_late_hit_ms;
 extern float g_rel_sync_preroll_ms;
 /* Expose the plain Sync pre-roll (SYNC_PREROLL). */
 extern float g_sync_preroll_ms;
+extern float g_input_history_seconds;
 
 %include "test_engine.hpp"
 %include "test_looper.hpp"

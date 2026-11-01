@@ -34,6 +34,11 @@ _DEFAULT_WINDOW_MS = 100.0   # restore in tearDown
 
 CYCLE_BUFS = 8      # cycle length in buffers, plus EXTRA samples
 EXTRA = 300
+# At small buffer sizes, more buffers: the tests that use this cycle with a
+# late-hit window (40 ms in testdef_rel_sync_late_hit.py) need early presses
+# (6 buffers before a pulse) and the window to stay clear of each other and
+# of the middle of the cycle, where the nearer pulse wins.
+MIN_CYCLE = 6000    # samples
 RECORD_CYCLES = 2   # cycles between the record press and the stop press
 
 
@@ -46,7 +51,7 @@ class RelSyncStalePhaseTestCase(unittest.TestCase):
         self.looper = self.engine.looper
         self.buf    = int(self.looper.get_buffer_size())
         self.sr     = int(self.engine.get_sample_rate())
-        self.cycle  = CYCLE_BUFS * self.buf + EXTRA
+        self.cycle  = max(CYCLE_BUFS, -(-MIN_CYCLE // self.buf)) * self.buf + EXTRA
         # Late-hit is off under Rel Sync anyway; zero it so nothing else
         # can move a start or stop.
         test_engine.cvar.g_late_hit_window_ms = 0.0

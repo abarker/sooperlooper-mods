@@ -78,6 +78,9 @@ class GuiApp : public wxApp
 	int  _loop_count;
 	int  _channels;
 	float _mem_secs;
+	//------ albBegin ----------------------------------
+	double _input_history_secs;
+	//------ albEnd ----------------------------------
 	wxString _midi_bind_file;
 	wxString _server_name;
 	wxString _client_name;

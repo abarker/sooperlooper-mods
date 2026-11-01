@@ -218,7 +218,9 @@ class TestSyncPrerollMultiply(SyncPrerollTestCase):
 
     def testEarlyEnd_WaitsForPulse(self):
         end = self.multiply("early")
-        self.press_at("MULTIPLY", end - 6 * self.buf)
+        # Early for the loop's own end, P before the pulse, by more than
+        # press_at()'s 2-buffer wait.
+        self.press_at("MULTIPLY", end - max(6 * self.buf, self.P + 4 * self.buf + MARGIN))
         self.assertEqual(self.state(), "Multiplying")
         self.wait_state("Playing")
         self.assertEqual(self.length(), 2 * self.cycle)
@@ -283,7 +285,7 @@ class TestSyncPrerollNone(SyncPrerollTestCase):
                          "a Quantize Off record should start at the press, with no pre-roll")
 
     def testTooLongForHistory_NoPreroll(self):
-        test_engine.cvar.g_sync_preroll_ms = 1000.0       # > the input history
+        test_engine.cvar.g_sync_preroll_ms = 10000.0      # > the input history (5.5 s)
         pulse = self.start_waiting()
         self.end_early(pulse)
         self.assertPreRolled(pulse, 2 * self.cycle, P=0)

@@ -67,8 +67,13 @@ item links to its full description.
 
 - **Adjustable window.** How late a press can be and still count as on
   time is set in milliseconds, optionally also capped at a fraction of the
-  quantize cycle, and stored in the session file.  See `Record Late-Hit
-  Window Size`_.
+  Quantize unit, never more than half of it, and stored in the session
+  file.  See `Record Late-Hit Window Size`_.
+
+- **Longer input history.** The input that late starts and pre-rolls copy
+  from is kept for at least 4 s (stock keeps 683 ms at 48 kHz), and
+  ``--input-history=<seconds>`` changes it, with a warning when the settings
+  need more than it holds.  See `Record Late-Hit Window Size`_.
 
 - **Robust in stereo and across sync-source changes.** The channels of a
   multi-channel loop stay in step when a correction fires, and changing the
@@ -325,10 +330,11 @@ item links to its full description.
 
    The late-hit correction works as soon as the fork is built, with no
    session file changes.  Without the late-hit keys in the session file it
-   uses the built-in defaults: a 100 ms window, with the cycle-fraction cap
-   off (100.0).  Setting ``late_hit_max_quant_unit_fraction`` to, say, 0.5
-   also caps the window at half a quantize cycle, which matters at fast
-   tempos, where 100 ms can be more than half a cycle.
+   uses the built-in defaults: a 100 ms window, never more than half the
+   Quantize unit (an eighth with Quantize 8th, a cycle with Quantize
+   Cycle).  Setting ``late_hit_max_quant_unit_fraction`` to, say, 0.25 caps
+   it further, at a quarter of the unit, so the window shrinks with the unit
+   at fast tempos.
 
    To change the values:
 
@@ -339,7 +345,7 @@ item links to its full description.
       and add the two late-hit keys at the end of its attribute list, before the
       closing ``/>``::
 
-          late_hit_max_quant_unit_fraction="0.5" late_hit_window_ms="100"
+          late_hit_max_quant_unit_fraction="0.25" late_hit_window_ms="100"
 
       A complete ``<Globals>`` element from a real session file looks like
       this (your other values will differ).  It also has
@@ -350,14 +356,14 @@ item links to its full description.
            input_gain="1" sync_source="-1" auto_disable_latency="1"
            jack_timebase_master="0" output_midi_clock="0" use_midi_start="0"
            use_midi_stop="0" send_midi_start_on_trigger="0" smart_eighths="0"
-           late_hit_window_ms="100" late_hit_max_quant_unit_fraction="0.5"
+           late_hit_window_ms="100" late_hit_max_quant_unit_fraction="0.25"
            record_failsafe_seconds="120.0" mute_late_hit_ms="100"/>
 
    3. **Restart SooperLooper** with the session file::
 
           sooperlooper --load-session yourfile.slsess
 
-   All four settings can also be read and changed while SooperLooper runs,
+   These settings and the others can also be read and changed while SooperLooper runs,
    over OSC, instead of editing the session file -- see `OSC Control`_.
 
 
@@ -464,8 +470,8 @@ boundary on every pass, as it was played the first time.
   and the late stop by Record or by any other command.
 * A recording that does not start on a boundary (Quantize Off or Loop
   with Sync on) has no pre-roll; nor does one whose pre-roll, plus how
-  late a late start came, is more than the input history holds (about
-  682 ms at 48 kHz).
+  late a late start came, is more than the input history holds (at least
+  4 s by default; see `Record Late-Hit Window Size`_).
 * Default 0: no pre-roll.  Negative values are refused: a loop starting
   after the one is a different mechanism (in effect Rel Sync with a fixed
   offset), not provided.
@@ -535,8 +541,8 @@ What happens, by situation:
    * - It is ended later than the window after that point
      - The point has passed, so the recording carries on to the same
        point a cycle later: the loop is a cycle longer than meant.
-     - Undo, and record again.  ``cancel_record_mute`` does nothing once
-       the stop is pressed.
+     - Undo, and record again.  The ``cancel_record_mute`` command does
+       nothing once the stop is pressed.
    * - Record pressed just after Rel Sync comes on (turned on, the
        loop's Sync box checked, Sync turned back on, or switched from
        plain Sync) while boundaries keep arriving
@@ -566,8 +572,8 @@ What happens, by situation:
      - Undo, soon.  While the stop is still waiting it gives back the
        loop as it was before the record.  After the end of memory the
        recording has written over the earlier loop, and Undo leaves the
-       loop empty.  ``cancel_record_mute`` works only until the stop is
-       pressed.
+       loop empty.  The ``cancel_record_mute`` command works only until the
+       stop is pressed.
 
 Commands for a Switch's Long or Double Press
 --------------------------------------------
@@ -798,22 +804,20 @@ sync boundary -- up to a whole cycle muted when you meant to be playing, or
 playing when you meant to be muted.  With this correction, a press that
 lands just after a boundary acts as if it had arrived exactly at that
 boundary, in both directions.  It applies to ``mute``, ``mute_on`` and
-``mute_off``.  Nothing in the loop is recorded or trimmed; only *when* the
+``mute_off``, and to ``mute_trigger`` pressed while playing, which is a
+Mute.  Pressed while muted, ``mute_trigger`` is a restart (Trigger) rather
+than an unmute; with a tempo set, a synced restart pressed less than an
+eighth after a boundary already starts at once, as far into the loop as
+the press was late (stock behavior).  Nothing in the loop is recorded or trimmed; only *when* the
 mute takes effect changes, so the loop stays exactly in time.
 
 **Its own window.**  The setting is ``mute_late_hit_ms``, in
-milliseconds, default 100 -- on by default, matching the Record late-hit
-window.  It is a plain millisecond value, with no cycle-fraction cap
-like the Record window's.
-That cap exists to keep a late Record press unambiguously tied to one
-boundary before real audio is copied or trimmed; mute and unmute never
-touch the audio, so a generous value can only make mute-quantize act a
-little more eagerly at very fast tempos, never mis-correct anything.  It is
-independent of ``late_hit_window_ms`` and ``record_failsafe_seconds``.
-
-It defaults on because, unlike the record failsafe, it can only turn "wait
-for the next boundary" into "act now", never lose anything -- the same
-reasoning as the Record late-hit window.
+milliseconds, default 100, like the Record window.  It is a separate
+setting so the mute correction can be tuned or turned off on its own.  It
+has no fraction setting: a mute changes no audio, so a late one only needs
+the few milliseconds a press tends to be late, at any tempo.  Like the
+Record window, it is capped at half the Quantize unit to avoid ambiguity
+(see `Record Late-Hit Window Size`_).
 
 To change or disable it, set ``mute_late_hit_ms`` (``0`` for off, otherwise
 the window in milliseconds) in the session file's ``<Globals>`` line or
@@ -830,31 +834,51 @@ This section is about the Record window (``late_hit_window_ms`` and
 ``mute_late_hit_ms``, is a separate, single millisecond value; see
 `New Feature: mute/unmute late-hit correction`_.
 
-The window has two limits, and the smaller one applies.
+The window has three limits, and the smallest one applies.  Each is measured
+against the **Quantize unit**: the spacing of the boundaries the Quantize
+setting gives, one eighth with Quantize 8th, one cycle (Eighths/Cycle eighths)
+with Quantize Cycle.
 
 **Millisecond cap.**  The setting is ``late_hit_window_ms``, default
 100 ms: how late a press can be and still count as on time.
 
-**Cycle-fraction cap.**  The setting is
-``late_hit_max_quant_unit_fraction``, default 100.0, which in effect turns
-it off so the millisecond cap always governs.  Set below 1.0, it limits the
-window to that fraction of one quantize cycle at the current tempo and
-Eighths/Cycle setting, so the window scales with tempo.  For example, 0.25
-allows at most a quarter of a cycle at any tempo.  At slow tempos the
-millisecond cap usually governs; the fraction cap takes over at fast tempos
-or with short cycles.
+**Fraction cap.**  The setting is ``late_hit_max_quant_unit_fraction``: the
+window is at most that fraction of the Quantize unit at the current tempo,
+so it scales with tempo.  For example, 0.25 allows at most a quarter of an
+eighth with Quantize 8th, or a quarter of a cycle with Quantize Cycle.  At
+slow tempos the millisecond cap usually governs; the fraction cap takes over
+at fast tempos or with short units.  The default, 100.0, leaves only the
+half-unit cap below.
+
+**Half-unit cap.**  Whatever the settings, the window is never more than
+half the Quantize unit: the nearer boundary wins.  A press in the first half
+of the unit after a boundary can count as late for that boundary; a press in
+the second half is always early for the next one, and waits for it.  A
+fraction above 0.5 acts as 0.5.  Without this cap, a press in a window past
+the middle of the unit could be either late for the boundary before it or
+early for the next.  Until the Quantize unit is known (no tempo set, and no
+two sync pulses seen yet), only the millisecond cap applies.
 
 Both are stored under those names in the session file's ``<Globals>`` line,
 the same line that holds ``tempo`` and ``eighth_per_cycle``.  Edit the file
 and restart SooperLooper, or change them live over OSC (see `OSC
 Control`_).  A session file without them uses the built-in defaults.
 
-The window can never be longer than about 682 ms at 48 kHz (32767 samples):
-that is how much input history SooperLooper keeps for a late start to copy
-from, and a larger ``late_hit_window_ms`` is silently limited to it.  One
-use of this: set ``late_hit_window_ms`` large (say 2000) and
-``late_hit_max_quant_unit_fraction`` to the cycle fraction you want, so the
-fraction alone governs at all normal tempos.
+**Input history.**  A late start copies the audio it missed from the input
+history SooperLooper keeps, so the window is also limited to that history.
+The sync pre-roll and the Rel Sync early start come from the same history.
+By default it holds at least 4 s, rounded up to a power of two of samples:
+262144 samples, 5.5 s, at 48 kHz, which costs 1 MB per channel (4 bytes per
+sample).  The engine's option ``--input-history=<seconds>`` changes it; it is
+never less than 32768 samples.  The GUI, slgui, takes the same option and
+passes it to the engine when it starts the engine itself; an engine started
+some other way needs the option on its own command line.  SooperLooper prints a warning
+when the window and pre-roll set are longer than the history holds, and
+again whenever a late press or a pre-roll is skipped for that reason.
+
+To let the fraction alone set the window, make ``late_hit_window_ms`` longer
+than any window the fraction will give at your tempos, such as 2000 (2 s),
+and set ``late_hit_max_quant_unit_fraction`` to the fraction you want.
 
 OSC Control
 ~~~~~~~~~~~
@@ -1302,9 +1326,8 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
      - ``plugin.cc``
      - ``100.0f``
      - Compile-time initial value for ``g_late_hit_max_quant_unit_fraction``
-       (fraction cap).  100.0 effectively disables the fraction cap so the
-       ms cap always governs.  Overridden at runtime by the session file or
-       OSC ``/set``.
+       (fraction cap).  100.0 acts as 0.5, the half-unit cap that always
+       applies.  Overridden at runtime by the session file or OSC ``/set``.
    * - ``RECORD_FAILSAFE_SECONDS_DEFAULT``
      - ``plugin.cc``
      - ``0.0f``
@@ -1359,21 +1382,21 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
    * - ``LATE_STOP_ANY_COMMAND``
      - ``plugin.cc``
      - ``1``
-     - New behaviour, on in this build for trial: under plain Sync, a
+     - New behavior, on in this build for trial: under plain Sync, a
        command other than Record that ends a recording (Overdub, a
        quantized Mute or ``mute_trigger``) within the late-hit window
        after a boundary ends it on that boundary, as the Record late stop
-       does.  Set to 0 for the previous behaviour (another whole cycle).
+       does.  Set to 0 for the previous behavior (another whole cycle).
    * - ``REL_SYNC_LATE_HIT``
      - ``plugin.hpp``
      - ``1``
-     - New behaviour, on in this build for trial: a Rel Sync recording
+     - New behavior, on in this build for trial: a Rel Sync recording
        that starts at the press starts trigger latency +
        ``rel_sync_preroll_ms`` earlier and ends as much earlier, and a
        command ending the recording within the late-hit window after the
        end point ends it there (see `Rel Sync Recordings`_).  Needs
        ``REL_SYNC_STALE_PHASE_FIX``.  Set to 0 for the previous
-       behaviour.
+       behavior.
    * - ``REL_SYNC_PREROLL_MS_DEFAULT``
      - ``plugin.cc``
      - ``0.0f``
@@ -1383,11 +1406,11 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
    * - ``SYNC_PREROLL``
      - ``plugin.hpp``
      - ``1``
-     - New behaviour, on in this build for trial, inactive while
+     - New behavior, on in this build for trial, inactive while
        ``sync_preroll_ms`` is 0: a plain Sync recording that starts on a
        boundary starts ``sync_preroll_ms`` before it and ends as much
        before its closing boundary (see `Sync Pre-Roll`_).  Set to 0 for
-       the previous behaviour.
+       the previous behavior.
    * - ``SYNC_PREROLL_MS_DEFAULT``
      - ``plugin.cc``
      - ``0.0f``
@@ -1579,9 +1602,9 @@ Where the Changes Are in the Source
 | ``sooperlooper_version``, so it shows in slgui's title, About box and
 | splash, the engine's startup banner and ``-V``, the engine's OSC ping
 | reply, and session files.  For each release, bump ``N``, rebuild (make
-| reruns configure), and tag the commit ``v1.7.9-mods.N``.  slgui shows the
-| version it was built with, not the engine's: they differ if the engine on
-| ``PATH`` is from another build.
+| reruns configure), and tag the commit ``v1.7.9-mods.N``.  The GUI, slgui,
+| shows the version it was built with, not the engine's: they differ if the
+| engine on ``PATH`` is from another build.
 | **All new code sections** are bracketed with ``albBegin`` / ``albEnd`` markers,
 | ``//------ albBegin`` / ``//------ albEnd``.  Search for ``albBegin`` to
 | locate every changed block.
@@ -1712,12 +1735,21 @@ load/save, OSC get/set). No new ``Event::command_t``, no
 Record Late-Hit Window: Implementation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Both limits are evaluated each buffer by ``effectiveLateHitWindow()`` in
-``plugin.cc``, which returns the smaller value in samples:
-``min(g_late_hit_window_ms, g_late_hit_max_quant_unit_fraction × cycle_samples)``.  The ms cap is
-additionally clamped to ``lInputBufSize − 1`` (32767 samples, approximately
-682 ms at 48 kHz), ensuring the window never exceeds the depth of the input
-ring buffer regardless of what ``late_hit_window_ms`` is set to.  If a key
+The limits are evaluated each buffer by ``effectiveLateHitWindow()`` in
+``plugin.cc``, which returns the smallest in samples:
+``min(g_late_hit_window_ms, min(g_late_hit_max_quant_unit_fraction, 0.5) × unit_samples)``,
+where ``unit_samples`` is the Quantize unit (``lLastSyncPeriodSamples``).  The
+mute/unmute window applies the same half-unit cap to ``g_mute_late_hit_ms``.  The ms cap is
+additionally clamped to ``lInputBufSize − 1`` (the input history),
+ensuring the window never exceeds the depth of the input
+ring buffer regardless of what ``late_hit_window_ms`` is set to.  The history
+is sized in ``instantiate()`` from ``g_input_history_seconds`` (default
+4 s; ``--input-history``, ``sooperlooper.cpp``), rounded up to a power of two
+and never below 32768.  When a late Record start or stop, a pre-roll or a
+Rel Sync early start is refused for lack of history, ``noteHistoryShort()``
+counts it on the instance; ``Looper::take_history_shortfall()`` reads the
+count in the engine's main loop, which prints the warning outside the audio
+thread.  If a key
 is absent from the session file, the compile-time defaults
 ``LATE_HIT_WINDOW_MS`` (100 ms) and ``LATE_HIT_MAX_QUANT_UNIT_FRACTION``
 (100.0) are used.
@@ -1801,8 +1833,8 @@ from 0).  A relocate resets it.  The MIDI clock branch does the same in
 ticks, with the origin reset on Start/Continue.
 
 The arithmetic lives in ``src/beat_tracker.hpp``; ``src/test_beat_tracker``
-has its unit tests and a JACK integration test.  ``make check`` there
-builds and runs the unit tests twice, the second time with
+has its unit tests and a JACK integration test.  Running ``make check``
+there builds and runs the unit tests twice, the second time with
 ``ALB_CYCLE_CHANGE_REANCHOR`` defined, which adds its tests.
 
 slbigstate: Implementation
@@ -2209,6 +2241,11 @@ General Terminology
 
    * - Term
      - Description
+   * - Quantize unit
+     - The spacing of the boundaries the Quantize setting gives: one eighth with
+       Quantize 8th, one cycle (Eighths/Cycle eighths) with Quantize Cycle.  The
+       late-hit windows are limited to half of it, and the fraction setting is a
+       fraction of it.
    * - sync boundary
      - The moment when the looper's sync source crosses a beat or cycle boundary.
        Sync boundaries arrive as a short pulse on the looper's internal sync bus
@@ -2227,9 +2264,9 @@ General Terminology
        selected, no sync pulses arrive and the late-hit correction never fires.
    * - late-hit window
      - The maximum elapsed time between a sync boundary and a button press for the
-       press to qualify as "late" rather than simply off-beat. Bounded by both an
-       absolute millisecond cap and a fraction of one full quantize cycle at the
-       current tempo and Eighths/Cycle setting; whichever is smaller applies.
+       press to qualify as "late" rather than simply off-beat. Bounded by an
+       absolute millisecond cap, a fraction of the Quantize unit at the current
+       tempo, and half the Quantize unit; whichever is smallest applies.
    * - T
      - The sync counter at the start of the block where the button press was
        detected: the samples since the most recent sync boundary, not counting the
@@ -2270,9 +2307,9 @@ SooperLooper variables whose roles are clarified here because the patch depends 
    * - ``LATE_HIT_MAX_QUANT_UNIT_FRACTION``
      - **[NEW]**
      - ``#define float``
-     - Compile-time default for the quantize-unit fraction cap (default 100.0,
-       which effectively disables the fraction cap so the ms cap always governs).
-       Initializes ``g_late_hit_max_quant_unit_fraction``.
+     - Compile-time default for the Quantize-unit fraction cap (default 100.0,
+       which acts as 0.5, the half-unit cap).  Initializes
+       ``g_late_hit_max_quant_unit_fraction``.
    * - ``g_late_hit_window_ms``
      - **[NEW]**
      - ``float`` (file-scope global)
@@ -2284,19 +2321,19 @@ SooperLooper variables whose roles are clarified here because the patch depends 
    * - ``g_late_hit_max_quant_unit_fraction``
      - **[NEW]**
      - ``float`` (file-scope global)
-     - Fraction of one full quantize cycle that defines the upper limit of the late-hit
-       window. ``effectiveLateHitWindow()`` multiplies this directly by
-       ``lLastSyncPeriodSamples`` (the full cycle period in samples). At 0.25 the
-       window is capped at 25 % of the current cycle length at any tempo or
-       Eighths/Cycle setting. The compile-time default is 100.0, making the ms cap
-       always the binding limit until a lower value is set in the session file.
+     - Fraction of the Quantize unit that defines the upper limit of the late-hit
+       window. The window function, ``effectiveLateHitWindow()``, multiplies it,
+       capped at 0.5, by
+       ``lLastSyncPeriodSamples`` (the Quantize unit in samples). At 0.25 the
+       window is capped at 25 % of the unit at any tempo.  The compile-time
+       default is 100.0, which acts as 0.5.
    * - ``effectiveLateHitWindow()``
      - **[NEW]**
      - ``static inline`` function
      - Computes the window in samples as ``min(ms_cap, fraction_cap)``, where
        ``ms_cap = g_late_hit_window_ms × 0.001 × fSampleRate`` (clamped to
-       ``lInputBufSize − 1``) and ``fraction_cap = g_late_hit_max_quant_unit_fraction
-       × lLastSyncPeriodSamples``. Returns the ms cap alone if
+       ``lInputBufSize − 1``) and ``fraction_cap = min(g_late_hit_max_quant_unit_fraction,
+       0.5) × lLastSyncPeriodSamples``. Returns the ms cap alone if
        ``lLastSyncPeriodSamples`` is at its uninitialized sentinel (``ULONG_MAX``).
    * - ``sl_dbg_file``
      - **[NEW]**
@@ -2382,9 +2419,10 @@ exists per loop channel.
    * - ``lLastSyncPeriodSamples``
      - **[NEW]**
      - ``unsigned long``
-     - The full-cycle sync period in samples, used by ``effectiveLateHitWindow()``
-       to compute the fraction cap.  When a tempo is set it is computed from
-       ``fTempo`` every buffer.  It is not simply measured between pulses because
+     - The Quantize unit in samples (one eighth with Quantize 8th, one cycle with
+       Quantize Cycle), used by ``effectiveLateHitWindow()`` and the mute window
+       for the fraction and half-unit caps.  When a tempo is set it is computed
+       from ``fTempo`` every buffer.  It is not simply measured between pulses because
        the sync bus also carries loop-coordination pulses (2.0, above the 1.5
        threshold) in quick bursts at state changes such as the end of a recording
        or an undo, which made the measured period tiny and shut the window.  With
@@ -2416,7 +2454,8 @@ exists per loop channel.
    * - ``lInputBufSize``
      - pre-existing
      - ``unsigned long``
-     - Length of ``pfInputLatencyBuf`` in samples (32768, hardcoded). Used as the modulus
+     - Length of ``pfInputLatencyBuf`` in samples (stock 32768; here at least 4 s
+       by default, or ``--input-history``; always a power of two). Used as the modulus
        for the wrap-around read in the backfill, and as the hard upper bound on the
        effective window in ``effectiveLateHitWindow()``.
    * - ``lInputBufMask``
@@ -2535,7 +2574,7 @@ Buffer Variables (local to ``runSooperLooper()``)
    * - ``pfInputLatencyBuf``
      - pre-existing
      - ``LADSPA_Data*``
-     - The continuous 32768-sample input ring buffer written every block from ``pfInput``.
+     - The continuous input ring buffer (``lInputBufSize`` samples) written every block from ``pfInput``.
        The source for the backfill audio.
    * - ``pfSyncInput``
      - pre-existing
@@ -2571,7 +2610,7 @@ session is next loaded; OSC ``/set`` changes it at once (see `OSC Control`_).
    * - ``late_hit_window_ms``
      - 100
    * - ``late_hit_max_quant_unit_fraction``
-     - 100.0 (no fraction cap)
+     - 100.0 (acts as 0.5, the half-unit cap)
    * - ``record_failsafe_seconds``
      - 0 (off)
    * - ``mute_late_hit_ms``
@@ -2632,21 +2671,13 @@ Known Issues and Future Work
    Enabling correction on all channels in this mode would require a broader audit of the
    state machine; deferred. See ``bLateHitBypassed`` in the Glossary.
 
--  **Window size and sample rate:** the effective maximum window is
-   ``(lInputBufSize − 1) / fSampleRate`` seconds — approximately 682 ms at 48 kHz,
-   743 ms at 44.1 kHz, 341 ms at 96 kHz. Setting ``late_hit_window_ms`` above this
-   value is silently clamped; it effectively makes the fraction cap dominant for all
-   musically relevant tempos. To raise the ceiling, increase ``lInputBufSize`` in
-   ``instantiate()`` (inexpensive: 32768 floats is 128 KB per channel).  The
-   same input history limits the sync pre-roll.
-
 -  **Multiply end:** the late-hit correction is tested on a dummy JACK server,
    together with the ``MULTIPLY_END_FIX`` fix (see `Multiply End
    Fix`_) (disable with ``LATE_HIT_MULTIPLY_CORRECTION 0`` if
    regressions appear).  On the rig, with sync boundaries every beat and a
    4-beat loop cycle, it fired after any beat: a press just after a beat
    inside a cycle took back a cycle that had not just been added, so the
-   Multiply was cancelled (stock gave the full length).  Now only the
+   Multiply was canceled (stock gave the full length).  Now only the
    boundary where the current cycle began counts: the play position runs
    input + output latency ahead of the sync grid, so that cycle is
    T + 1 + IL + OL samples old at the press, and a boundary inside the

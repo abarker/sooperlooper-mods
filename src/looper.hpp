@@ -108,6 +108,11 @@ class Looper
 	// not affect the first few presses on the new source.
 	// Called from Engine::update_sync_source() — always non-RT.
 	void reset_late_hit_state();
+	// True if a late start, pre-roll or Rel Sync early start has been
+	// refused for a too-short input history since the last call; `needed`
+	// gets the most samples one needed and `have` the history's length.
+	// Non-RT (the engine's main loop).
+	bool take_history_shortfall(unsigned long & needed, unsigned long & have);
 	//------ albEnd ----------------------------------
 	void set_replace_quantized(bool flag);
 
@@ -158,6 +163,10 @@ class Looper
 	unsigned int _index;
 	unsigned int _chan_count;
 	LADSPA_Handle *      _instances;
+	//------ albBegin ----------------------------------
+	// take_history_shortfall(): the count it last saw, per channel 0.
+	unsigned long _history_short_seen;
+	//------ albEnd ----------------------------------
 	float _loopsecs;
 	
 	LADSPA_Descriptor* descriptor;

@@ -94,6 +94,37 @@ extern float g_mute_late_hit_ms;
 extern float g_rel_sync_preroll_ms;
 // SYNC_PREROLL's plain Sync pre-roll (plugin.cc), likewise.
 extern float g_sync_preroll_ms;
+// The input history's length (plugin.cc): --input-history, and the size
+// it gives in samples at a sample rate.
+extern float g_input_history_seconds;
+extern unsigned long sl_input_history_samples(unsigned long sample_rate);
+
+// Warn when the late-hit window, with the sync pre-roll, is longer than the
+// input history can hold: presses late by nearly the whole window would
+// then miss the correction or the pre-roll (plugin.cc refuses them, and the
+// main loop warns again when one is).  Non-RT.
+static void warn_if_history_short (AudioDriver * driver)
+{
+	if (!driver || g_late_hit_window_ms <= 0.0f) {
+		return;
+	}
+	const double sr = (double) driver->get_samplerate();
+	if (sr <= 0.0) {
+		return;
+	}
+	const double have = sl_input_history_samples ((unsigned long) sr) * 1000.0 / sr;
+	const double need = g_late_hit_window_ms + g_sync_preroll_ms
+		+ driver->get_buffersize() * 1000.0 / sr;
+	if (need > have) {
+		fprintf (stderr,
+		         "SooperLooper: warning: late_hit_window_ms (%.0f ms)%s needs %.0f ms of input"
+		         " history, but there is only %.0f ms: presses late by nearly the whole window"
+		         " will miss the late-hit correction or the pre-roll.  Start with"
+		         " --input-history=<seconds> to keep more.\n",
+		         g_late_hit_window_ms, g_sync_preroll_ms > 0.0f ? " with sync_preroll_ms" : "",
+		         need, have);
+	}
+}
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
@@ -2298,6 +2329,23 @@ Engine::mainloop()
 				ParamChanged(Event::CycleLength, n);				
 				ParamChanged(Event::FreeTime, n);
 			}
+
+			//------ albBegin ----------------------------------
+			// A late start, pre-roll or Rel Sync early start refused
+			// because the input history was too short (plugin.cc,
+			// noteHistoryShort()): say so, here outside the audio thread.
+			for (unsigned int n=0; n < _instances.size(); ++n) {
+				unsigned long needed = 0, have = 0;
+				if (_instances[n]->take_history_shortfall (needed, have)) {
+					const double sr = (double) _driver->get_samplerate();
+					fprintf (stderr,
+					         "SooperLooper: warning: loop %u: a late-hit start or pre-roll needed"
+					         " %.0f ms of input history, but there is only %.0f ms; it was skipped."
+					         "  Start with --input-history=<seconds> to keep more.\n",
+					         n + 1, needed * 1000.0 / sr, have * 1000.0 / sr);
+				}
+			}
+			//------ albEnd ----------------------------------
 			
 			// wake up every 10 ms for servicing auto-update parameters
 			// TODO: make it more even more flexible?
@@ -2533,6 +2581,9 @@ Engine::process_nonrt_event (EventNonRT * event)
 			if (gs_event->value >= 0.0f) {
 				g_sync_preroll_ms = gs_event->value;
 			}
+		}
+		if (gs_event->param == "late_hit_window_ms" || gs_event->param == "sync_preroll_ms") {
+			warn_if_history_short (_driver);
 		}
 		//------ albEnd ----------------------------------
 
@@ -3842,6 +3893,7 @@ Engine::load_session (std::string fname, string * readstr)
 		        g_late_hit_window_ms, g_late_hit_max_quant_unit_fraction,
 		        g_record_failsafe_seconds, g_mute_late_hit_ms,
 		        g_rel_sync_preroll_ms, g_sync_preroll_ms);
+		warn_if_history_short (_driver);
 		//------ albEnd ----------------------------------
 
 	}

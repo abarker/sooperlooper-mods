@@ -258,8 +258,9 @@ too long. Ending a Multiply works the same way. It is on by default with a
 
 (milliseconds; ``0`` disables it). A second, optional key,
 ``late_hit_max_quant_unit_fraction``, also caps the window at a fraction of
-the quantize cycle, which helps at fast tempos -- the fork's summary document
-describes it.
+the Quantize unit (an eighth with Quantize 8th, a cycle with Quantize Cycle),
+which helps at fast tempos -- the fork's summary document describes it.  The
+window is never more than half that unit, whatever the settings.
 
 .. note::
 

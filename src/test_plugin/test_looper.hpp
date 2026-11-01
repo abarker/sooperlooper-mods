@@ -55,6 +55,10 @@ class TestLooper
 	/* The head loop's lSyncPos (where the sync grid falls in the loop:
 	 * a pulse plays loop position -lSyncPos mod length), 0 if no loop. */
 	long get_channel_sync_pos (unsigned int index) const;
+	/* The input history's length, and how many late starts, pre-rolls
+	 * or Rel Sync early starts it was too short for (channel index). */
+	unsigned long get_channel_history_size (unsigned int index) const;
+	unsigned long get_channel_history_short_count (unsigned int index) const;
 	//------ albEnd ----------------------------------
 
 	void request_cmd (int cmd);
@@ -93,6 +97,10 @@ class TestLooper
 	 * sync_clock. */
 	unsigned long      sync_inject_period;
 	unsigned long long sync_clock;
+	/* With the generator running: one extra single-sample 2.0 at sync_clock
+	 * frame sync_pulse_at, then run() sets it back to -1.  With a period
+	 * too long to come round, this gives single pulses at exact frames. */
+	long long          sync_pulse_at;
 
 	/* Exact press timing.  process_count goes up at the top of run(), so
 	 * a test reading sync_clock after wait_buffers() races the callback
