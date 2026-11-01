@@ -19,6 +19,27 @@ some other documents and in the code.
                  recommended direction for a future agent or developer.
 
 
+.. note:: **Update, 2026-11-01.**  Two things have changed since this
+   review was written:
+
+   * **BLOCK numbers are out of date.**  "BLOCK N" here means the Nth
+     ``albBegin``/``albEnd`` block in a file as the code stood in May 2026
+     (``plugin.cc`` then had 13; it now has over 70).  The numbers no
+     longer match the code: search for the function or variable named
+     instead (the code's own comments no longer use them).
+   * **The late-hit window has been reworked.**  It is now measured against
+     the *Quantize unit* (one eighth with Quantize 8th, one cycle with
+     Quantize Cycle): ``late_hit_max_quant_unit_fraction`` is a fraction of
+     that unit, and the window is always capped at half of it, so a press
+     can no longer be taken as late for the previous boundary when it was
+     early for the next.  The input history is at least 4 s by default
+     (``--input-history``), not a fixed 32768 samples.  See
+     ``late_hit_patch_summary.rst``, "Record Late-Hit Window Size".
+
+   Items whose status or facts changed carry an *Update* paragraph: C1,
+   C1a, C9, C10, D1, D4.
+
+
 How to read this document
 ==========================
 
@@ -49,13 +70,13 @@ Executive summary
 
   C1  ✓ DONE    C2  ✓ DONE    C3  DEFERRED  C4  N/A      C5  ✓ DONE
   C6  ✓ DONE    C7  N/A       C8  N/A        C9  N/A      C10 ✓ DONE
-  C1a OPEN
+  C1a CLOSED (fix not needed; see C1a)
 
   H1  N/A       H2  N/A       H3  N/A        H4  ✓ DONE
 
   R1  ACCEPTED  R2  N/A       R3  N/A         R4  N/A      R5  ✓ DONE
 
-  D1  OPEN      D2  N/A       D3  N/A         D4  OPEN     D5  ✓ DONE
+  D1  ✓ DONE    D2  N/A       D3  N/A         D4  ✓ DONE   D5  ✓ DONE
 
 The modifications fall into three families.  Each family has distinct
 risk characteristics:
@@ -202,6 +223,11 @@ pulse-measurement value because it tracks engine state rather than
 sync-bus signal noise.  See C1a below for one remaining stylistic
 refinement.
 
+**Update (2026-11-01).**  The fTempo path now computes the Quantize unit
+rather than always the full cycle: one eighth with Quantize 8th, one cycle
+otherwise, as this period was meant to be.  The fraction cap is applied to
+that unit, and the window is capped at half of it in all cases.
+
 ------
 
 C1a: BLOCK 7 / BLOCK 8 ordering refinement (follow-up to C1)
@@ -210,7 +236,8 @@ C1a: BLOCK 7 / BLOCK 8 ordering refinement (follow-up to C1)
 **Severity**: LOW.  **Live impact**: 1 (narrow within-buffer race).
 **Confidence**: HIGH.
 
-**Status**: OPEN — one-condition wrap, zero risk; deferred.
+**Status**: CLOSED (2026-11-01) — the fix is not needed, and would have
+made things worse; see the update at the end of this item.
 
 **Where**: plugin.cc BLOCK 8 (pulse-period capture).
 
@@ -240,6 +267,17 @@ additional condition wrap around an existing line; no behavioral
 change in any case BLOCK 7 already handled correctly.  Risk of new
 bug is essentially zero — the change only restricts when an overwrite
 happens, never expands it.
+
+**Update (2026-11-01).**  Tested on a dummy JACK server (120 BPM,
+Quantize 8th, a 300 ms window, fraction 0.25), the overwrite turned out
+to *help* in its one case: a press in a pulse's own buffer is a little
+early for that pulse, and the smaller pulse-measured period kept it from
+being taken as late for the pulse before.  With the suggested gate the
+loop started a whole eighth early.  The underlying problem was a window
+longer than half the pulse spacing, now prevented by the half-unit cap
+(see the note at the top).  Since the fTempo path now gives the Quantize
+unit, the same value the scanner measures, the two paths agree and the
+overwrite no longer changes anything.
 
 ------
 
@@ -615,7 +653,8 @@ sync boundary.  This requires the backfill depth T to exceed
 ``lInputBufSize``.
 
 ``lInputBufSize`` is a **hardcoded constant: 32768 samples** (682 ms
-at 48 kHz).  T is bounded by the late-hit window: at most
+at 48 kHz).  (*Update, 2026-11-01:* no longer hard-coded; it is at
+least 4 s by default, set with ``--input-history``, never under 32768.)  T is bounded by the late-hit window: at most
 ``g_late_hit_window_ms / 1000 × fSampleRate`` ≈ **4800 samples**
 (100 ms at 48 kHz).  4800 << 32768 by a factor of 7.  The read
 position ``lInputBufWritePos - T`` never reaches the previous wrap.
@@ -659,6 +698,11 @@ That happens when ``g_late_hit_window_ms > 682 ms`` at 48 kHz.
 Capping ``msLimit`` at ``lInputBufSize - 1`` before the fraction
 comparison makes the constraint self-enforcing regardless of what
 the constant is set to.  No behavioral change at the default 100 ms.
+
+**Update (2026-11-01).**  The cap still holds, against the input history
+as now sized (``--input-history``).  A late press beyond it, or a
+pre-roll that does not fit, is now also counted in the audio thread and
+reported as a warning from the engine's main loop.
 
 ------
 
@@ -959,7 +1003,7 @@ D1: ``g_late_hit_window_ms`` as a file-scope global
 
 **Severity**: LOW.  **Live impact**: 1.  **Confidence**: HIGH.
 
-**Status**: OPEN — future enhancement.
+**Status**: ✓ DONE — runtime tuning over OSC (see the update below).
 
 **Where**: plugin.cc BLOCK 1.
 
@@ -973,6 +1017,12 @@ slow tempo, narrow it on fast songs.
 **Direction**: revisit the global-vs-port decision once the feature
 stabilises.  If runtime tuning is desired, promoting to a real
 control port is the standard path.
+
+**Update (2026-11-01).**  Runtime tuning came without a port: all six
+settings globals (window, fraction, record failsafe, mute window, and the
+two pre-rolls) are read and set with the engine's global OSC ``/get`` and
+``/set``, as ``tempo`` is, and saved in the session file.  They are still
+not slgui controls.
 
 ------
 
@@ -1053,7 +1103,7 @@ D4: No regression test infrastructure
 **Severity**: LOW.  **Live impact**: 1 (compounds future changes).
 **Confidence**: HIGH.
 
-**Status**: OPEN — future work.
+**Status**: ✓ DONE (see the update below).
 
 There are no automated tests for any of the new behavior: late-hit,
 JACK MIDI in/out, TriggerLatency zeroing, slave sync.  Each change
@@ -1064,6 +1114,12 @@ exploratory phase but becomes a liability as the codebase grows.
 hand-test procedures as a runbook (record loop with X, expect Y).
 Automate the ones that don't require human ears (state-machine
 transitions, port registration, session save/load round-trip).
+
+**Update (2026-11-01).**  ``src/test_plugin/`` now holds a regression
+suite of about 350 tests run against a dummy JACK server (late-hit,
+Rel Sync, pre-roll, the stock fixes, the new commands), with exact-frame
+presses and pulses; ``src/test_beat_tracker/`` tests the JACK beat
+tracking.  Its ``README.rst`` lists the files and what is not covered.
 
 ------
 

@@ -279,7 +279,9 @@ Sync box makes nothing wait.
 *Fork addition -- late-hit correction.*  A Record press that lands just
 after a boundary is normally pushed to the next boundary, a whole cycle
 later.  This fork treats a press within a short window after a boundary
-(100 ms by default) as if it had arrived on that boundary: a late start
+(100 ms by default, and never more than half the time between boundaries,
+so a press nearer the next boundary always waits for it) as if it had
+arrived on that boundary: a late start
 still starts on the beat, with the audio played since the beat kept, and a
 late stop ends the loop on the beat -- whether Record, Overdub, or Mute or
 ``mute_trigger`` with mute quant on ends the recording.  The same applies to the press that
