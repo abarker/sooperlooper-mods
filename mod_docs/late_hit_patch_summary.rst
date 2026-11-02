@@ -1660,7 +1660,12 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        not something a general build should enable by default.  **When
        defined:** logs one line per JackSync cycle-boundary pulse (frame,
        tempo, and bar/beat fields when available), plus a line for each
-       transport relocate and each tempo change, to
+       transport relocate, tempo change, loops' sync-counter reset, and
+       realign (request with its reason -- manual, auto or start -- and
+       its landing with the cycles JACK held the transport), and one at
+       each engine start.  Every line ends with ``time=``, the local
+       wall-clock time the record was made to the millisecond, so the log
+       lines up with others (xruns, Hydrogen's).  The file is
        ``$HOME/.sooperlooper/logs/sl_sync_pulse.log``
        (created if needed, falling back to ``/tmp`` only if ``$HOME`` is
        unset).  RT side only pushes a POD through a lock-free

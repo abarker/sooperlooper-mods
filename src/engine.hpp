@@ -167,8 +167,22 @@ namespace SooperLooper {
 struct SyncPulseLogEvent
 {
 	// SyncReset: a backwards relocate reset the loops' samples-since-sync
-	// counters (framepos: info.framepos).
-	enum Kind { Pulse = 0, Relocate = 1, TempoChange = 2, Follow = 3, SyncReset = 4 };
+	// counters (framepos: info.framepos).  Realign: see realign_what.
+	enum Kind { Pulse = 0, Relocate = 1, TempoChange = 2, Follow = 3, SyncReset = 4,
+	            Realign = 5 };
+	// Every record: the wall-clock time it was made (CLOCK_REALTIME, read
+	// in the process thread by sync_log_push(); no lock, no system call),
+	// so the log lines up with other logs (xruns, Hydrogen's).
+	int64_t   wall_sec;
+	int32_t   wall_nsec;
+	// Realign: request (framepos: info.framepos, expected: the target),
+	// landed (framepos: the landing frame, realign_held: the cycles JACK
+	// held the transport), or lost (another relocation, or none within the
+	// wait).  realign_why: 1 manual, 2 auto_realign, 3 engine start.
+	enum RealignWhat { RealignRequest = 0, RealignLanded = 1, RealignLost = 2 };
+	uint8_t   realign_what;
+	uint8_t   realign_why;
+	int32_t   realign_held;
 	uint8_t   kind;          // which of the record types this is
 
 	nframes_t framepos;      // Pulse: info.framepos + offset, the absolute

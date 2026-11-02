@@ -118,7 +118,11 @@ extern float g_sync_preroll_ms;
 // offset), so a press when all is well is just a relocation that changes
 // no musical position.  JACK applies a relocation two cycles after the
 // request.  Set from the non-RT set handler; read in the process thread.
-static std::atomic<bool> s_realign_request (false);
+// The value is why: 0 none, 1 manual, 2 auto_realign, 3 engine start (the
+// pulse log records it).
+static std::atomic<int> s_realign_request (0);
+// Why the realign now landing was requested.  Process thread only.
+static int s_realign_why = 0;
 // The frame the requested realign lands on, or -1: its backwards locate
 // must not reset the loops' sync counters as other locates do.  Process
 // thread only.
@@ -286,6 +290,19 @@ static void warn_if_history_short (AudioDriver * driver)
 // interleaved into stderr would be disruptive in a way plugin.cc's
 // per-button-press messages are not. If nowhere is writable, logging is
 // simply disabled for that run -- the caller warns once.
+// A pulse-log time: local wall-clock time to the millisecond, e.g.
+// 2026-11-02T17:05:31.042, with no spaces so lines stay key=value pairs.
+static void
+alb_sync_log_time (char * buf, size_t len, int64_t sec, int32_t nsec)
+{
+	time_t tt = (time_t) sec;
+	struct tm tmv;
+	localtime_r (&tt, &tmv);
+	char base[24];
+	strftime (base, sizeof (base), "%Y-%m-%dT%H:%M:%S", &tmv);
+	snprintf (buf, len, "%s.%03d", base, (int) (nsec / 1000000));
+}
+
 static FILE*
 alb_sync_pulse_log_open ()
 {
@@ -310,6 +327,16 @@ alb_sync_pulse_log_open ()
 
 	if (!f) {
 		f = std::fopen ("/tmp/sl_sync_pulse.log", "a");
+	}
+
+	// One line per engine start, so runs can be told apart in the file.
+	if (f) {
+		struct timespec ts;
+		clock_gettime (CLOCK_REALTIME, &ts);
+		char t[40];
+		alb_sync_log_time (t, sizeof (t), ts.tv_sec, ts.tv_nsec);
+		fprintf (f, "event=start pid=%d time=%s\n", (int) getpid (), t);
+		fflush (f);
 	}
 
 	return f;
@@ -2225,19 +2252,42 @@ Engine::mainloop()
 				// Pulse lines start with "frame=" (the original format,
 				// with the BBT fields appended); the other record types
 				// start with "event=" so a reader can tell them apart.
+				// Every line ends with time=, the wall-clock time the
+				// record was made (local time, milliseconds).
+				char t[40];
+				alb_sync_log_time (t, sizeof (t), pev.wall_sec, pev.wall_nsec);
 				if (pev.kind == SyncPulseLogEvent::Relocate) {
 					fprintf (_sync_pulse_log_file,
-					         "event=relocate frame=%u expected=%u bpm=%.3f\n",
-					         pev.framepos, pev.expected, pev.bpm);
+					         "event=relocate frame=%u expected=%u bpm=%.3f time=%s\n",
+					         pev.framepos, pev.expected, pev.bpm, t);
 				}
 				else if (pev.kind == SyncPulseLogEvent::SyncReset) {
 					fprintf (_sync_pulse_log_file,
-					         "event=sync_reset frame=%u\n", pev.framepos);
+					         "event=sync_reset frame=%u time=%s\n", pev.framepos, t);
+				}
+				else if (pev.kind == SyncPulseLogEvent::Realign) {
+					// why: manual (/set realign_transport), auto
+					// (auto_realign) or start (engine started rolling).
+					static const char * why[] = { "?", "manual", "auto", "start" };
+					const char * w = why[pev.realign_why < 4 ? pev.realign_why : 0];
+					if (pev.realign_what == SyncPulseLogEvent::RealignRequest) {
+						fprintf (_sync_pulse_log_file,
+						         "event=realign what=request why=%s frame=%u target=%u"
+						         " bpm=%.3f time=%s\n", w, pev.framepos, pev.expected, pev.bpm, t);
+					} else if (pev.realign_what == SyncPulseLogEvent::RealignLanded) {
+						fprintf (_sync_pulse_log_file,
+						         "event=realign what=landed why=%s frame=%u held=%d time=%s\n",
+						         w, pev.framepos, pev.realign_held, t);
+					} else {
+						fprintf (_sync_pulse_log_file,
+						         "event=realign what=lost why=%s frame=%u time=%s\n",
+						         w, pev.framepos, t);
+					}
 				}
 				else if (pev.kind == SyncPulseLogEvent::TempoChange) {
 					fprintf (_sync_pulse_log_file,
-					         "event=tempo frame=%u from=%.3f to=%.3f\n",
-					         pev.framepos, pev.prev_bpm, pev.bpm);
+					         "event=tempo frame=%u from=%.3f to=%.3f time=%s\n",
+					         pev.framepos, pev.prev_bpm, pev.bpm, t);
 				}
 				else if (pev.kind == SyncPulseLogEvent::Follow) {
 					// err: the master's position minus SooperLooper's
@@ -2247,23 +2297,23 @@ Engine::mainloop()
 					static const char * what[] = { "snap", "start", "stop", "absorb" };
 					if (pev.follow_what == SyncPulseLogEvent::FollowStop) {
 						fprintf (_sync_pulse_log_file,
-						         "event=follow what=stop frame=%u bpm=%.3f\n",
-						         pev.framepos, pev.bpm);
+						         "event=follow what=stop frame=%u bpm=%.3f time=%s\n",
+						         pev.framepos, pev.bpm, t);
 					} else {
 						fprintf (_sync_pulse_log_file,
-						         "event=follow what=%s frame=%u bpm=%.3f err=%.4f\n",
-						         what[pev.follow_what], pev.framepos, pev.bpm, pev.follow_err);
+						         "event=follow what=%s frame=%u bpm=%.3f err=%.4f time=%s\n",
+						         what[pev.follow_what], pev.framepos, pev.bpm, pev.follow_err, t);
 					}
 				}
 				else {
 					fprintf (_sync_pulse_log_file,
 					         "frame=%u this=%u diff=%u bpm=%.3f tempoframes=%.3f "
 					         "eighth=%.2f beat=%d tick=%d bbt=%d "
-					         "bar=%d bst=%.1f bpb=%.2f tpb=%.1f\n",
+					         "bar=%d bst=%.1f bpb=%.2f tpb=%.1f time=%s\n",
 					         pev.framepos, pev.thisval, pev.diff, pev.bpm,
 					         pev.tempo_frames, pev.eighth_cycle, pev.beat, pev.tick,
 					         (int) pev.use_bbt, pev.bar, pev.bar_start_tick,
-					         pev.beats_per_bar, pev.ticks_per_beat);
+					         pev.beats_per_bar, pev.ticks_per_beat, t);
 				}
 				fflush (_sync_pulse_log_file);
 			}
@@ -2661,7 +2711,7 @@ Engine::process_nonrt_event (EventNonRT * event)
 		// unsigned long in plugin.cc's threshold checks, which is unsafe.
 		else if (gs_event->param == "realign_transport") {
 			// Realign (see s_realign_request): any value requests it.
-			s_realign_request.store (true);
+			s_realign_request.store (1);
 		}
 		else if (gs_event->param == "auto_realign") {
 			// See s_auto_realign.  Setting it (either way) also lifts a
@@ -3117,6 +3167,11 @@ Engine::sync_log_push (const SyncPulseLogEvent & ev)
 	_sync_pulse_log_queue->get_write_vector (&vec);
 	if (vec.len[0] > 0) {
 		vec.buf[0][0] = ev;
+		// The time it was made (see SyncPulseLogEvent::wall_sec).
+		struct timespec ts;
+		clock_gettime (CLOCK_REALTIME, &ts);
+		vec.buf[0][0].wall_sec  = ts.tv_sec;
+		vec.buf[0][0].wall_nsec = (int32_t) ts.tv_nsec;
 		_sync_pulse_log_queue->increment_write_ptr (1);
 	}
 }
@@ -3522,12 +3577,31 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				// realigns: one with none lands where it was not aimed, so
 				// any other relocation while ours is due, with no hold
 				// seen, counts as that.
+				// A realign's pulse-log record (ALB_SYNC_PULSE_LOG): what
+				// happened, why it was requested, frames, the hold.
+				auto log_realign = [&] (uint8_t what, int64_t frame, int64_t target, int held) {
+#ifdef ALB_SYNC_PULSE_LOG
+					SyncPulseLogEvent rev = SyncPulseLogEvent();
+					rev.kind         = SyncPulseLogEvent::Realign;
+					rev.realign_what = what;
+					rev.realign_why  = (uint8_t) s_realign_why;
+					rev.framepos     = (nframes_t) frame;
+					rev.expected     = (nframes_t) target;
+					rev.realign_held = held;
+					rev.bpm          = bpm;
+					sync_log_push (rev);
+#else
+					(void) what; (void) frame; (void) target; (void) held;
+#endif
+				};
 				if (s_realign_landing >= 0) {
 					if (info.state != TransportInfo::ROLLING) {
 						++s_realign_held;
 					}
 					else if (realign_landed
 					         || (_beat_tracker.relocated () && s_realign_held == 0)) {
+						log_realign (SyncPulseLogEvent::RealignLanded, info.framepos,
+						             s_realign_landing, s_realign_held);
 						if (s_realign_held != 1) {
 							s_auto_realign_blocked.store (true);
 							s_realign_hold_report.store (s_realign_held);
@@ -3535,6 +3609,8 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 						s_realign_landing = -1;
 					}
 					else if (_beat_tracker.relocated () || ++s_realign_wait > 32) {
+						log_realign (SyncPulseLogEvent::RealignLost, info.framepos,
+						             s_realign_landing, s_realign_held);
 						s_realign_landing = -1;
 					}
 				}
@@ -3572,7 +3648,7 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				if (s_start_check_pending) {
 					s_start_check_pending = false;
 					if (info.state == TransportInfo::ROLLING) {
-						s_realign_request.store (true);
+						s_realign_request.store (3);
 					}
 				}
 				// Automatic realign (s_auto_realign): once the tempo has
@@ -3588,7 +3664,7 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 						if (s_auto_settle_frames >= (int64_t) (AUTO_REALIGN_SETTLE_S * sr)) {
 							s_auto_settle_frames = -1;
 							if (s_auto_realign.load () && !s_auto_realign_blocked.load ()) {
-								s_realign_request.store (true);
+								s_realign_request.store (2);
 							}
 						}
 					}
@@ -3599,12 +3675,15 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				s_auto_last_bpm = bpm;
 				// A request while not rolling is dropped, not kept for
 				// later: a start re-anchors anyway.
-				if (s_realign_request.exchange (false) && _beat_tracker.active ()
+				const int why = s_realign_request.exchange (0);
+				if (why != 0 && _beat_tracker.active ()
 				    && info.state == TransportInfo::ROLLING && bpm > 0.0) {
 					const double rate = bpm / (60.0 * sr);      // beats per frame
 					const double beats_then = _beat_tracker.end_beats () + 2.0 * (double) nframes * rate;
 					const int64_t target = (int64_t) llround (beats_then / rate);
 					if (target >= 2 * (int64_t) nframes) {
+						s_realign_why = why;
+						log_realign (SyncPulseLogEvent::RealignRequest, info.framepos, target, 0);
 						s_realign_landing = target;
 						s_realign_wait = 0;
 						s_realign_held = 0;

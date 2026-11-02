@@ -58,11 +58,12 @@ def parse(path):
 
 
 def sessions(records):
-    """Split into sessions at relocates (explicit, or frame going backwards)."""
+    """Split into sessions at relocates (explicit, or frame going backwards)
+    and at engine starts."""
     cur = {"pulses": [], "tempos": []}
     last_frame = None
     for r in records:
-        if r["kind"] == "relocate":
+        if r["kind"] in ("relocate", "start"):
             if cur["pulses"]:
                 yield cur
             cur = {"pulses": [], "tempos": []}
