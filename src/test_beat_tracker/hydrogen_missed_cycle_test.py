@@ -131,8 +131,9 @@ def write_h2_config(root, home):
         f.write(s)
 
 
-def write_song(root, path):
-    """A demo song cut down to one looped pattern with a kick on every beat."""
+def write_song(root, path, mode="song"):
+    """A demo song cut down to one looped pattern with a kick on every beat,
+    in song or pattern mode."""
     src = os.path.join(root, "usr", "share", "hydrogen", "data", "demo_songs",
                        "GM_kit_demo1.h2song")
     s = open(src).read()
@@ -150,7 +151,7 @@ def write_song(root, path):
                "<patternSequence>\n  <group>\n   <patternID>beat</patternID>\n"
                "  </group>\n </patternSequence>", s, flags=re.S)
     s = re.sub(r"<loopEnabled>[^<]*</loopEnabled>", "<loopEnabled>true</loopEnabled>", s)
-    s = re.sub(r"<mode>[^<]*</mode>", "<mode>song</mode>", s)
+    s = re.sub(r"<mode>[^<]*</mode>", "<mode>%s</mode>" % mode, s)
     for tag in ("humanize_time", "humanize_velocity", "swing_factor"):
         s = re.sub(r"<%s>[^<]*</%s>" % (tag, tag), "<%s>0</%s>" % (tag, tag), s)
     with open(path, "w") as f:
@@ -219,7 +220,7 @@ def run(args, tmp, h2_root):
     os.makedirs(sl_home)
     write_h2_config(h2_root, h2_home)
     song = os.path.join(tmp, "test.h2song")
-    write_song(h2_root, song)
+    write_song(h2_root, song, "pattern" if args.pattern_mode else "song")
     apprun = os.path.join(h2_root, "AppRun")
     h2_cmd = [apprun] if os.path.exists(apprun) else [os.path.join(h2_root, "usr", "bin", "hydrogen")]
 
@@ -240,16 +241,22 @@ def run(args, tmp, h2_root):
 
         probe.activate()
 
-        spawn([args.engine, "-S", SERVER, "-p", str(SL_OSC_PORT), "-l", "1", "-c", "2",
-               "-j", "sl_h2"], dict(env, HOME=sl_home), "engine.out")
+        def start_engine(log):
+            return spawn([args.engine, "-S", SERVER, "-p", str(SL_OSC_PORT), "-l", "1", "-c", "2",
+                          "-j", "sl_h2"], dict(env, HOME=sl_home), log)
+
+        def set_engine():
+            for msg in (["/set", "sf", "sync_source", "-1"],
+                        ["/set", "sf", "eighth_per_cycle", "2"],
+                        ["/sl/0/set", "sf", "quantize", "1"]):
+                osc(SL_OSC_PORT, *msg)
+
+        engine = start_engine("engine.out")
         h2 = spawn(h2_cmd + ["--child", "-n", "-s", song, "-O", str(H2_OSC_PORT),
                              "-L", os.path.join(tmp, "h2.log"), "-T", "-V", "Warning"],
                    dict(env, HOME=h2_home, QT_QPA_PLATFORM="offscreen"), "h2.out")
         time.sleep(8)
-        for msg in (["/set", "sf", "sync_source", "-1"],
-                    ["/set", "sf", "eighth_per_cycle", "2"],
-                    ["/sl/0/set", "sf", "quantize", "1"]):
-            osc(SL_OSC_PORT, *msg)
+        set_engine()
         outs = [p.name for p in probe.get_ports("Hydrogen:", is_audio=True, is_output=True)]
         main_l = [n for n in outs if n.endswith("out_L")] or outs[:1]
         if not main_l:
@@ -265,8 +272,12 @@ def run(args, tmp, h2_root):
         t0 = time.monotonic()
 
         marks = {}
-        for at, what in [(8.0, "incr"), (8.1, "incr"), (8.2, "incr"),
-                         (15.0, "freeze"), (23.0, "relocate"), (29.0, "end")]:
+        plan = [(8.0, "incr"), (8.1, "incr"), (8.2, "incr"), (15.0, "freeze")]
+        if args.restart_engine:
+            plan += [(19.0, "restart"), (30.0, "relocate"), (36.0, "end")]
+        else:
+            plan += [(23.0, "relocate"), (29.0, "end")]
+        for at, what in plan:
             while time.monotonic() - t0 < at:
                 time.sleep(0.002)
             marks.setdefault(what, probe.transport_query()[1]["frame"])
@@ -276,6 +287,15 @@ def run(args, tmp, h2_root):
                 os.kill(h2.pid, signal.SIGSTOP)
                 time.sleep(args.freeze_ms / 1000.0)
                 os.kill(h2.pid, signal.SIGCONT)
+            elif what == "restart":
+                # The engine restarted while rolling, as after a crash on the
+                # rig: it counts from frame x tempo again unless it follows
+                # the master's position.
+                os.killpg(engine.pid, signal.SIGTERM)
+                engine.wait(timeout=5)
+                engine = start_engine("engine2.out")
+                time.sleep(3)
+                set_engine()
             elif what == "relocate":
                 probe.transport_locate(0)
         probe.transport_stop()
@@ -307,6 +327,11 @@ def main():
         "sl_hydrogen_test", "squashfs-root"))
     ap.add_argument("--freeze-ms", type=float, default=30.0)
     ap.add_argument("--expect", choices=["reset", "kept"], default="reset")
+    ap.add_argument("--pattern-mode", action="store_true",
+                    help="Hydrogen in pattern mode (as on the rig) instead of song mode")
+    ap.add_argument("--restart-engine", action="store_true",
+                    help="also restart the engine while rolling, after the freeze; "
+                         "window D after it (on the beat with --expect kept)")
     args = ap.parse_args()
 
     h2_root = find_h2_root(args)
@@ -356,7 +381,12 @@ def main():
     fz = marks["freeze"]
     a0 = window(res[0], 2 * SR, marks["incr"], "A0 before the tempo change")
     a = window(res[0], marks["incr"] + 2 * SR, fz, "A  after +3 BPM, before freeze")
-    b = window(res[0], fz + SR, marks["relocate"], "B  after Hydrogen missed cycles")
+    b_end = marks.get("restart", marks["relocate"])
+    b = window(res[0], fz + SR, b_end, "B  after Hydrogen missed cycles")
+    d = None
+    if "restart" in marks:
+        d = window(res[0], marks["restart"] + 5 * SR, marks["relocate"],
+                   "D  after the engine restarted")
     c = window(res[1], SR, 10 ** 12, "C  after relocate to frame 0") if len(res) > 1 else None
 
     if os.environ.get("SL_BT_KEEP"):
@@ -364,14 +394,16 @@ def main():
     else:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    if None in (a0, a, b, c):
+    if None in (a0, a, b, c) or (args.restart_engine and d is None):
         print("FAIL: a window had no kicks")
         return 1
     on = [abs(x) <= ON_BEAT for x in (a0, a, c)]
     if args.expect == "reset":
+        # D is not judged: after a stock Hydrogen's reset and an engine
+        # restart both are on the plain grid, by coincidence.
         ok = all(on) and abs(b) > OFF_BEAT
     else:
-        ok = all(on) and abs(b) <= ON_BEAT
+        ok = all(on) and abs(b) <= ON_BEAT and (d is None or abs(d) <= ON_BEAT)
     print("PASS" if ok else "FAIL", "(expect %s)" % args.expect)
     return 0 if ok else 1
 

@@ -3404,7 +3404,8 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				if (info.bbt_valid) {
 					const double master_beats = BeatTracker::bbt_beats (
 						info.bar, info.beat, info.tick, info.bar_start_tick,
-						info.beats_per_bar, info.ticks_per_beat);
+						info.beats_per_bar, info.ticks_per_beat,
+						info.tick_double_valid ? info.tick_double : -1.0);
 					if (master_beats >= 0.0) {
 						_beat_tracker.follow_master (master_beats, info.ticks_per_beat);
 					}

@@ -424,6 +424,15 @@ JackAudioDriver::get_transport_info (TransportInfo &info)
 	// leaves it false and the fields are ignored.
 #ifdef ALB_JACK_BBT_TRACKING
 	info.bbt_valid = false;
+	info.tick_double_valid = false;
+#ifdef JACK_TICK_DOUBLE
+	// The tick with its fraction, when the master publishes it (a patched
+	// Hydrogen does): the integer tick is up to a whole tick early.
+	if ((tpos.valid & JackPositionBBT) && (tpos.valid & JackTickDouble)) {
+		info.tick_double       = tpos.tick_double;
+		info.tick_double_valid = true;
+	}
+#endif
 	if (tpos.valid & JackPositionBBT) {
 		info.beats_per_bar  = tpos.beats_per_bar;
 		info.beat_type      = tpos.beat_type;

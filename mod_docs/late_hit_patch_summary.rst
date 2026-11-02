@@ -1541,14 +1541,22 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        defined:** stock JackSync pulse placement.
    * - ``ALB_JACK_BBT_TRACKING``
      - ``audio_driver.hpp``
-     - *(commented out)*
-     - **When defined:** the beat count also follows the timebase master's
-       own bar/beat/tick position, where the master publishes a changing
-       one (a DAW, or Hydrogen in song mode).  Adds the bar/beat/tick
-       fields to ``TransportInfo``, and the master's position to the
-       pulse log.  Not yet tried with a real master.  **Needs**
-       ``ALB_JACK_BEAT_TRACKING`` **defined too;** the build stops with an
-       error otherwise.  **When not defined (default):** no effect.
+     - defined
+     - **When defined (default):** the beat count also follows the
+       timebase master's own bar/beat/tick position, where the master
+       publishes a changing one (a DAW, Hydrogen in song mode, or a patched
+       Hydrogen in pattern mode), using JACK's ``tick_double`` when the
+       master sets it.  A relocate, including the one after the engine
+       misses cycles itself, and following after an engine restart, snap
+       to the master's position.  A master whose position does not change
+       (stock Hydrogen in pattern mode) is ignored: no change from not
+       defined.  Stock Hydrogen in song mode publishes a wrong position
+       after tempo changes made while rolling, which is then followed.
+       Tested on a dummy JACK server with a patched Hydrogen 1.2.7; not
+       yet tried live.  Adds the bar/beat/tick fields to
+       ``TransportInfo``, and the master's position to the pulse log.
+       **Needs** ``ALB_JACK_BEAT_TRACKING`` **defined too;** the build
+       stops with an error otherwise.  **When not defined:** no effect.
    * - ``ALB_CYCLE_CHANGE_REANCHOR``
      - ``engine.hpp``
      - defined

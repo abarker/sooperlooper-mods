@@ -170,14 +170,19 @@ class BeatTracker
 	// longest pattern.  Otherwise every bar is taken to be beats_per_bar
 	// long.  The half tick centres the estimate, since JACK's tick is a
 	// whole number rounded down.  Returns -1 if the fields are unusable.
+	// tick_exact, if 0 or more, is the tick with its fraction (JACK's
+	// tick_double, JackTickDouble), used instead of tick + 0.5.
 	static double bbt_beats (int32_t bar, int32_t beat, int32_t tick,
 	                         double bar_start_tick, double beats_per_bar,
-	                         double ticks_per_beat)
+	                         double ticks_per_beat, double tick_exact = -1.0)
 	{
 		if (!(ticks_per_beat > 0.0) || !(beats_per_bar > 0.0) || bar < 1 || beat < 1) {
 			return -1.0;
 		}
-		const double in_bar = (beat - 1) + (tick + 0.5) / ticks_per_beat;
+		//------ albBegin ----------------------------------
+		const double t = (tick_exact >= 0.0) ? tick_exact : tick + 0.5;
+		//------ albEnd ----------------------------------
+		const double in_bar = (beat - 1) + t / ticks_per_beat;
 		if (bar > 1 && bar_start_tick > 0.0) {
 			return bar_start_tick / ticks_per_beat + in_bar;
 		}

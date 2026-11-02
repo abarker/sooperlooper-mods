@@ -33,3 +33,15 @@ build tree::
 
 The first passes when the drift is reproduced (about 0.4 beat after the
 freeze), the second when a fixed Hydrogen stays on the beat.  About 45 s.
+
+``--pattern-mode`` runs Hydrogen in pattern mode, as on the rig, instead
+of song mode.  ``--restart-engine`` also restarts the engine while rolling,
+after the freeze, and adds a window D after it: with ALB_JACK_BBT_TRACKING
+and a Hydrogen that publishes its real position in pattern mode (patched,
+see ~/programming/c_and_cpp/hydrogen/ROADMAP.rst), D is on the beat; an
+engine that does not follow comes back about 0.4 beat off.  With
+``--expect reset`` D is not judged.
+
+The 30 ms freeze does not always make Hydrogen miss cycles on a busy
+machine, so a stock Hydrogen sometimes keeps its offset and an
+``--expect reset`` run fails for that reason alone; repeat it.

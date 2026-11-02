@@ -38,8 +38,15 @@ typedef struct _jack_client jack_client_t;
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
-// ALB_JACK_BBT_TRACKING: NOT DEFINED by default -- built and unit-tested
-// (src/test_beat_tracker), not yet tried against a real master.  Keeps
+// ALB_JACK_BBT_TRACKING: DEFINED by default since 2026-11-01 -- unit-tested
+// (src/test_beat_tracker) and tested on a dummy JACK server against a
+// patched Hydrogen 1.2.7 in pattern mode (hydrogen_missed_cycle_test.py
+// --pattern-mode --restart-engine); not yet tried live.  With a master
+// that publishes no live position (stock Hydrogen in pattern mode: bar 1,
+// beat 1, tick 0 throughout) nothing changes.  Caution: stock Hydrogen in
+// SONG mode publishes a live but wrong position after tempo changes made
+// while rolling (it ignores its own tempo offset), and would be followed;
+// the patched Hydrogen (~/programming/c_and_cpp/hydrogen) fixes that.  Keeps
 // the JackSync beat count on the timebase master's own bar/beat/tick
 // position (BeatTracker::follow_master), so the pulses also follow a
 // master whose position is not frames * beat length -- a DAW relocated
@@ -58,8 +65,9 @@ typedef struct _jack_client jack_client_t;
 //
 // Needs ALB_JACK_BEAT_TRACKING (engine.hpp; checked there).  Defined here,
 // not in engine.hpp, because it changes TransportInfo's layout, which
-// every file including this header must agree on.
-//#define ALB_JACK_BBT_TRACKING
+// every file including this header must agree on.  Uses JACK's tick_double
+// (JackTickDouble) when the master publishes it.
+#define ALB_JACK_BBT_TRACKING
 //------ albEnd ----------------------------------
 
 namespace SooperLooper {
@@ -111,6 +119,9 @@ struct TransportInfo
 	                              48.0 (observed on the rig 2026-08-17). */
 	bool     bbt_valid;      /**< true iff the above fields were populated
 	                              from JackPositionBBT this buffer */
+	double   tick_double;    /**< tick within beat with its fraction, if
+	                              tick_double_valid (JackTickDouble) */
+	bool     tick_double_valid;
 #endif // ALB_JACK_BBT_TRACKING
 	//------ albEnd ----------------------------------
 };

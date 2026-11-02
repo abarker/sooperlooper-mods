@@ -477,6 +477,11 @@ static void test_bbt_beats_formula ()
 	CHECK (BeatTracker::bbt_beats (1, 1, 0, 0.0, 4.0, 0.0) < 0.0, "tpb 0 accepted");
 	CHECK (BeatTracker::bbt_beats (0, 1, 0, 0.0, 4.0, tpb) < 0.0, "bar 0 accepted");
 	CHECK (BeatTracker::bbt_beats (1, 1, 0, 0.0, 0.0, tpb) < 0.0, "0 beats per bar accepted");
+	// The exact tick (JACK's tick_double) replaces tick + 0.5.
+	b = BeatTracker::bbt_beats (4, 1, 0, 10.0 * tpb, 4.0, tpb, 0.25);
+	CHECK (std::fabs (b - (10.0 + 0.25 / tpb)) < 1e-12, "tick_double gave %.6f", b);
+	b = BeatTracker::bbt_beats (3, 2, 24, 0.0, 4.0, tpb, 24.0);
+	CHECK (std::fabs (b - (8.0 + 1.0 + 24.0 / tpb)) < 1e-12, "tick_double fallback formula gave %.6f", b);
 }
 
 // Hydrogen in song mode with song columns of different lengths (4, 4, 2,
