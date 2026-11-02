@@ -123,8 +123,38 @@ static std::atomic<bool> s_realign_request (false);
 // must not reset the loops' sync counters as other locates do.  Process
 // thread only.
 static int64_t s_realign_landing = -1;
-// Cycles since s_realign_landing was set.  Process thread only.
+// Rolling cycles since s_realign_landing was set, and the cycles the
+// transport was held (not rolling) before it landed.  Process thread only.
 static int s_realign_wait = 0;
+static int s_realign_held = 0;
+// Automatic realign (``/set auto_realign 1``; 0, the default, is off;
+// saved with the session): a realign once the JACK tempo has stayed
+// unchanged for AUTO_REALIGN_SETTLE_S after a change made while rolling,
+// so a burst of tempo steps gives one.  A tempo change made while rolling
+// is what leaves the master carrying an offset from the plain frame x
+// tempo grid; the realign clears it on both sides, after which a cycle the
+// master misses, or a transport skip the engine re-anchors at, lands both
+// on the grid they are already on, and nothing moves.  Each one is a
+// relocation that changes no musical position: the transport is held for
+// one cycle (the master's ringing sounds carry on, measured with
+// Hydrogen 1.2.7), and the drums move by about one period's worth of the
+// tempo change.  It assumes JACK holds the transport for exactly one
+// cycle on a relocation (see the realign request below); a slow-sync
+// client holds it longer, and each realign would then leave the drums
+// and the count further behind loops already playing.  So every realign
+// measures the hold, and one that is not one cycle stops automatic
+// realigns (s_auto_realign_blocked) until auto_realign is set again; the
+// engine says so on its console.  Set from the non-RT set handler.
+static std::atomic<bool> s_auto_realign (false);
+static std::atomic<bool> s_auto_realign_blocked (false);
+// A hold that was not one cycle, for the non-RT loop to report; -1: none.
+static std::atomic<int> s_realign_hold_report (-1);
+#define AUTO_REALIGN_SETTLE_S 0.2
+// Process thread only: the tempo of the previous cycle, and the frames the
+// tempo has been unchanged since a change made while rolling (-1: no
+// change waiting).
+static double s_auto_last_bpm = 0.0;
+static int64_t s_auto_settle_frames = -1;
 // Realign on start: decided on the first cycle the engine sees the JACK
 // transport.  If it is already rolling (the engine restarted while
 // rolling, or was started with the drums playing), the count starts from
@@ -2091,6 +2121,19 @@ Engine::mainloop()
 	// non-rt event processing loop
 	while (is_ok())
 	{
+		//------ albBegin ----------------------------------
+		// A realign whose hold was not one cycle (s_auto_realign).
+		{
+			const int held = s_realign_hold_report.exchange (-1);
+			if (held >= 0) {
+				fprintf (stderr, "SooperLooper: realign: JACK held the transport %d"
+				         " cycle(s) on the relocation, not 1 (a slow-sync client?):"
+				         " the drums may be off the loops by %d period(s);"
+				         " auto_realign stopped until it is set again\n",
+				         held, held > 1 ? held - 1 : 1);
+			}
+		}
+		//------ albEnd ----------------------------------
 		// pull off all loop management events from the rt thread
 		while (is_ok() && _loop_manage_to_main_queue->read_space() > 0)
 		{
@@ -2510,6 +2553,9 @@ Engine::process_nonrt_event (EventNonRT * event)
 		else if (gg_event->param == "sync_preroll_ms") {
 			gg_event->ret_value = g_sync_preroll_ms;
 		}
+		else if (gg_event->param == "auto_realign") {
+			gg_event->ret_value = s_auto_realign.load () ? 1.0f : 0.0f;
+		}
 		//------ albEnd ----------------------------------
 
 		_osc->finish_global_get_event (*gg_event);
@@ -2600,6 +2646,12 @@ Engine::process_nonrt_event (EventNonRT * event)
 		else if (gs_event->param == "realign_transport") {
 			// Realign (see s_realign_request): any value requests it.
 			s_realign_request.store (true);
+		}
+		else if (gs_event->param == "auto_realign") {
+			// See s_auto_realign.  Setting it (either way) also lifts a
+			// stop after a hold that was not one cycle.
+			s_auto_realign.store (gs_event->value != 0.0f);
+			s_auto_realign_blocked.store (false);
 		}
 		else if (gs_event->param == "late_hit_window_ms") {
 			if (gs_event->value >= 0.0f) {
@@ -3446,13 +3498,29 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				                             && s_realign_landing >= 0
 				                             && (int64_t) info.framepos == s_realign_landing);
 				// Forget the landing at the first relocation, ours or not,
-				// or when none has come within 32 cycles.  Not on a cycle
-				// that is not rolling: JACK holds the transport for a cycle
-				// before ours lands (Starting, which the driver reports as
-				// stopped).
-				if (s_realign_landing >= 0
-				    && (_beat_tracker.relocated () || ++s_realign_wait > 32)) {
-					s_realign_landing = -1;
+				// or when none has come within 32 rolling cycles.  Not on a
+				// cycle that is not rolling: JACK holds the transport before
+				// ours lands (Starting, which the driver reports as
+				// stopped); those cycles are counted as the hold.  A hold
+				// other than one cycle (s_auto_realign) stops automatic
+				// realigns: one with none lands where it was not aimed, so
+				// any other relocation while ours is due, with no hold
+				// seen, counts as that.
+				if (s_realign_landing >= 0) {
+					if (info.state != TransportInfo::ROLLING) {
+						++s_realign_held;
+					}
+					else if (realign_landed
+					         || (_beat_tracker.relocated () && s_realign_held == 0)) {
+						if (s_realign_held != 1) {
+							s_auto_realign_blocked.store (true);
+							s_realign_hold_report.store (s_realign_held);
+						}
+						s_realign_landing = -1;
+					}
+					else if (_beat_tracker.relocated () || ++s_realign_wait > 32) {
+						s_realign_landing = -1;
+					}
 				}
 				//------ albEnd ----------------------------------
 
@@ -3491,6 +3559,28 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 						s_realign_request.store (true);
 					}
 				}
+				// Automatic realign (s_auto_realign): once the tempo has
+				// been unchanged for AUTO_REALIGN_SETTLE_S after a change
+				// made while rolling.  The tempo is tracked while stopped
+				// too, so a change made then, before a start, is not one.
+				if (info.state == TransportInfo::ROLLING && _beat_tracker.active ()) {
+					if (s_auto_last_bpm > 0.0 && TEMPO_DIFF (bpm, s_auto_last_bpm)) {
+						s_auto_settle_frames = 0;
+					}
+					else if (s_auto_settle_frames >= 0) {
+						s_auto_settle_frames += nframes;
+						if (s_auto_settle_frames >= (int64_t) (AUTO_REALIGN_SETTLE_S * sr)) {
+							s_auto_settle_frames = -1;
+							if (s_auto_realign.load () && !s_auto_realign_blocked.load ()) {
+								s_realign_request.store (true);
+							}
+						}
+					}
+				}
+				else {
+					s_auto_settle_frames = -1;
+				}
+				s_auto_last_bpm = bpm;
 				// A request while not rolling is dropped, not kept for
 				// later: a start re-anchors anyway.
 				if (s_realign_request.exchange (false) && _beat_tracker.active ()
@@ -3501,6 +3591,7 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 					if (target >= 2 * (int64_t) nframes) {
 						s_realign_landing = target;
 						s_realign_wait = 0;
+						s_realign_held = 0;
 						_driver->reposition_transport ((nframes_t) (target - 2 * (int64_t) nframes));
 					}
 				}
@@ -3977,6 +4068,15 @@ Engine::load_session (std::string fname, string * readstr)
 				g_sync_preroll_ms = val;
 			}
 		}
+		if ((prop = globals_node->property ("auto_realign")) != 0) {
+			int val;
+			if (sscanf (prop->value().c_str(), "%d", &val) == 1) {
+				s_auto_realign.store (val != 0);
+				s_auto_realign_blocked.store (false);
+			}
+		}
+		fprintf (stderr, "SooperLooper: auto_realign: %s\n",
+		         s_auto_realign.load () ? "ON" : "off");
 		fprintf(stderr,
 		        "SooperLooper: late_hit_window_ms loaded from session: %.4g ms"
 		        " (quant_unit_fraction cap: %.4g)"
@@ -4112,6 +4212,7 @@ Engine::save_session (std::string fname, bool write_audio, string * writestr)
 	globals_node->add_property ("rel_sync_preroll_ms", buf);
 	snprintf(buf, sizeof(buf), "%.10g", g_sync_preroll_ms);
 	globals_node->add_property ("sync_preroll_ms", buf);
+	globals_node->add_property ("auto_realign", s_auto_realign.load () ? "1" : "0");
 	//------ albEnd ----------------------------------
 
 	

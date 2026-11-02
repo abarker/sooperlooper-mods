@@ -85,3 +85,12 @@ length and in time, but its record window is shifted, so part of the
 phrase is missing.  A run where the dummy server skips cycles during a
 take is INCONCLUSIVE (exit status 2): other jobs at normal priority starve
 it under nice 19.  About 90 s.
+
+``--auto-realign`` (Hydrogen missed-cycle test) turns on the engine's
+``auto_realign``: the tempo change while rolling is followed by an
+automatic realign, so the freeze finds no offset to drop and window B must
+be on the beat whatever ``--expect`` says; the automatic relocation must
+keep the loops' sync counters.  ``--slow-sync N`` makes the probe a
+slow-sync client, not ready for N cycles each time the transport is
+starting; with ``--auto-realign`` the engine must measure the longer hold,
+stop auto-realigning and say so on its console.

@@ -106,12 +106,12 @@ item links to its full description.
   an empty loop, or one started from Mute or Pause.  See
   `New Feature: record failsafe`_.
 
-- **Six settings, one place.** ``late_hit_window_ms``,
+- **Seven settings, one place.** ``late_hit_window_ms``,
   ``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds``,
-  ``mute_late_hit_ms``, ``rel_sync_preroll_ms`` and ``sync_preroll_ms``
-  are all saved in the session file's ``<Globals>`` line, and can be read
-  and set live over OSC.  See `Record Late-Hit Window Size`_ and `OSC
-  Control`_.
+  ``mute_late_hit_ms``, ``rel_sync_preroll_ms``, ``sync_preroll_ms`` and
+  ``auto_realign`` are all saved in the session file's ``<Globals>`` line,
+  and can be read and set live over OSC.  See `Record Late-Hit Window
+  Size`_, `Realigning the Drums`_ and `OSC Control`_.
 
 .. rubric:: Tools
 
@@ -1001,9 +1001,31 @@ carry an offset from tempo changes made while rolling.  A start with the
 transport stopped does nothing.
 
 What you hear: the drums move by the correction at once, so one hit may
-sound twice or not at all, and Hydrogen is silent for one JACK period
-while the transport settles.  With nothing to correct, the drums carry on
-unchanged.  A request while the transport is stopped is ignored.
+sound twice or not at all, and Hydrogen plays no new notes for one JACK
+period while the transport settles (sounds already ringing carry on).
+With nothing to correct, the drums carry on unchanged.  A request while
+the transport is stopped is ignored.
+
+**Automatic realign.**  With ``/set auto_realign 1`` (off by default;
+saved with the session), SooperLooper realigns by itself 0.2 s after the
+tempo last changed while rolling, so a run of tempo steps, such as a
+tempo-list change, gives one realign.  A tempo change made while rolling
+is what lets a later xrun or a cycle Hydrogen misses put the drums off the
+loops, or SooperLooper's bar lines off the drums, until the next realign
+or restart from bar 1.  The realign right after the change removes that,
+so such an error causes only its own momentary glitch.  What you hear at a
+tempo change: only the tempo change.  The drums move by a fraction of a
+millisecond (about one period's worth of the tempo change), and a hit due
+in the one held period may come that period late.  With Big Tempo on the
+rig, use a version that counts JACK's Starting state as rolling; an older
+one takes every realign for a transport stop and start and switches Sync
+off and on for every loop.
+
+It relies on JACK holding the transport for exactly one period on a
+relocate.  Every realign measures the hold; if one is held longer (a
+slow-sync client in the JACK graph), SooperLooper prints a warning on its
+console, stops realigning by itself, and resumes only when
+``auto_realign`` is set again.
 
 It assumes a timebase master that relocates to frame x tempo, as Hydrogen
 does in both modes; a DAW playing a tempo map relocates to its map's
@@ -1012,7 +1034,9 @@ JACK holds the transport for one period on a relocate, which is allowed
 for; a slow-sync client holds it longer, and each extra period leaves the
 drums and pulses one period behind the loops.  Tested on a dummy JACK
 server with Hydrogen 1.2.7 (drums back within 0.001 beat, pulses
-continuous to within a frame); not yet tried live.
+continuous to within a frame; with ``auto_realign``, a Hydrogen missed
+cycle after a tempo change moved nothing, where without it the drums
+ended 0.4 beat off); not yet tried live.
 
 Eighths/Cycle Changes While Running
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

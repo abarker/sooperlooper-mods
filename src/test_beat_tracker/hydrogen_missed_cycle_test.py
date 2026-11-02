@@ -279,6 +279,20 @@ def run(args, tmp, h2_root):
             blocks.append((pos["frame"], st == jack.ROLLING, inp.get_array().copy(),
                            probe.last_frame_time))
 
+        if args.slow_sync:
+            # A slow-sync client: not ready for args.slow_sync cycles each
+            # time the transport is starting, so JACK holds it that much
+            # longer at every start and every relocation while rolling.
+            held = {"n": 0}
+
+            @probe.set_sync_callback
+            def sync(state, pos):
+                if state == jack.STARTING and held["n"] < args.slow_sync:
+                    held["n"] += 1
+                    return False
+                held["n"] = 0
+                return True
+
         probe.activate()
 
         def start_engine(log):
@@ -290,6 +304,8 @@ def run(args, tmp, h2_root):
                         ["/set", "sf", "eighth_per_cycle", "2"],
                         ["/sl/0/set", "sf", "quantize", "1"]):
                 osc(SL_OSC_PORT, *msg)
+            if args.auto_realign:
+                osc(SL_OSC_PORT, "/set", "sf", "auto_realign", "1")
 
         engine = start_engine("engine.out")
         h2 = spawn(h2_cmd + ["--child", "-n", "-s", song, "-O", str(H2_OSC_PORT),
@@ -390,6 +406,14 @@ def main():
                     help="send the engine's realign (/set realign_transport) after the "
                          "freeze (and after the restart, with --restart-engine); window E "
                          "after it must be on the beat")
+    ap.add_argument("--auto-realign", action="store_true",
+                    help="turn on the engine's auto_realign: the tempo change while rolling "
+                         "is followed by a realign, so the freeze has no offset to drop and "
+                         "B must be on the beat whatever --expect says")
+    ap.add_argument("--slow-sync", type=int, default=0, metavar="N",
+                    help="the probe is a slow-sync client, not ready for N cycles whenever "
+                         "the transport is starting; with --auto-realign the engine must "
+                         "then stop auto-realigning and say so")
     ap.add_argument("--toggle", action="store_true",
                     help="end with Hydrogen's Play/Stop toggle pressed twice (locate to the "
                          "start, stop, play) instead of a JACK relocate to frame 0; window C")
@@ -487,11 +511,13 @@ def main():
     # A realign must not reset the loops' sync counters, even when it
     # moves the transport backwards; other backwards relocates do (stock).
     # The realign's relocations are those before the final one to frame 0.
-    realign_resets = [f for f, r in resets[:-1] if r] if args.realign else []
-    if args.realign:
+    realign_resets = [f for f, r in resets[:-1] if r] if (args.realign or args.auto_realign) else []
+    if args.realign or args.auto_realign:
         print("  relocations (frame: loops' sync counters reset?): %s"
               % " ".join("%d:%s" % (f, "reset" if r else "kept") for f, r in resets))
 
+    engine_out = "".join(open(os.path.join(tmp, f)).read() for f in ("engine.out", "engine2.out")
+                         if os.path.exists(os.path.join(tmp, f)))
     if os.environ.get("SL_BT_KEEP"):
         print("kept", tmp)
     else:
@@ -507,7 +533,23 @@ def main():
     if realign_resets:
         print("  FAIL: the realign reset the loops' sync counters")
         on_e = False
-    if args.expect == "reset":
+    stopped = "auto_realign stopped" in engine_out
+    if stopped:
+        print("  engine:", [l for l in engine_out.splitlines() if "auto_realign stopped" in l][0])
+    if stopped and not args.slow_sync:
+        print("  FAIL: the engine stopped auto_realign (a hold that was not one cycle)")
+        on_e = False
+    if args.slow_sync and args.auto_realign and not stopped:
+        print("  FAIL: a slow-sync client held the transport, and auto_realign did not stop")
+        on_e = False
+    if args.auto_realign:
+        # With the offset cleared after the tempo change, nothing moves at
+        # the freeze, whatever Hydrogen does.
+        ok = all(on) and abs(b) <= ON_BEAT and (d is None or abs(d) <= ON_BEAT) and on_e
+        if not resets[:-1]:
+            print("  FAIL: no automatic realign seen after the tempo change")
+            ok = False
+    elif args.expect == "reset":
         # D is not judged: after a stock Hydrogen's reset and an engine
         # restart both are on the plain grid, by coincidence.
         ok = all(on) and abs(b) > OFF_BEAT and on_e
