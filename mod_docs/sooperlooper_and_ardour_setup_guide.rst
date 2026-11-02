@@ -261,8 +261,10 @@ document describes both under *Realigning the Drums*.
 Do not use ``auto_realign`` if any program in the JACK graph is a
 slow-sync client (one that makes the transport wait for it before rolling;
 most are not): each realign would then leave the drums slightly behind the
-loops.  SooperLooper prints a warning on its console when a realign shows
-one.  Try it before relying on it at a performance: with the rig running as
+loops.  **Ardour is one when it follows JACK transport** (JACK chosen as
+Ardour's transport master), so do not turn that on together with
+``auto_realign``; in this setup Ardour does not follow JACK transport.
+SooperLooper prints a warning on its console when a realign shows one.  Try it before relying on it at a performance: with the rig running as
 usual, change the tempo a few times while the transport rolls, and check
 SooperLooper's console for a realign warning.
 

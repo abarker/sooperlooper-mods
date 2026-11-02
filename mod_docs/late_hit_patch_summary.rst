@@ -1034,6 +1034,14 @@ returns 2) until the setting is set again.  A restart from bar 1 clears
 the offset for new takes; a manual realign does not, since it is held as
 long.  JACK does not say which client it is.
 
+**Ardour following JACK transport is one.**  With JACK chosen as Ardour's
+transport master (its Transport Masters window), Ardour holds the
+transport at every start and relocate until it has located and finished
+its latency pre-roll, so do not use that together with ``auto_realign``
+or rely on realign with it.  Ardour not following JACK transport answers
+at once and does not hold it.  One exception: Ardour running with no
+session loaded holds every start until JACK's sync timeout.
+
 **Test it before a performance,** with the whole rig running as it will
 be: roll the transport, change the tempo while rolling a few times (the
 tempo list will do), and check that SooperLooper's console shows no
