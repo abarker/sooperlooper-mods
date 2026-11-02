@@ -166,7 +166,9 @@ namespace SooperLooper {
 // callback and copy through a RingBuffer.  See ALB_SYNC_PULSE_LOG above.
 struct SyncPulseLogEvent
 {
-	enum Kind { Pulse = 0, Relocate = 1, TempoChange = 2, Follow = 3 };
+	// SyncReset: a backwards relocate reset the loops' samples-since-sync
+	// counters (framepos: info.framepos).
+	enum Kind { Pulse = 0, Relocate = 1, TempoChange = 2, Follow = 3, SyncReset = 4 };
 	uint8_t   kind;          // which of the record types this is
 
 	nframes_t framepos;      // Pulse: info.framepos + offset, the absolute

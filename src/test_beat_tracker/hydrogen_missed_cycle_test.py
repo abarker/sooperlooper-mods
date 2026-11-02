@@ -346,7 +346,15 @@ def run(args, tmp, h2_root):
                 time.sleep(3)
                 set_engine()
             elif what == "relocate":
-                probe.transport_locate(0)
+                if args.toggle:
+                    # Hydrogen's Play/Stop toggle, twice: locate to the
+                    # start and stop, then play.
+                    osc(H2_OSC_PORT, "/Hydrogen/PLAY_STOP_TOGGLE", "f", "1")
+                    time.sleep(1.0)
+                    osc(H2_OSC_PORT, "/Hydrogen/PLAY_STOP_TOGGLE", "f", "1")
+                    marks["relocate"] = probe.frame_time
+                else:
+                    probe.transport_locate(0)
         probe.transport_stop()
         time.sleep(0.5)
         probe.deactivate()
@@ -382,6 +390,9 @@ def main():
                     help="send the engine's realign (/set realign_transport) after the "
                          "freeze (and after the restart, with --restart-engine); window E "
                          "after it must be on the beat")
+    ap.add_argument("--toggle", action="store_true",
+                    help="end with Hydrogen's Play/Stop toggle pressed twice (locate to the "
+                         "start, stop, play) instead of a JACK relocate to frame 0; window C")
     ap.add_argument("--restart-engine", action="store_true",
                     help="also restart the engine while rolling, after the freeze; "
                          "window D after it (on the beat with --expect kept)")
@@ -400,6 +411,7 @@ def main():
         print("FAIL: no pulse log -- was the engine built with ALB_SYNC_PULSE_LOG?")
         return 1
     pulses = []          # pulses and, in log order, the engine's relocations
+    resets = []          # [relocate frame, loops' sync counters reset?] in log order
     for line in open(log):
         d = dict(kv.split("=", 1) for kv in line.split() if "=" in kv)
         if line.startswith("frame="):
@@ -408,6 +420,9 @@ def main():
             print("  engine log:", line.strip())
             if d.get("event") == "relocate":
                 pulses.append(("relocate", int(d["frame"])))
+                resets.append([int(d["frame"]), False])
+            elif d.get("event") == "sync_reset" and resets:
+                resets[-1][1] = True
     # Everything below in wall-clock JACK frames: relocations (the realign
     # among them) move the transport frame, not these.
     onsets = kick_onsets_wall(blocks)
@@ -467,7 +482,15 @@ def main():
         print("  transport around the realign (wall frames after the request:"
               " transport moved / wall moved): %s"
               % (" ".join("%+d:%d/%d%s" % t for t in tj) or "none"))
-    c = window(marks["relocate"] + SR, 10 ** 15, "C  after relocate to frame 0")
+    c = window(marks["relocate"] + SR, 10 ** 15,
+               "C  after Play/Stop toggle x2" if args.toggle else "C  after relocate to frame 0")
+    # A realign must not reset the loops' sync counters, even when it
+    # moves the transport backwards; other backwards relocates do (stock).
+    # The realign's relocations are those before the final one to frame 0.
+    realign_resets = [f for f, r in resets[:-1] if r] if args.realign else []
+    if args.realign:
+        print("  relocations (frame: loops' sync counters reset?): %s"
+              % " ".join("%d:%s" % (f, "reset" if r else "kept") for f, r in resets))
 
     if os.environ.get("SL_BT_KEEP"):
         print("kept", tmp)
@@ -481,6 +504,9 @@ def main():
     on = [abs(x) <= ON_BEAT for x in (a0, a, c)]
     # E (after a realign) must be on the beat whatever Hydrogen did.
     on_e = e is None or abs(e) <= ON_BEAT
+    if realign_resets:
+        print("  FAIL: the realign reset the loops' sync counters")
+        on_e = False
     if args.expect == "reset":
         # D is not judged: after a stock Hydrogen's reset and an engine
         # restart both are on the plain grid, by coincidence.

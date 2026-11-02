@@ -106,7 +106,14 @@ extern float g_sync_preroll_ms;
 // itself does not move, so loops already playing stay in time with the
 // pulses.  For drums that drifted off the loops (Hydrogen dropping its
 // tempo offset after a missed cycle), or after the engine restarted while
-// rolling and counted from the plain frame x tempo grid again.  Always
+// rolling and counted from the plain frame x tempo grid again.
+// A workaround on SooperLooper's side, not a fix: with Hydrogen 1.2 as
+// timebase master in pattern mode there is no published bar/beat
+// position to follow, so SooperLooper assumes frame x tempo, and after
+// tempo changes made while rolling a cycle Hydrogen misses can move its
+// drums onto that grid.  Both would be better addressed in Hydrogen
+// itself; BBT following (ALB_JACK_BBT_TRACKING) is ready for a master
+// that publishes the position it plays.  Always
 // relocates (SooperLooper cannot tell whether the master carries an
 // offset), so a press when all is well is just a relocation that changes
 // no musical position.  JACK applies a relocation two cycles after the
@@ -116,6 +123,8 @@ static std::atomic<bool> s_realign_request (false);
 // must not reset the loops' sync counters as other locates do.  Process
 // thread only.
 static int64_t s_realign_landing = -1;
+// Cycles since s_realign_landing was set.  Process thread only.
+static int s_realign_wait = 0;
 // Realign on start: decided on the first cycle the engine sees the JACK
 // transport.  If it is already rolling (the engine restarted while
 // rolling, or was started with the drums playing), the count starts from
@@ -2165,6 +2174,10 @@ Engine::mainloop()
 					         "event=relocate frame=%u expected=%u bpm=%.3f\n",
 					         pev.framepos, pev.expected, pev.bpm);
 				}
+				else if (pev.kind == SyncPulseLogEvent::SyncReset) {
+					fprintf (_sync_pulse_log_file,
+					         "event=sync_reset frame=%u\n", pev.framepos);
+				}
 				else if (pev.kind == SyncPulseLogEvent::TempoChange) {
 					fprintf (_sync_pulse_log_file,
 					         "event=tempo frame=%u from=%.3f to=%.3f\n",
@@ -3432,7 +3445,13 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				const bool realign_landed = (_beat_tracker.relocated ()
 				                             && s_realign_landing >= 0
 				                             && (int64_t) info.framepos == s_realign_landing);
-				if (realign_landed || (s_realign_landing >= 0 && !_beat_tracker.active ())) {
+				// Forget the landing at the first relocation, ours or not,
+				// or when none has come within 32 cycles.  Not on a cycle
+				// that is not rolling: JACK holds the transport for a cycle
+				// before ours lands (Starting, which the driver reports as
+				// stopped).
+				if (s_realign_landing >= 0
+				    && (_beat_tracker.relocated () || ++s_realign_wait > 32)) {
 					s_realign_landing = -1;
 				}
 				//------ albEnd ----------------------------------
@@ -3444,6 +3463,12 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 					for (Instances::iterator i = _rt_instances.begin(); i != _rt_instances.end(); ++i) {
 						(*i)->set_samples_since_sync(info.framepos + offset);
 					}
+#ifdef ALB_SYNC_PULSE_LOG
+					SyncPulseLogEvent sev = SyncPulseLogEvent();
+					sev.kind     = SyncPulseLogEvent::SyncReset;
+					sev.framepos = info.framepos;
+					sync_log_push (sev);
+#endif
 				}
 
 				//------ albBegin ----------------------------------
@@ -3475,6 +3500,7 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 					const int64_t target = (int64_t) llround (beats_then / rate);
 					if (target >= 2 * (int64_t) nframes) {
 						s_realign_landing = target;
+						s_realign_wait = 0;
 						_driver->reposition_transport ((nframes_t) (target - 2 * (int64_t) nframes));
 					}
 				}

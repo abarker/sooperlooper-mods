@@ -53,7 +53,16 @@ by itself when it starts with the transport rolling, ``--restart-engine``
 alone also expects D on the beat with a stock Hydrogen that kept its
 offset (``--freeze-ms 0``).  The analysis works in wall-clock JACK frames,
 so relocations, the realign's backwards ones among them, do not confuse
-it.
+it.  With ``--realign`` it also lists every relocation with whether the
+engine reset the loops' sync counters there (the pulse log's
+``event=sync_reset``): the realign's must keep them, even when it moves
+the transport backwards, which a tempo rise and a Hydrogen reset make it
+do; the final relocate to frame 0 resets them, as stock does.
+
+``--toggle`` ends with Hydrogen's Play/Stop toggle pressed twice (locate
+to the start and stop, then play) instead of a JACK relocate to frame 0,
+the way the rig's transport button resets the drums; window C must still
+be on the beat.
 
 The 30 ms freeze does not always make Hydrogen miss cycles on a busy
 machine, so a stock Hydrogen sometimes keeps its offset and an

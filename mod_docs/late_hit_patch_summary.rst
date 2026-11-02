@@ -987,6 +987,13 @@ its position from the frame on a relocate, lands on that beat.
 SooperLooper's count and its pulses do not move, so loops already playing
 stay in time.
 
+Realign is a workaround on SooperLooper's side rather than a fix.  With
+Hydrogen 1.2 as timebase master in pattern mode, there is no published
+bar/beat position for SooperLooper to follow, so it assumes frame x tempo;
+and after tempo changes made while rolling, a cycle Hydrogen misses can
+move its drums onto that grid.  Both would be better addressed in Hydrogen
+itself.  Until then, realign puts the drums back.
+
 It also runs once by itself when SooperLooper starts and finds the
 transport already rolling (restarted during a song, or started with the
 drums playing): a fresh start counts from frame x tempo, while Hydrogen may
