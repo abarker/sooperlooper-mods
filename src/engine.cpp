@@ -31,6 +31,9 @@
 
 #include <vector>
 #include <algorithm>
+//------ albBegin ----------------------------------
+#include <atomic>
+//------ albEnd ----------------------------------
 
 #include <pbd/xml++.h>
 
@@ -94,6 +97,35 @@ extern float g_mute_late_hit_ms;
 extern float g_rel_sync_preroll_ms;
 // SYNC_PREROLL's plain Sync pre-roll (plugin.cc), likewise.
 extern float g_sync_preroll_ms;
+//------ albBegin ----------------------------------
+// Realign (``/set realign_transport``, any value): relocate the JACK
+// transport to the frame where frame x tempo equals the beat count
+// (BeatTracker) at the moment the relocation lands.  A master that
+// recomputes its position from the frame on a relocation (Hydrogen does)
+// then lands on exactly the beat SooperLooper is counting, and the count
+// itself does not move, so loops already playing stay in time with the
+// pulses.  For drums that drifted off the loops (Hydrogen dropping its
+// tempo offset after a missed cycle), or after the engine restarted while
+// rolling and counted from the plain frame x tempo grid again.  Always
+// relocates (SooperLooper cannot tell whether the master carries an
+// offset), so a press when all is well is just a relocation that changes
+// no musical position.  JACK applies a relocation two cycles after the
+// request.  Set from the non-RT set handler; read in the process thread.
+static std::atomic<bool> s_realign_request (false);
+// The frame the requested realign lands on, or -1: its backwards locate
+// must not reset the loops' sync counters as other locates do.  Process
+// thread only.
+static int64_t s_realign_landing = -1;
+// Realign on start: decided on the first cycle the engine sees the JACK
+// transport.  If it is already rolling (the engine restarted while
+// rolling, or was started with the drums playing), the count starts from
+// the plain frame x tempo grid while the master may carry an offset from
+// tempo changes made while rolling, so realign once.  A start with the
+// transport stopped (the rig's launch script stops it) does nothing.
+// Process thread only.
+static bool s_start_check_pending = true;
+//------ albEnd ----------------------------------
+
 // The input history's length (plugin.cc): --input-history, and the size
 // it gives in samples at a sample rate.
 extern float g_input_history_seconds;
@@ -2552,6 +2584,10 @@ Engine::process_nonrt_event (EventNonRT * event)
 		// load_session's record_failsafe_seconds/late_hit_window_ms
 		// handling above. A negative value would go on to be cast to
 		// unsigned long in plugin.cc's threshold checks, which is unsafe.
+		else if (gs_event->param == "realign_transport") {
+			// Realign (see s_realign_request): any value requests it.
+			s_realign_request.store (true);
+		}
 		else if (gs_event->param == "late_hit_window_ms") {
 			if (gs_event->value >= 0.0f) {
 				g_late_hit_window_ms = gs_event->value;
@@ -3389,14 +3425,60 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				_beat_tracker.update (info.framepos, nframes, bpm,
 				                      info.state == TransportInfo::ROLLING, sr);
 
+				//------ albBegin ----------------------------------
+				// Realign (s_realign_request): the relocation landing now
+				// is ours, and the count it re-anchored to is the one it
+				// had; nothing about the loops' sync changed.
+				const bool realign_landed = (_beat_tracker.relocated ()
+				                             && s_realign_landing >= 0
+				                             && (int64_t) info.framepos == s_realign_landing);
+				if (realign_landed || (s_realign_landing >= 0 && !_beat_tracker.active ())) {
+					s_realign_landing = -1;
+				}
+				//------ albEnd ----------------------------------
+
 				// Stock resets loops' lSamplesSinceSync on a backwards
 				// locate; it detected one from TransportInfo::last_framepos,
 				// which is copied from uninitialised memory (entry 14).
-				if (_beat_tracker.backwards()) {
+				if (_beat_tracker.backwards() && !realign_landed) {
 					for (Instances::iterator i = _rt_instances.begin(); i != _rt_instances.end(); ++i) {
 						(*i)->set_samples_since_sync(info.framepos + offset);
 					}
 				}
+
+				//------ albBegin ----------------------------------
+				// Realign requested: relocate to the frame where frame x
+				// tempo equals the count when the transport rolls on from
+				// it.  JACK applies the relocation two cycles after the
+				// request, and (JACK2, measured on a dummy server) holds
+				// the transport for one cycle there (Starting), so the
+				// transport rolls on from the target three cycles on: the
+				// end of this cycle plus two more.  Aiming at the landing
+				// cycle instead left the count, the drums and the pulses
+				// one period behind loops already playing.  A slow-sync
+				// client holds the transport longer, one more period each.
+				// reposition_transport() adds two cycles to the frame it is
+				// given, so it is given the target less two cycles.
+				// Realign on start (s_start_check_pending).
+				if (s_start_check_pending) {
+					s_start_check_pending = false;
+					if (info.state == TransportInfo::ROLLING) {
+						s_realign_request.store (true);
+					}
+				}
+				// A request while not rolling is dropped, not kept for
+				// later: a start re-anchors anyway.
+				if (s_realign_request.exchange (false) && _beat_tracker.active ()
+				    && info.state == TransportInfo::ROLLING && bpm > 0.0) {
+					const double rate = bpm / (60.0 * sr);      // beats per frame
+					const double beats_then = _beat_tracker.end_beats () + 2.0 * (double) nframes * rate;
+					const int64_t target = (int64_t) llround (beats_then / rate);
+					if (target >= 2 * (int64_t) nframes) {
+						s_realign_landing = target;
+						_driver->reposition_transport ((nframes_t) (target - 2 * (int64_t) nframes));
+					}
+				}
+				//------ albEnd ----------------------------------
 
 #ifdef ALB_JACK_BBT_TRACKING
 				// Keep the count on the master's own bar/beat/tick

@@ -42,6 +42,19 @@ see ~/programming/c_and_cpp/hydrogen/ROADMAP.rst), D is on the beat; an
 engine that does not follow comes back about 0.4 beat off.  With
 ``--expect reset`` D is not judged.
 
+``--realign`` sends the engine's realign (``/set realign_transport 1``)
+after the freeze, or after the restart with ``--restart-engine``; window E
+after it must be on the beat whatever Hydrogen did, and the run also
+reports the engine's pulse spacing around it (must stay one beat in wall
+time: the loops' grid does not move), the kick intervals (the drums'
+correction shows as one interval off a beat) and what the transport did
+(JACK holds it for one period on a relocate).  Since the engine realigns
+by itself when it starts with the transport rolling, ``--restart-engine``
+alone also expects D on the beat with a stock Hydrogen that kept its
+offset (``--freeze-ms 0``).  The analysis works in wall-clock JACK frames,
+so relocations, the realign's backwards ones among them, do not confuse
+it.
+
 The 30 ms freeze does not always make Hydrogen miss cycles on a busy
 machine, so a stock Hydrogen sometimes keeps its offset and an
 ``--expect reset`` run fails for that reason alone; repeat it.

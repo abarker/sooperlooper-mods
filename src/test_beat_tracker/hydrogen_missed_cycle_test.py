@@ -192,6 +192,45 @@ def kick_onsets(blocks):
     return out
 
 
+def kick_onsets_wall(blocks):
+    """Kick onsets in wall-clock JACK frames (frame_time), from blocks of
+    (transport frame, rolling, samples, frame_time); a relocation does not
+    split or reorder them."""
+    ons = []
+    for f, rolling, buf, w in blocks:
+        if not rolling:
+            continue
+        for i in np.nonzero(np.abs(buf) > 0.05)[0]:
+            if not ons or w + int(i) - ons[-1] > 0.3 * SR:
+                ons.append(w + int(i))
+    return ons
+
+
+def pulses_to_wall(pulses, blocks):
+    """Map the engine's pulses (transport frames, in time order) to wall
+    frames, walking the probe's blocks in order.  pulses may also hold
+    ("relocate", frame) items, the engine's relocate events in log order:
+    the walk then skips to the block where the transport is at that frame,
+    so transport frames that repeat after a relocation backwards map to the
+    pass after it, not the one before."""
+    out, k = [], 0
+    for p, tf in pulses:
+        if p == "relocate":
+            j = k
+            while j < len(blocks) and not (blocks[j][1] and blocks[j][0] == tf):
+                j += 1
+            if j < len(blocks):
+                k = j
+            continue
+        while k < len(blocks):
+            f, rolling, buf, w = blocks[k]
+            if rolling and f <= p < f + len(buf):
+                out.append((w + (p - f), tf))
+                break
+            k += 1
+    return out
+
+
 def kick_vs_pulse(onsets, pulses):
     """[(onset frame, kick minus nearest pulse in beats)]."""
     pf = [p for p, _ in pulses]
@@ -237,7 +276,8 @@ def run(args, tmp, h2_root):
         @probe.set_process_callback
         def process(nframes):
             st, pos = probe.transport_query()
-            blocks.append((pos["frame"], st == jack.ROLLING, inp.get_array().copy()))
+            blocks.append((pos["frame"], st == jack.ROLLING, inp.get_array().copy(),
+                           probe.last_frame_time))
 
         probe.activate()
 
@@ -271,17 +311,26 @@ def run(args, tmp, h2_root):
         probe.transport_start()
         t0 = time.monotonic()
 
-        marks = {}
+        # Marks are wall-clock JACK frames (frame_time): a relocation moves
+        # the transport frame, not these.
+        marks = {"start": probe.frame_time}
         plan = [(8.0, "incr"), (8.1, "incr"), (8.2, "incr"), (15.0, "freeze")]
         if args.restart_engine:
-            plan += [(19.0, "restart"), (30.0, "relocate"), (36.0, "end")]
-        else:
-            plan += [(23.0, "relocate"), (29.0, "end")]
+            plan += [(19.0, "restart")]
+        if args.realign:
+            plan += [(28.0 if args.restart_engine else 19.0, "realign")]
+        last = max(at for at, _ in plan)
+        plan += [(last + 7.0 + (4.0 if args.restart_engine and not args.realign else 0.0), "relocate")]
+        plan += [(plan[-1][0] + 6.0, "end")]
         for at, what in plan:
             while time.monotonic() - t0 < at:
                 time.sleep(0.002)
-            marks.setdefault(what, probe.transport_query()[1]["frame"])
-            if what == "incr":
+            marks.setdefault(what, probe.frame_time)
+            if what == "realign":
+                # The engine's realign: the transport moves so that the
+                # drums land on the engine's beat count.
+                osc(SL_OSC_PORT, "/set", "sf", "realign_transport", "1")
+            elif what == "incr":
                 osc(H2_OSC_PORT, "/Hydrogen/BPM_INCR", "f", "1")
             elif what == "freeze":
                 os.kill(h2.pid, signal.SIGSTOP)
@@ -329,6 +378,10 @@ def main():
     ap.add_argument("--expect", choices=["reset", "kept"], default="reset")
     ap.add_argument("--pattern-mode", action="store_true",
                     help="Hydrogen in pattern mode (as on the rig) instead of song mode")
+    ap.add_argument("--realign", action="store_true",
+                    help="send the engine's realign (/set realign_transport) after the "
+                         "freeze (and after the restart, with --restart-engine); window E "
+                         "after it must be on the beat")
     ap.add_argument("--restart-engine", action="store_true",
                     help="also restart the engine while rolling, after the freeze; "
                          "window D after it (on the beat with --expect kept)")
@@ -346,21 +399,25 @@ def main():
     if not os.path.exists(log):
         print("FAIL: no pulse log -- was the engine built with ALB_SYNC_PULSE_LOG?")
         return 1
-    pulses = []
+    pulses = []          # pulses and, in log order, the engine's relocations
     for line in open(log):
         d = dict(kv.split("=", 1) for kv in line.split() if "=" in kv)
         if line.startswith("frame="):
             pulses.append((int(d["frame"]) + int(d["diff"]), float(d["tempoframes"])))
         elif line.startswith("event="):
             print("  engine log:", line.strip())
-    onset_runs = kick_onsets(blocks)
-    cut = next((k for k in range(1, len(pulses)) if pulses[k][0] < pulses[k - 1][0]),
-               len(pulses))
-    res = [kick_vs_pulse(o, p) for o, p in zip(onset_runs, [pulses[:cut], pulses[cut:]])]
-    print("freeze %.0f ms; kick onsets per run %s; engine pulses %d"
-          % (args.freeze_ms, [len(o) for o in onset_runs], len(pulses)))
+            if d.get("event") == "relocate":
+                pulses.append(("relocate", int(d["frame"])))
+    # Everything below in wall-clock JACK frames: relocations (the realign
+    # among them) move the transport frame, not these.
+    onsets = kick_onsets_wall(blocks)
+    pulses_w = pulses_to_wall(pulses, blocks)
+    res = kick_vs_pulse(onsets, pulses_w)
+    print("freeze %.0f ms; kick onsets %d; engine pulses %d (%d placed in the recording)"
+          % (args.freeze_ms, len(onsets), sum(1 for p in pulses if p[0] != "relocate"),
+             len(pulses_w)))
 
-    first = [d for o, d in res[0] if o < marks["incr"]]
+    first = [d for o, d in res if marks["start"] + SR <= o < marks["incr"]]
     if not first:
         print("FAIL: no kicks before the tempo change; see", tmp)
         return 1
@@ -368,8 +425,8 @@ def main():
     print("kick minus pulse before any tempo change: %+.3f beat "
           "(output latency; subtracted below)" % base)
 
-    def window(r, lo, hi, label):
-        sel = sorted(wrap(d - base) for o, d in r if lo <= o < hi)
+    def window(lo, hi, label):
+        sel = sorted(wrap(d - base) for o, d in res if lo <= o < hi)
         if not sel:
             print("  %-36s no kicks" % label)
             return None
@@ -379,31 +436,57 @@ def main():
         return med
 
     fz = marks["freeze"]
-    a0 = window(res[0], 2 * SR, marks["incr"], "A0 before the tempo change")
-    a = window(res[0], marks["incr"] + 2 * SR, fz, "A  after +3 BPM, before freeze")
-    b_end = marks.get("restart", marks["relocate"])
-    b = window(res[0], fz + SR, b_end, "B  after Hydrogen missed cycles")
-    d = None
+    a0 = window(marks["start"] + 2 * SR, marks["incr"], "A0 before the tempo change")
+    a = window(marks["incr"] + 2 * SR, fz, "A  after +3 BPM, before freeze")
+    b_end = min(marks.get(k, marks["relocate"]) for k in ("restart", "realign", "relocate"))
+    b = window(fz + SR, b_end, "B  after Hydrogen missed cycles")
+    d = e = None
     if "restart" in marks:
-        d = window(res[0], marks["restart"] + 5 * SR, marks["relocate"],
+        d = window(marks["restart"] + 5 * SR, marks.get("realign", marks["relocate"]),
                    "D  after the engine restarted")
-    c = window(res[1], SR, 10 ** 12, "C  after relocate to frame 0") if len(res) > 1 else None
+    if "realign" in marks:
+        e = window(marks["realign"] + SR, marks["relocate"], "E  after the realign")
+        # The engine's grid must not move at the realign: pulse spacing in
+        # wall frames stays one beat; and no kick may be dropped or doubled.
+        lo, hi = marks["realign"] - SR, marks["realign"] + 2 * SR
+        sp = [(b2[0] - b1[0], b1[1]) for b1, b2 in zip(pulses_w, pulses_w[1:]) if lo <= b1[0] < hi]
+        worst = max((abs(s - t) for s, t in sp), default=None)
+        print("  engine pulse spacing around the realign: %d spacings, worst %s frames off a beat"
+              % (len(sp), "%.1f" % worst if worst is not None else "-"))
+        ko = [o for o in onsets if lo <= o < hi]
+        beat = pulses_w[-1][1] if pulses_w else 1.0
+        iv = [(o2 - o1) / beat for o1, o2 in zip(ko, ko[1:])]
+        odd = [x for x in iv if abs(x - round(x)) > 0.02 or round(x) != 1]
+        print("  kick intervals around the realign (beats): %s%s"
+              % (" ".join("%.3f" % x for x in iv), "" if not odd else "  <- not all one beat"))
+        # The transport around the realign: periods where its frame did not
+        # move on by the period (the relocation itself, or a held cycle).
+        tj = [(b2[3] - marks["realign"], b2[0] - b1[0], b2[3] - b1[3], "" if b2[1] else " stopped")
+              for b1, b2 in zip(blocks, blocks[1:])
+              if lo <= b2[3] < hi and (not b2[1] or (b2[0] - b1[0]) != (b2[3] - b1[3]))]
+        print("  transport around the realign (wall frames after the request:"
+              " transport moved / wall moved): %s"
+              % (" ".join("%+d:%d/%d%s" % t for t in tj) or "none"))
+    c = window(marks["relocate"] + SR, 10 ** 15, "C  after relocate to frame 0")
 
     if os.environ.get("SL_BT_KEEP"):
         print("kept", tmp)
     else:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    if None in (a0, a, b, c) or (args.restart_engine and d is None):
+    if (None in (a0, a, b, c) or (args.restart_engine and d is None)
+            or (args.realign and e is None)):
         print("FAIL: a window had no kicks")
         return 1
     on = [abs(x) <= ON_BEAT for x in (a0, a, c)]
+    # E (after a realign) must be on the beat whatever Hydrogen did.
+    on_e = e is None or abs(e) <= ON_BEAT
     if args.expect == "reset":
         # D is not judged: after a stock Hydrogen's reset and an engine
         # restart both are on the plain grid, by coincidence.
-        ok = all(on) and abs(b) > OFF_BEAT
+        ok = all(on) and abs(b) > OFF_BEAT and on_e
     else:
-        ok = all(on) and abs(b) <= ON_BEAT and (d is None or abs(d) <= ON_BEAT)
+        ok = all(on) and abs(b) <= ON_BEAT and (d is None or abs(d) <= ON_BEAT) and on_e
     print("PASS" if ok else "FAIL", "(expect %s)" % args.expect)
     return 0 if ok else 1
 

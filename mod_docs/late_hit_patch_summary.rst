@@ -974,6 +974,39 @@ On by default (``ALB_JACK_BEAT_TRACKING``), and used through full live
 sessions with frequent tempo changes.  How it works is in `JackSync Beat
 Tracking: Implementation`_ in the appendix.
 
+Realigning the Drums
+~~~~~~~~~~~~~~~~~~~~
+
+When the drums have drifted off the loops -- Hydrogen dropping its tempo
+offset after skipping a cycle -- the global setting ``realign_transport``
+puts them back without moving the loops: send ``/set realign_transport 1``
+over OSC (the remapper can send it from a pedal gesture).  SooperLooper
+relocates the JACK transport to the frame where frame x tempo equals its
+own beat count when the transport rolls on, and Hydrogen, which recomputes
+its position from the frame on a relocate, lands on that beat.
+SooperLooper's count and its pulses do not move, so loops already playing
+stay in time.
+
+It also runs once by itself when SooperLooper starts and finds the
+transport already rolling (restarted during a song, or started with the
+drums playing): a fresh start counts from frame x tempo, while Hydrogen may
+carry an offset from tempo changes made while rolling.  A start with the
+transport stopped does nothing.
+
+What you hear: the drums move by the correction at once, so one hit may
+sound twice or not at all, and Hydrogen is silent for one JACK period
+while the transport settles.  With nothing to correct, the drums carry on
+unchanged.  A request while the transport is stopped is ignored.
+
+It assumes a timebase master that relocates to frame x tempo, as Hydrogen
+does in both modes; a DAW playing a tempo map relocates to its map's
+position instead, and the result would be off by the map's tempo changes.
+JACK holds the transport for one period on a relocate, which is allowed
+for; a slow-sync client holds it longer, and each extra period leaves the
+drums and pulses one period behind the loops.  Tested on a dummy JACK
+server with Hydrogen 1.2.7 (drums back within 0.001 beat, pulses
+continuous to within a frame); not yet tried live.
+
 Eighths/Cycle Changes While Running
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
