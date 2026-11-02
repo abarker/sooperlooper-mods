@@ -258,6 +258,14 @@ put the drums back by hand, send ``/set realign_transport 1`` over OSC
 (for example from a pedal gesture in the remapper).  The fork's summary
 document describes both under *Realigning the Drums*.
 
+Do not use ``auto_realign`` if any program in the JACK graph is a
+slow-sync client (one that makes the transport wait for it before rolling;
+most are not): each realign would then leave the drums slightly behind the
+loops.  SooperLooper prints a warning on its console when a realign shows
+one.  Try it before relying on it at a performance: with the rig running as
+usual, change the tempo a few times while the transport rolls, and check
+SooperLooper's console for a realign warning.
+
 **Late-hit correction.** With sync on, a press that lands a moment after the
 beat normally waits for the *next* beat -- a whole cycle late. This fork
 treats such a press as on time instead. A record press just after the beat

@@ -1022,14 +1022,22 @@ tempo change: only the tempo change.  The drums move by a fraction of a
 millisecond (about one period's worth of the tempo change), and a hit due
 in the one held period may come that period late.
 
-It relies on JACK holding the transport for exactly one period on a
-relocate.  Every realign measures the hold; if one is held longer (a
-slow-sync client in the JACK graph), SooperLooper prints a warning on its
-console, stops realigning by itself (``/get auto_realign`` returns 2),
-and resumes only when ``auto_realign`` is set again.  That realign has
-already left the drums and SooperLooper's bar lines one period behind
-loops already playing for each extra period held; a restart from bar 1
-clears it, and a manual realign does not (it would be held as long).
+**Not with a slow-sync client.**  Realign relies on JACK holding the
+transport for exactly one period on a relocate.  A slow-sync client -- a
+JACK program that makes the transport wait for it before rolling; most
+programs are not -- holds it longer, and every realign then leaves the
+drums and SooperLooper's bar lines that much behind loops already playing.
+If such a client has to run, turn ``auto_realign`` off.  SooperLooper
+measures the hold at every realign: a longer one prints a warning on its
+console saying so, and pauses automatic realigns (``/get auto_realign``
+returns 2) until the setting is set again.  A restart from bar 1 clears
+the offset for new takes; a manual realign does not, since it is held as
+long.  JACK does not say which client it is.
+
+**Test it before a performance,** with the whole rig running as it will
+be: roll the transport, change the tempo while rolling a few times (the
+tempo list will do), and check that SooperLooper's console shows no
+realign warning.
 
 It assumes a timebase master that relocates to frame x tempo, as Hydrogen
 does in both modes; a DAW playing a tempo map relocates to its map's

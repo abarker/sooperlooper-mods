@@ -555,9 +555,9 @@ def main():
     if realign_resets:
         print("  FAIL: the realign reset the loops' sync counters")
         on_e = False
-    stopped = "auto_realign stopped" in engine_out
+    stopped = "auto_realign is paused" in engine_out
     if stopped:
-        print("  engine:", [l for l in engine_out.splitlines() if "auto_realign stopped" in l][0])
+        print("  engine:", [l for l in engine_out.splitlines() if "auto_realign is paused" in l][0])
     if stopped and not args.slow_sync:
         print("  FAIL: the engine stopped auto_realign (a hold that was not one cycle)")
         on_e = False

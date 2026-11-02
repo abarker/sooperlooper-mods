@@ -2127,11 +2127,23 @@ Engine::mainloop()
 		{
 			const int held = s_realign_hold_report.exchange (-1);
 			if (held >= 0) {
-				fprintf (stderr, "SooperLooper: realign: JACK held the transport %d"
-				         " cycle(s) on the relocation, not 1 (a slow-sync client?):"
-				         " the drums may be off the loops by %d period(s);"
-				         " auto_realign stopped until it is set again\n",
-				         held, held > 1 ? held - 1 : 1);
+				const char * what = s_auto_realign.load ()
+					? "auto_realign is paused (/get auto_realign returns 2): turn it off"
+					  " (/set auto_realign 0, and auto_realign=\"0\" in the session),"
+					  " or remove that client and set auto_realign 1 again."
+					: "Do not rely on realign with this JACK graph, or remove that client.";
+				if (held > 1) {
+					fprintf (stderr, "SooperLooper: WARNING: JACK held a realign %d cycles,"
+					         " not 1: some JACK client is a slow-sync client.  The drums"
+					         " and SooperLooper's bar lines are now %d period(s) behind"
+					         " loops already playing; a restart from bar 1 clears it for"
+					         " new takes.  %s\n", held, held - 1, what);
+				} else {
+					fprintf (stderr, "SooperLooper: WARNING: JACK did not hold a realign"
+					         " (1 cycle expected).  The drums and SooperLooper's bar lines"
+					         " are now 1 period ahead of loops already playing; a restart"
+					         " from bar 1 clears it for new takes.  %s\n", what);
+				}
 			}
 		}
 		//------ albEnd ----------------------------------
