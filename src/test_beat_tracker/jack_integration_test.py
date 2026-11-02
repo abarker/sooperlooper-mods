@@ -40,7 +40,9 @@ import jack
 
 SR = 48000
 PERIOD = 256
-SERVER = "sl_bt_test_%d" % os.getpid()
+# Fixed: JACK2 has a few server slots and reuses a dead server's only for a
+# server of the same name, so a new name per run eventually ran out of them.
+SERVER = "sl_bt_test"
 OSC_PORT = 19000 + os.getpid() % 900
 
 

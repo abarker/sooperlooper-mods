@@ -70,7 +70,10 @@ import numpy as np
 
 SR = 48000
 PERIOD = 256
-SERVER = "sl_h2_test_%d" % os.getpid()
+# Fixed: JACK2 has a few server slots and reuses a dead server's only for a
+# server of the same name, so a new name per run ran out of slots ("Too many
+# servers already active") after about seven runs.
+SERVER = "sl_h2_test"
 SL_OSC_PORT = 19000 + os.getpid() % 900
 H2_OSC_PORT = SL_OSC_PORT + 1000
 ON_BEAT = 0.02                 # beats; one 256-frame cycle is 0.01 beat
