@@ -67,3 +67,21 @@ be on the beat.
 The 30 ms freeze does not always make Hydrogen miss cycles on a busy
 machine, so a stock Hydrogen sometimes keeps its offset and an
 ``--expect reset`` run fails for that reason alone; repeat it.
+
+Hydrogen take test: the same setup, but the engine records actual takes.
+A probe client plays exactly with the drums (copies them into the engine
+from a downbeat for 8 beats, pressing record at the start and end), with
+one bar per cycle and Sync switched off and on at transport stops and
+starts as the rig's big_tempo does::
+
+    ./hydrogen_take_test.py --h2-root DIR
+
+Take A comes after a tempo change while rolling, take B after Hydrogen
+has dropped its offset (the engine's bar lines off the drums), take C
+after Hydrogen's Play/Stop toggle pressed twice.  It passes when A and C
+come out 8 beats long, with all 8 hits per pass, in time with the drums.
+B is reported only: with the bar lines off, the loop is still the right
+length and in time, but its record window is shifted, so part of the
+phrase is missing.  A run where the dummy server skips cycles during a
+take is INCONCLUSIVE (exit status 2): other jobs at normal priority starve
+it under nice 19.  About 90 s.
