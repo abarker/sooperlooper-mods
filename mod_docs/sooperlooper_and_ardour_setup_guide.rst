@@ -242,8 +242,23 @@ recommendation:
 When JACK transport is running, SooperLooper is locked to the Hydrogen beat,
 and with this fork it stays on that beat through tempo changes. Hydrogen, as
 the JACK timebase master, starts and stops the transport; Big Tempo detects
-this and sends MIDI to SooperLooper to switch sync on and off, which is what
+this and tells SooperLooper over OSC to switch sync on and off, which is what
 allows recording a loop either locked to the beat or free-running.
+
+**Keeping the drums on the loops.** A tempo change made while the
+transport rolls, followed later by an xrun, can leave the drums off the
+loops until the transport is restarted from bar 1.  To prevent that, add
+the key to the session file's ``<Globals>`` line and restart::
+
+    auto_realign="1"
+
+SooperLooper then realigns the transport by itself just after each tempo
+change made while rolling, so an xrun causes only a momentary glitch.  To
+put the drums back by hand, send ``/set realign_transport 1`` over OSC
+(for example from a pedal gesture in the remapper).  Use a Big Tempo
+version that counts JACK's Starting state as rolling; an older one switches
+sync off and on for every loop at each realign.  The fork's summary
+document describes both under *Realigning the Drums*.
 
 **Late-hit correction.** With sync on, a press that lands a moment after the
 beat normally waits for the *next* beat -- a whole cycle late. This fork

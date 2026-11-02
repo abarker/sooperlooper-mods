@@ -889,10 +889,11 @@ and set ``late_hit_max_quant_unit_fraction`` to the fraction you want.
 OSC Control
 ~~~~~~~~~~~
 
-All six settings -- ``late_hit_window_ms``,
+All seven settings -- ``late_hit_window_ms``,
 ``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds``,
-``mute_late_hit_ms``, ``rel_sync_preroll_ms`` and ``sync_preroll_ms`` --
-can be read and changed while SooperLooper runs,
+``mute_late_hit_ms``, ``rel_sync_preroll_ms``, ``sync_preroll_ms`` and
+``auto_realign`` (0 off, any other value on) -- can be read and changed
+while SooperLooper runs,
 with the same global OSC ``/set`` and ``/get`` messages used for ``tempo``,
 ``eighth_per_cycle`` and the other ``<Globals>`` values:
 
@@ -909,7 +910,10 @@ For example, to read and then set the record failsafe from a client at
     /set "record_failsafe_seconds" 45.0
 
 A negative value sent with ``/set`` is ignored, leaving the setting as it
-was.
+was.  ``realign_transport`` is set the same way but is an action, not a
+setting: any value requests one realign (see `Realigning the Drums`_).
+``/get auto_realign`` reports the setting, also while automatic realigns
+are stopped after a long hold.
 
 These settings do not appear in ``slgui``, and ``/register_auto_update``
 cannot watch them for changes, because they are plain settings rather than
