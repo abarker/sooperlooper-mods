@@ -912,8 +912,8 @@ For example, to read and then set the record failsafe from a client at
 A negative value sent with ``/set`` is ignored, leaving the setting as it
 was.  ``realign_transport`` is set the same way but is an action, not a
 setting: any value requests one realign (see `Realigning the Drums`_).
-``/get auto_realign`` reports the setting, also while automatic realigns
-are stopped after a long hold.
+``/get auto_realign`` returns 2 while automatic realigns are stopped after
+a long hold.
 
 These settings do not appear in ``slgui``, and ``/register_auto_update``
 cannot watch them for changes, because they are plain settings rather than
@@ -1020,16 +1020,16 @@ or restart from bar 1.  The realign right after the change removes that,
 so such an error causes only its own momentary glitch.  What you hear at a
 tempo change: only the tempo change.  The drums move by a fraction of a
 millisecond (about one period's worth of the tempo change), and a hit due
-in the one held period may come that period late.  With Big Tempo on the
-rig, use a version that counts JACK's Starting state as rolling; an older
-one takes every realign for a transport stop and start and switches Sync
-off and on for every loop.
+in the one held period may come that period late.
 
 It relies on JACK holding the transport for exactly one period on a
 relocate.  Every realign measures the hold; if one is held longer (a
 slow-sync client in the JACK graph), SooperLooper prints a warning on its
-console, stops realigning by itself, and resumes only when
-``auto_realign`` is set again.
+console, stops realigning by itself (``/get auto_realign`` returns 2),
+and resumes only when ``auto_realign`` is set again.  That realign has
+already left the drums and SooperLooper's bar lines one period behind
+loops already playing for each extra period held; a restart from bar 1
+clears it, and a manual realign does not (it would be held as long).
 
 It assumes a timebase master that relocates to frame x tempo, as Hydrogen
 does in both modes; a DAW playing a tempo map relocates to its map's

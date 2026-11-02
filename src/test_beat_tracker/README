@@ -93,4 +93,4 @@ be on the beat whatever ``--expect`` says; the automatic relocation must
 keep the loops' sync counters.  ``--slow-sync N`` makes the probe a
 slow-sync client, not ready for N cycles each time the transport is
 starting; with ``--auto-realign`` the engine must measure the longer hold,
-stop auto-realigning and say so on its console.
+stop auto-realigning, say so on its console and return 2 for ``/get auto_realign``.

@@ -255,9 +255,7 @@ the key to the session file's ``<Globals>`` line and restart::
 SooperLooper then realigns the transport by itself just after each tempo
 change made while rolling, so an xrun causes only a momentary glitch.  To
 put the drums back by hand, send ``/set realign_transport 1`` over OSC
-(for example from a pedal gesture in the remapper).  Use a Big Tempo
-version that counts JACK's Starting state as rolling; an older one switches
-sync off and on for every loop at each realign.  The fork's summary
+(for example from a pedal gesture in the remapper).  The fork's summary
 document describes both under *Realigning the Drums*.
 
 **Late-hit correction.** With sync on, a press that lands a moment after the

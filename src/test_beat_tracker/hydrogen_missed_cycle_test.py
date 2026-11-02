@@ -162,6 +162,26 @@ def osc(port, *msg):
     subprocess.run(["oscsend", "localhost", str(port)] + list(msg), check=True)
 
 
+def osc_get(port, param):
+    """A global setting from the engine: /get param, reply on a private
+    UDP port.  Returns the float value."""
+    import socket
+    import struct
+
+    def pad(b):
+        b += b"\0"
+        return b + b"\0" * ((4 - len(b) % 4) % 4)
+    sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sk.bind(("127.0.0.1", 0))
+    sk.settimeout(2.0)
+    url = "osc.udp://127.0.0.1:%d/" % sk.getsockname()[1]
+    sk.sendto(pad(b"/get") + pad(b",sss") + pad(param.encode()) + pad(url.encode())
+              + pad(b"/r"), ("127.0.0.1", port))
+    data = sk.recvfrom(1024)[0]
+    sk.close()
+    return struct.unpack(">f", data[-4:])[0]
+
+
 def wrap(x):
     return (x + 0.5) % 1.0 - 0.5
 
@@ -371,6 +391,8 @@ def run(args, tmp, h2_root):
                     marks["relocate"] = probe.frame_time
                 else:
                     probe.transport_locate(0)
+        if args.auto_realign:
+            marks["auto_realign_get"] = osc_get(SL_OSC_PORT, "auto_realign")
         probe.transport_stop()
         time.sleep(0.5)
         probe.deactivate()
@@ -542,6 +564,12 @@ def main():
     if args.slow_sync and args.auto_realign and not stopped:
         print("  FAIL: a slow-sync client held the transport, and auto_realign did not stop")
         on_e = False
+    if args.auto_realign:
+        want = 2.0 if args.slow_sync else 1.0
+        got = marks.get("auto_realign_get")
+        print("  /get auto_realign: %s (expected %g)" % (got, want))
+        if got != want:
+            on_e = False
     if args.auto_realign:
         # With the offset cleared after the tempo change, nothing moves at
         # the freeze, whatever Hydrogen does.

@@ -144,7 +144,8 @@ static int s_realign_held = 0;
 // and the count further behind loops already playing.  So every realign
 // measures the hold, and one that is not one cycle stops automatic
 // realigns (s_auto_realign_blocked) until auto_realign is set again; the
-// engine says so on its console.  Set from the non-RT set handler.
+// engine says so on its console, and /get auto_realign returns 2.  Set
+// from the non-RT set handler.
 static std::atomic<bool> s_auto_realign (false);
 static std::atomic<bool> s_auto_realign_blocked (false);
 // A hold that was not one cycle, for the non-RT loop to report; -1: none.
@@ -2554,7 +2555,10 @@ Engine::process_nonrt_event (EventNonRT * event)
 			gg_event->ret_value = g_sync_preroll_ms;
 		}
 		else if (gg_event->param == "auto_realign") {
-			gg_event->ret_value = s_auto_realign.load () ? 1.0f : 0.0f;
+			// 0 off, 1 on, 2 on but stopped after a hold that was not
+			// one cycle (s_auto_realign_blocked).  The session saves 0/1.
+			gg_event->ret_value = !s_auto_realign.load () ? 0.0f
+				: (s_auto_realign_blocked.load () ? 2.0f : 1.0f);
 		}
 		//------ albEnd ----------------------------------
 
