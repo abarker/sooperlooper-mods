@@ -2,8 +2,9 @@
 #
 # Starts SooperLooper on Windows under Cygwin: the JACK server and the X
 # server if they are not already running, then slgui, which starts the
-# engine.  See windows/README.md.  Installed as start_sooperlooper by
-# cygwin_compile.bash.
+# engine.  See windows/README.md.  Installed as start_slgui by
+# cygwin_compile.bash.  start_slbigstate.bash starts the X server the
+# same way; keep the two in step.
 #
 # A JACK server already running (from QjackCtl, say) is used as it is.
 # Otherwise this one starts jackd with jack_driver_args below, and stops
@@ -17,6 +18,8 @@ jack_midi_args=(-X winmme)   # Windows MIDI devices as JACK MIDI ports
 
 jackd_exe="/cygdrive/c/Program Files/JACK2/jackd.exe"
 jack_log="/tmp/jackd.log"
+x_log="/tmp/startxwin.log"
+x_socket="/tmp/.X11-unix/X0"
 
 started_jack=""
 if tasklist | grep -qi '^jackd\.exe'; then
@@ -39,8 +42,20 @@ if ps -ef | grep -q '[X]Win'; then
    echo "X server already running."
 else
    echo "Starting the X server..."
-   startxwin >/dev/null 2>&1 &
-   until [ -S /tmp/.X11-unix/X0 ]; do sleep 1; done
+   # With no XWin running, a socket left from an earlier run is stale;
+   # waiting for it would start slgui before the server is up.
+   rm -f "$x_socket"
+   startxwin >"$x_log" 2>&1 &
+   waited=0
+   until [ -S "$x_socket" ]; do
+      if [ $waited -ge 60 ]; then
+         echo "The X server did not start within 60 s.  See $x_log"
+         echo "and /var/log/xwin/XWin.0.log."
+         exit 1
+      fi
+      sleep 1
+      waited=$((waited + 1))
+   done
 fi
 
 export DISPLAY=:0

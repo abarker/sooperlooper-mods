@@ -211,10 +211,19 @@ PKG_CHECK_MODULES(JACK, jack >= 0.80.0, have_jack=yes, have_jack=no)
 if test "x$have_jack" != "xno"
 then
     echo JACKLIBS is ${JACK_LIBS}
-    AC_CHECK_LIB(jack, jack_client_open, 
-                 [ AC_DEFINE([HAVE_JACK_CLIENT_OPEN], 1, [Have newer JACK connect call])], 
-                 [],
-                 [${JACK_LIBS}])
+    dnl ------ albBegin ----------------------------------
+    dnl STOCK (sooperlooper 1.7.9): AC_CHECK_LIB(jack, jack_client_open, ...,
+    dnl [${JACK_LIBS}]), which links the test with -ljack.  On Windows the
+    dnl library is jack64 (JACK_LIBS has -ljack64), so the test failed and
+    dnl the engine used the old jack_client_new() path, which names its
+    dnl client sooperlooper_1 instead of sooperlooper.  CHANGE: link the
+    dnl test with JACK_LIBS alone, whatever the library is called.
+    alb_save_LIBS="$LIBS"
+    LIBS="$JACK_LIBS $LIBS"
+    AC_CHECK_FUNC(jack_client_open,
+                  [ AC_DEFINE([HAVE_JACK_CLIENT_OPEN], 1, [Have newer JACK connect call])])
+    LIBS="$alb_save_LIBS"
+    dnl ------ albEnd ----------------------------------
     fi
 
     AC_SUBST(JACK_LIBS)

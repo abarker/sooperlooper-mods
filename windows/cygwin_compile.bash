@@ -2,7 +2,7 @@
 #
 # Builds and installs this SooperLooper fork on Windows under Cygwin,
 # dependencies included.  The Windows counterpart of ubuntu_compile.bash;
-# see windows/README.md.  Not yet run on Windows.
+# see windows/README.md.
 #
 # Run it from a Cygwin terminal:
 #
@@ -186,8 +186,9 @@ echo -n "run install? "
 read yesno
 if [ "$yesno" == "y" ]; then
    make install
-   install -m 755 windows/start_sooperlooper.bash /usr/local/bin/start_sooperlooper
+   install -m 755 windows/start_slgui.bash /usr/local/bin/start_slgui
+   install -m 755 windows/start_slbigstate.bash /usr/local/bin/start_slbigstate
    echo
-   echo "Installed in /usr/local/bin.  To run: start_sooperlooper"
+   echo "Installed in /usr/local/bin.  To run: start_slgui"
    echo "(starts JACK and the X server if needed, then slgui)."
 fi

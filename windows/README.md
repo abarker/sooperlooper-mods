@@ -167,17 +167,27 @@ that step is not needed.
 The short way, from a Cygwin terminal:
 
 ```bash
-start_sooperlooper
+start_slgui
 ```
 
-This script (`windows/start_sooperlooper.bash`, installed by the build
+This script (`windows/start_slgui.bash`, installed by the build
 script) starts the JACK server and the X server if they are not already
 running, then `slgui`, and stops JACK again when `slgui` exits if it
 started it.  It uses a JACK server already started from QjackCtl as it
 is; otherwise it starts one with JACK's dummy driver, which needs no
 sound card.  For a real sound card, change `jack_driver_args` at the top
-of the installed copy (`/usr/local/bin/start_sooperlooper`), or start
+of the installed copy (`/usr/local/bin/start_slgui`), or start
 JACK from QjackCtl first.  Its arguments are passed on to `slgui`.
+
+`start_slbigstate`, from another Cygwin terminal, starts the fork's big
+state display the same way: the X server if needed, then `slbigstate`
+with its arguments (`slbigstate --help` lists them).  It shows a running
+engine's state, so start the engine first.
+
+The scripts set `DISPLAY` only for the programs they start.  To run
+`slbigstate` or `slgui` directly from another Cygwin terminal, first
+`export DISPLAY=:0` there, or add that line to `~/.bashrc`; without it
+they stop with "Unable to initialize GTK+".
 
 By hand:
 
@@ -189,6 +199,7 @@ By hand:
 2. From a Cygwin terminal, start the X server and then the GUI:
 
    ```bash
+   rm -f /tmp/.X11-unix/X0
    startxwin >/dev/null 2>&1 &
    until [ -S /tmp/.X11-unix/X0 ]; do sleep 1; done
    export DISPLAY=:0
@@ -198,6 +209,8 @@ By hand:
    The `until` line waits for the X server, which can take several
    seconds to start (longer in a virtual machine); without it, or
    without `DISPLAY`, `slgui` stops with "Unable to initialize GTK+".
+   The `rm` line removes a socket left from an earlier X server, which
+   would end the wait at once; run it only when no X server is running.
    The server keeps running, with an icon in the notification area,
    until you quit it there.
    `slgui` starts the `sooperlooper` engine itself.  To run the engine
@@ -215,23 +228,24 @@ which should give Windows MIDI through JACK: start the JACK server with
 its Windows MIDI driver (`-X winmme` on the `jackd` command line; in
 QjackCtl, add it to the server command in Setup), then connect your
 MIDI device's capture port to `sooperlooper:midi_in` in QjackCtl's
-Graph or Connections window (`start_sooperlooper` starts JACK with
+Graph or Connections window (`start_slgui` starts JACK with
 `-X winmme` already).  This is untried.  It needs this fork's engine to
 create its MIDI handling without ALSA or CoreMIDI, which it now does;
 before that fix, MIDI and the MIDI bindings were ignored on Windows.
 
-To test MIDI input without a MIDI device, `jack_midi_send.c` in this
-folder sends one note (60, channel 1) to `sooperlooper:midi_in`:
+To test MIDI input without a MIDI device, start SooperLooper
+(`start_slgui`), then in another Cygwin terminal run:
 
 ```bash
-gcc -o jack_midi_send windows/jack_midi_send.c \
-    -I/usr/local/include -L/usr/local/lib -ljack64
-./jack_midi_send
+bash sooperlooper-mods/windows/test_jack_midi.bash
 ```
 
-With SooperLooper running, right-click a loop's Record button, choose
-Learn MIDI Binding, and run `./jack_midi_send`: the binding is learned.
-Each further run then presses Record.
+It builds `jack_midi_send` (from `jack_midi_send.c` in this folder),
+which sends one note (60, channel 1) to the engine's `midi_in` port, and
+walks you through three sends: the first is learned as a binding for
+Record (right-click Record, Learn MIDI Binding, before pressing Enter),
+the second starts a recording, the third stops it.  If a send fails, its
+output shows the step where it stopped.
 
 **`sllatency`** is a Python script.  It needs Cygwin's `python3` and
 `python3-numpy` packages and the `jack` module (`pip install
