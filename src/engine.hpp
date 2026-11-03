@@ -158,6 +158,14 @@ typedef struct _jack_port jack_port_t;
 
 namespace SooperLooper {
 
+//------ albBegin ----------------------------------
+// What a realign record of the pulse log (SyncPulseLogEvent::Realign)
+// reports.  Outside ALB_SYNC_PULSE_LOG: generate_sync() names these
+// whether or not the log is compiled in (its log_realign() then
+// discards them).
+enum SyncRealignWhat { RealignRequest = 0, RealignLanded = 1, RealignLost = 2 };
+//------ albEnd ----------------------------------
+
 #ifdef ALB_SYNC_PULSE_LOG
 //------ albBegin ----------------------------------
 // One record per actual JackSync cycle-boundary pulse, plus one per
@@ -179,8 +187,7 @@ struct SyncPulseLogEvent
 	// landed (framepos: the landing frame, realign_held: the cycles JACK
 	// held the transport), or lost (another relocation, or none within the
 	// wait).  realign_why: 1 manual, 2 auto_realign, 3 engine start.
-	enum RealignWhat { RealignRequest = 0, RealignLanded = 1, RealignLost = 2 };
-	uint8_t   realign_what;
+	uint8_t   realign_what;  // a SyncRealignWhat (above)
 	uint8_t   realign_why;
 	int32_t   realign_held;
 	uint8_t   kind;          // which of the record types this is

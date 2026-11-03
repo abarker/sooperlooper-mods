@@ -2270,11 +2270,11 @@ Engine::mainloop()
 					// (auto_realign) or start (engine started rolling).
 					static const char * why[] = { "?", "manual", "auto", "start" };
 					const char * w = why[pev.realign_why < 4 ? pev.realign_why : 0];
-					if (pev.realign_what == SyncPulseLogEvent::RealignRequest) {
+					if (pev.realign_what == RealignRequest) {
 						fprintf (_sync_pulse_log_file,
 						         "event=realign what=request why=%s frame=%u target=%u"
 						         " bpm=%.3f time=%s\n", w, pev.framepos, pev.expected, pev.bpm, t);
-					} else if (pev.realign_what == SyncPulseLogEvent::RealignLanded) {
+					} else if (pev.realign_what == RealignLanded) {
 						fprintf (_sync_pulse_log_file,
 						         "event=realign what=landed why=%s frame=%u held=%d time=%s\n",
 						         w, pev.framepos, pev.realign_held, t);
@@ -3579,11 +3579,11 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				// seen, counts as that.
 				// A realign's pulse-log record (ALB_SYNC_PULSE_LOG): what
 				// happened, why it was requested, frames, the hold.
-				auto log_realign = [&] (uint8_t what, int64_t frame, int64_t target, int held) {
+				auto log_realign = [&] (SyncRealignWhat what, int64_t frame, int64_t target, int held) {
 #ifdef ALB_SYNC_PULSE_LOG
 					SyncPulseLogEvent rev = SyncPulseLogEvent();
 					rev.kind         = SyncPulseLogEvent::Realign;
-					rev.realign_what = what;
+					rev.realign_what = (uint8_t) what;
 					rev.realign_why  = (uint8_t) s_realign_why;
 					rev.framepos     = (nframes_t) frame;
 					rev.expected     = (nframes_t) target;
@@ -3600,7 +3600,7 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 					}
 					else if (realign_landed
 					         || (_beat_tracker.relocated () && s_realign_held == 0)) {
-						log_realign (SyncPulseLogEvent::RealignLanded, info.framepos,
+						log_realign (RealignLanded, info.framepos,
 						             s_realign_landing, s_realign_held);
 						if (s_realign_held != 1) {
 							s_auto_realign_blocked.store (true);
@@ -3609,7 +3609,7 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 						s_realign_landing = -1;
 					}
 					else if (_beat_tracker.relocated () || ++s_realign_wait > 32) {
-						log_realign (SyncPulseLogEvent::RealignLost, info.framepos,
+						log_realign (RealignLost, info.framepos,
 						             s_realign_landing, s_realign_held);
 						s_realign_landing = -1;
 					}
@@ -3683,7 +3683,7 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 					const int64_t target = (int64_t) llround (beats_then / rate);
 					if (target >= 2 * (int64_t) nframes) {
 						s_realign_why = why;
-						log_realign (SyncPulseLogEvent::RealignRequest, info.framepos, target, 0);
+						log_realign (RealignRequest, info.framepos, target, 0);
 						s_realign_landing = target;
 						s_realign_wait = 0;
 						s_realign_held = 0;
