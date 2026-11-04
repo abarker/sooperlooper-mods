@@ -88,8 +88,8 @@ For full details see the documentation in [`mod_docs/`](mod_docs/):
 - [`sooperlooper_and_ardour_setup_guide.rst`](mod_docs/sooperlooper_and_ardour_setup_guide.rst) —
   a practical low-budget live-looping setup and latency-calibration guide.
 - [`windows/README.md`](windows/README.md) — building and running on
-  Windows under Cygwin, with a build script (built and run once; MIDI
-  untried).
+  Windows under Cygwin, with a build script (built and run on Windows 10,
+  MIDI through JACK included; a MIDI device not yet tried).
 
 All new code is bracketed with `albBegin` / `albEnd` markers; search for
 `albBegin` to locate every changed block.

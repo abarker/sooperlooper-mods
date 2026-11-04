@@ -324,9 +324,9 @@ item links to its full description.
    with 0.32 installed.
 
    Windows builds under Cygwin; ``windows/README.md`` has the steps and
-   a build script, which has built and run this fork once on Windows 10.
-   MIDI control on Windows should work through the fork's JACK MIDI
-   port; untried.
+   a build script, which has built and run this fork on Windows 10.
+   MIDI control on Windows works through the fork's JACK MIDI port
+   (tested without a MIDI device; a real device not yet tried).
 
    Stock's standalone macOS build has one reported startup hang on
    Catalina, unrelated to this patch, with a workaround:

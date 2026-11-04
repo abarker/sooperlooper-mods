@@ -10,11 +10,13 @@ headers it lacks.
 `README_Windows.md` at the top of the repository (2019) and the earlier
 version of this file (2020, at the tag `stock-1.7.9`), with current
 information on Cygwin's packages, JACK2 1.9.22 and this fork's
-additions.  The build script has been run once, on Windows 10 in a
-virtual machine: after fixes made along the way, it built and installed
-everything, and `slgui` ran with the engine on JACK's dummy driver.  The
-start script, the MIDI fix and MIDI itself have not been tried yet.  If a
-step fails, the error and the step number are what's needed to fix it.
+additions.  The build script has been run on Windows 10 in a virtual
+machine, from a fresh Cygwin install: it built and installed everything,
+`slgui` and `slbigstate` ran with the engine on JACK's dummy driver, and
+MIDI input through JACK worked (`test_jack_midi.bash`: a binding learned,
+a recording started and stopped).  A real MIDI device through JACK's
+Windows MIDI driver has not been tried.  If a step fails, the error and
+the step number are what's needed to fix it.
 
 
 ### Quick way: the build script
@@ -224,14 +226,15 @@ By hand:
 **MIDI.**  Stock SooperLooper reads MIDI only from ALSA (Linux) and
 CoreMIDI (macOS), so stock had no MIDI input on Windows.  This fork adds
 JACK MIDI ports, `sooperlooper:midi_in` and `sooperlooper:midi_out`,
-which should give Windows MIDI through JACK: start the JACK server with
+which give Windows MIDI through JACK: start the JACK server with
 its Windows MIDI driver (`-X winmme` on the `jackd` command line; in
 QjackCtl, add it to the server command in Setup), then connect your
 MIDI device's capture port to `sooperlooper:midi_in` in QjackCtl's
 Graph or Connections window (`start_slgui` starts JACK with
-`-X winmme` already).  This is untried.  It needs this fork's engine to
-create its MIDI handling without ALSA or CoreMIDI, which it now does;
-before that fix, MIDI and the MIDI bindings were ignored on Windows.
+`-X winmme` already).  MIDI through JACK works (tested below, without a
+MIDI device); a real device through `-X winmme` has not been tried.
+Stock created no MIDI handling at all without ALSA or CoreMIDI, so MIDI
+and the MIDI bindings were ignored on Windows; this fork fixes that.
 
 To test MIDI input without a MIDI device, start SooperLooper
 (`start_slgui`), then in another Cygwin terminal run:
