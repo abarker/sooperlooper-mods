@@ -161,7 +161,14 @@ is why the 2019 guide ran `dos2unix` on the source.  With Cygwin's `git`
 that step is not needed.
 
 `make install` puts `sooperlooper`, `slgui`, `slconsole`,
-`slregister`, `slbigstate` and `sllatency` in `/usr/local/bin`.
+`slregister`, `slbigstate` and `sllatency` in `/usr/local/bin`.  The
+start scripts of step 5 are not part of it (the build script installs
+them); by hand:
+
+```bash
+install -m 755 windows/start_slgui.bash /usr/local/bin/start_slgui
+install -m 755 windows/start_slbigstate.bash /usr/local/bin/start_slbigstate
+```
 
 
 ### 5. Run
