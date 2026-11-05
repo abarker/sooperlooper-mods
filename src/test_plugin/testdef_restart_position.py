@@ -103,6 +103,16 @@ class TriggerLatencyTestCase(unittest.TestCase):
         self.wait_buffers(self.PULSE_BUFS)
         self.looper.sync_inject_value = 0.0
 
+    def wait_for_state(self, state, max_bufs):
+        """One buffer at a time until `state`, so it was entered within
+        the last buffer.  With TRIGGER_LATENCY_ALL_EDGES on, a take's end
+        waits IL - trigger_latency (here IL: trigger_latency is 0)."""
+        for _ in range(max_bufs):
+            self.wait_buffers(1)
+            if self.engine.getState() == engine_wrapper.states[state]:
+                return
+        self.assertState(state)
+
     def assertStartsAt(self, start, slack_bufs, what):
         """Position is start + (a few buffers of elapsed time)."""
         pos = self.position()
@@ -172,8 +182,7 @@ class TestTriggerLatency(TriggerLatencyTestCase):
         self.engine.request("RECORD")
         self.wait_buffers(self.record_bufs())
         self.engine.request("TRIGGER")
-        self.wait_buffers(1)
-        self.assertState("Playing")
+        self.wait_for_state("Playing", IL // self.buf + 4)
         self.assertStartsAt(IL + OL, 3, "trigger ending a record")
 
     def testOneShotFromMute_StartsAtLatency(self):
@@ -211,8 +220,7 @@ class TestTriggerLatency(TriggerLatencyTestCase):
         self.engine.request("RECORD")
         self.wait_buffers(self.record_bufs())
         self.engine.request("ONESHOT")
-        self.wait_buffers(1)
-        self.assertState("OneShot")
+        self.wait_for_state("OneShot", IL // self.buf + 4)
         self.assertStartsAt(IL + OL, 3, "oneshot ending a record")
 
     def testZeroLatency_StartsAtTop(self):

@@ -995,6 +995,24 @@ static inline long edgeDelaySamples(const SooperLooperI *pLS)
 	const long s = (long) *pLS->pfInputLatency - (long) *pLS->pfTriggerLatency;
 	return s > 0 ? s : 0;
 }
+
+// A take ended by another command, Sync off: end it edgeDelaySamples()
+// later through STATE_TRIG_STOP into `next`, sending `pulse` when it
+// fires.  False (do as now) when not deferred.
+static inline bool deferTakeEnd(SooperLooperI *pLS, LoopChunk *loop,
+				float fSyncMode, bool bRoundIntegerTempo,
+				int next, float pulse)
+{
+	if (pLS->state != STATE_RECORD || fSyncMode != 0.0f || bRoundIntegerTempo
+	    || !loop || edgeDelaySamples(pLS) <= 0)
+		return false;
+	pLS->state = STATE_TRIG_STOP;
+	pLS->nextState = next;
+	pLS->lEdgeDelay = edgeDelaySamples(pLS);
+	pLS->bEdgeStopDeferred = true;
+	pLS->fEdgeStopPulse = pulse;
+	return true;
+}
 #endif
 //------ albEnd ----------------------------------
 
@@ -1700,6 +1718,7 @@ activateSooperLooper(LADSPA_Handle Instance) {
 #if TRIGGER_LATENCY_ALL_EDGES
   pLS->lEdgeDelay = 0;
   pLS->bEdgeStopDeferred = false;
+  pLS->fEdgeStopPulse = 0.0f;
   pLS->bEdgeEndDeferred = false;
 #endif
   //------ albEnd ----------------------------------
@@ -3554,6 +3573,7 @@ runSooperLooper(LADSPA_Handle Instance,
 	  // one sets it again below.
 	  pLS->lEdgeDelay = 0;
 	  pLS->bEdgeStopDeferred = false;
+	  pLS->fEdgeStopPulse = 0.0f;
 	  pLS->bEdgeEndDeferred = false;
 #endif
 	  //------ albEnd ----------------------------------
@@ -3597,6 +3617,7 @@ runSooperLooper(LADSPA_Handle Instance,
 			      pLS->nextState = STATE_PLAY;
 			      pLS->lEdgeDelay = edgeDelaySamples(pLS);
 			      pLS->bEdgeStopDeferred = true;
+			      pLS->fEdgeStopPulse = 2.0f;
 			      DBG(fprintf(stderr,"%u:%u  Record stop deferred %ld samples\n", pLS->lLoopIndex, pLS->lChannelIndex, pLS->lEdgeDelay));
 			      break;
 		      }
@@ -4368,6 +4389,14 @@ runSooperLooper(LADSPA_Handle Instance,
 		 // continue through to default
 
 	      default:
+		      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+		      // Ending a take, Sync off: end it on the press (2b-i).
+		      if (deferTakeEnd(pLS, loop, fSyncMode, bRoundIntegerTempo, STATE_MULTIPLY,
+			       fQuantizeMode == QUANT_OFF ? 1.0f : 0.0f))
+			      break;
+#endif
+		      //------ albEnd ----------------------------------
 		      if (fSyncMode == 0.0f && fQuantizeMode == QUANT_OFF
 			  && !(pLS->state == STATE_RECORD && bRoundIntegerTempo)) {
 			      if (loop) {
@@ -4449,6 +4478,14 @@ runSooperLooper(LADSPA_Handle Instance,
 
 	      default:
 		 // make new loop chunk
+		      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+		      // Ending a take, Sync off: end it on the press (2b-i).
+		      if (deferTakeEnd(pLS, loop, fSyncMode, bRoundIntegerTempo, STATE_INSERT,
+			       fQuantizeMode == QUANT_OFF ? 1.0f : 0.0f))
+			      break;
+#endif
+		      //------ albEnd ----------------------------------
 		      if (fSyncMode == 0.0f && fQuantizeMode == QUANT_OFF
 			  && !(pLS->state == STATE_RECORD && bRoundIntegerTempo)) 
 		      {
@@ -4541,6 +4578,14 @@ runSooperLooper(LADSPA_Handle Instance,
 		 break;
 		 
 	      default:
+		      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+		      // Ending a take, Sync off: end it on the press (2b-i).
+		      if (deferTakeEnd(pLS, loop, fSyncMode, bRoundIntegerTempo, STATE_REPLACE,
+			       (!bReplaceQuantized || fQuantizeMode == QUANT_OFF) ? 1.0f : 0.0f))
+			      break;
+#endif
+		      //------ albEnd ----------------------------------
 		      if (((bReplaceQuantized == 0.0f) || (fSyncMode == 0.0f && fQuantizeMode == QUANT_OFF))
 			  && !(pLS->state == STATE_RECORD && bRoundIntegerTempo)) {
 			      if (loop)
@@ -4627,6 +4672,14 @@ runSooperLooper(LADSPA_Handle Instance,
 		 break;
 		 
 	      default:
+		      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+		      // Ending a take, Sync off: end it on the press (2b-i).
+		      if (deferTakeEnd(pLS, loop, fSyncMode, bRoundIntegerTempo, STATE_SUBSTITUTE,
+			       fQuantizeMode == QUANT_OFF ? 1.0f : 0.0f))
+			      break;
+#endif
+		      //------ albEnd ----------------------------------
 		      if (((bReplaceQuantized == 0.0f) || (fSyncMode == 0.0f && fQuantizeMode == QUANT_OFF))
 			  && !(pLS->state == STATE_RECORD && bRoundIntegerTempo)) {
 			      if (loop)
@@ -4832,6 +4885,15 @@ runSooperLooper(LADSPA_Handle Instance,
 		   bool muteImmediateOK =
 		       ((fMuteQuantized == 0.0f) || (fSyncMode == 0.0f && fQuantizeMode == QUANT_OFF))
 		       && !(pLS->state == STATE_RECORD && bRoundIntegerTempo);
+		   //------ albEnd ----------------------------------
+		   //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+		   // Ending a take, Sync off: end it on the press (2b-i).
+		   if (deferTakeEnd(pLS, loop, fSyncMode, bRoundIntegerTempo,
+				    lMultiCtrl == MULTI_MUTE ? STATE_MUTE : STATE_PAUSED,
+				    muteImmediateOK ? 1.0f : 0.0f))
+			   break;
+#endif
 		   //------ albEnd ----------------------------------
 		   if (loop && (muteImmediateOK || muteLateHit))
 		   {
@@ -5274,6 +5336,14 @@ runSooperLooper(LADSPA_Handle Instance,
 		default:
 			// play the loop one_shot mode
 			if (loop) {
+				//------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+				// Ending a take, Sync off: end it on the press (2b-i).
+				if (deferTakeEnd(pLS, loop, fSyncMode, bRoundIntegerTempo, STATE_ONESHOT,
+						 2.0f))
+					break;
+#endif
+				//------ albEnd ----------------------------------
 				if (((fSyncMode == 0.0f) || (fSyncMode >= 1.0f && pLS->lSamplesSinceSync < eighthSamples)) // give it some slack on relsync
 				    && !(pLS->state == STATE_RECORD && bRoundIntegerTempo)) {
 					DBG(fprintf(stderr,"Starting ONESHOT state\n"));
@@ -5361,6 +5431,14 @@ runSooperLooper(LADSPA_Handle Instance,
 		default:
 			// play the loop from the start
 			if (loop) {
+				//------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+				// Ending a take, Sync off: end it on the press (2b-i).
+				if (deferTakeEnd(pLS, loop, fSyncMode, bRoundIntegerTempo, STATE_TRIGGER_PLAY,
+						 2.0f))
+					break;
+#endif
+				//------ albEnd ----------------------------------
 				if ((fSyncMode == 0.0f || (fSyncMode >= 1.0f && pLS->lSamplesSinceSync < eighthSamples)) // give it some slack 
 				    && !(pLS->state == STATE_RECORD && bRoundIntegerTempo)) 
 				{
@@ -5859,7 +5937,8 @@ runSooperLooper(LADSPA_Handle Instance,
 	      
 	      //------ albBegin ----------------------------------
 	      // TRIGGER_LATENCY_ALL_EDGES: a deferred unsynced stop waits out its
-	      // countdown (set by MULTI_RECORD; 0 otherwise).
+	      // countdown (set by MULTI_RECORD, Record -> Overdub, and
+	      // deferTakeEnd(); 0 otherwise).
 #if TRIGGER_LATENCY_ALL_EDGES
 	      const bool stopDue = (pLS->lEdgeDelay <= 0);
 #else
@@ -5891,12 +5970,11 @@ runSooperLooper(LADSPA_Handle Instance,
 		      }
 	      //------ albBegin ----------------------------------
 #if TRIGGER_LATENCY_ALL_EDGES
-	      // A deferred Record stop sends the pulse the immediate stop sends
+	      // A deferred take end sends the pulse the immediate end sends
 	      // (for loops synced to this one), now that it ends.
-	      if (pLS->bEdgeStopDeferred) {
-		      pfSyncOutput[lSampleIndex] = 2.0f;
-		      pLS->bEdgeStopDeferred = false;
-	      }
+	      // bEdgeStopDeferred stays set until after the transition below.
+	      if (pLS->bEdgeStopDeferred && pLS->fEdgeStopPulse != 0.0f)
+		      pfSyncOutput[lSampleIndex] = pLS->fEdgeStopPulse;
 #endif
 	      //------ albEnd ----------------------------------
 
@@ -5981,7 +6059,23 @@ runSooperLooper(LADSPA_Handle Instance,
 		      loop->dCurrPos = loop->dCurrPos + ( lOutputLatency + lInputLatency ) * fRate;
 		      pLS->lFramesUntilFilled = lOutputLatency + lInputLatency;
 		      //------ albEnd ----------------------------------
-		      
+		      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+		      // A deferred take end: what the immediate branch does that
+		      // the transition above does not.
+		      if (pLS->bEdgeStopDeferred) {
+			      pLS->bEdgeStopDeferred = false;
+			      pLS->fEdgeStopPulse = 0.0f;
+			      // As every immediate take end (beginInsert does not).
+			      pLS->fFeedSrcFadeDelta = 1.0f / xfadeSamples;
+			      // Pause: the position after the IL + OL, as the
+			      // immediate branch has it.
+			      if (pLS->state == STATE_PAUSED && loop)
+				      pLS->dPausedPos = loop->dCurrPos;
+		      }
+#endif
+		      //------ albEnd ----------------------------------
+
 		      pLS->fLoopSrcFadeDelta = -1.0f / xfadeSamples;
 		      
 		      break;

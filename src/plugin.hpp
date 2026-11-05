@@ -67,12 +67,15 @@
 //     TODO in STATE_TRIG_START) -- increment 1;
 //   - an overdub, Replace or Substitute ended by the same command when
 //     that end is immediate (overdub_quantized / replace_quantized off,
-//     with Sync on too), and Record -> Overdub with Sync off -- 2a.
+//     with Sync on too), and Record -> Overdub with Sync off -- 2a;
+//   - a take ended by Multiply, Insert, Replace, Substitute, Mute, Pause,
+//     Oneshot or Trigger, with Sync off -- 2b-i.
 // Takes then begin and end that much later than now; their length (the
 // press interval) and playback phase do not change.  At trigger_latency =
-// input_latency it changes nothing.  Not yet: the other commands that end
-// a take or a layer (2b), trigger_latency > input_latency (left as now),
-// restarts, and the late-hit window.  Here, not in plugin.cc, for the
+// input_latency it changes nothing.  Not yet: a layer ended by a
+// different command (2b-ii), Reverse, Delay and Scratch ending a take,
+// trigger_latency > input_latency (left as now), restarts, and the
+// late-hit window.  Here, not in plugin.cc, for the
 // SooperLooperI fields below.
 #define TRIGGER_LATENCY_ALL_EDGES 0
 //------ albEnd ----------------------------------
@@ -268,9 +271,14 @@ typedef struct {
 	// trigger_latency at the command, counted down once per sample in
 	// STATE_TRIG_START (record start) and STATE_TRIG_STOP (record stop).
 	long lEdgeDelay;
-	// A deferred Record stop: send the sync pulse the immediate stop
-	// sends (for loops synced to this one) when it fires.
+	// A deferred take end (Record, or another command pressed while
+	// recording): when it fires, send fEdgeStopPulse and redo what the
+	// immediate branch does that STATE_TRIG_STOP does not.
 	bool bEdgeStopDeferred;
+	// The sync pulse a deferred take end sends when it fires (what the
+	// command's immediate branch sends, for loops synced to this one; 0
+	// for none).
+	float fEdgeStopPulse;
 	// A deferred overdub, Replace or Substitute end (the same command
 	// again): the layer goes on until lEdgeDelay runs out, then ends as
 	// the immediate branch would have (increment 2a).

@@ -5,7 +5,10 @@ to mean exactly the command latency, and these edges wait input_latency -
 trigger_latency (s) after the command, so they land on the presses:
 the Record command's own start and stop with Sync off (increment 1), and
 Record -> Overdub and a Replace or Substitute ended by the same command
-(increment 2a).  The length stays the press interval and playback keeps
+(increment 2a), and a take ended by Multiply, Insert, Replace,
+Substitute, Mute, Pause, Oneshot or Trigger with Sync off (2b-i; after
+Pause, a resume starts where the immediate end's does).  The
+length stays the press interval and playback keeps
 the stock latency compensation.  At s <= 0 nothing changes.
 
 Skipped when the switch is off.  Same exact-frame presses and ramp input
@@ -137,8 +140,92 @@ class LayerEndsMixin:
         self.assertEqual(self.layer_end("SUBSTITUTE", "Substitute"), self.s() - 1)
 
 
+class TakeEndsMixin:
+    """Increment 2b-i: a take ended by another command, Sync off, ends on
+    the press, so it is the press interval long.  Read on the CycleLength
+    port: Insert's new chunk is two takes long, its cycle one."""
+
+    def cycle_length(self):
+        return int(round(self.looper.get_control_value(test_engine.CycleLength)
+                         * self.sr))
+
+    def end_take_with(self, command, state):
+        s0 = self.press_at("RECORD", self.looper.sync_clock + 2 * self.buf)
+        self.wait_state("Recording")
+        s1 = self.press_at(command, s0 + int(0.6 * self.cycle))
+        self.wait_state(state)
+        self.assertEqual(self.cycle_length(), s1 - s0,
+                         f"a take ended by {command}: not the press interval")
+        return s0, s1
+
+    def testMultiply(self):
+        self.end_take_with("MULTIPLY", "Multiplying")
+
+    def testInsert(self):
+        self.end_take_with("INSERT", "Inserting")
+
+    def testReplace(self):
+        self.end_take_with("REPLACE", "Replacing")
+
+    def testSubstitute(self):
+        self.end_take_with("SUBSTITUTE", "Substitute")
+
+    def testMute(self):
+        self.end_take_with("MUTE", "Muted")
+
+    def testMuteOn(self):
+        # Becomes Mute before the dispatch (not muted yet).
+        self.end_take_with("MUTE_ON", "Muted")
+
+    def testMuteTrigger(self):
+        # Likewise (not muted yet).
+        self.end_take_with("MUTE_TRIGGER", "Muted")
+
+    def testOneshot(self):
+        self.end_take_with("ONESHOT", "OneShot")
+
+    def testTrigger(self):
+        s0, s1 = self.end_take_with("TRIGGER", "Playing")
+        self.assertPlaysWithOffset(s1 - s0, self.IL + self.OL)
+
+    def testPause_ResumesWhereTheImmediateEndDoes(self):
+        """A resume after Pause ended a take plays from loop position
+        IL + OL: stock's immediate end keeps the position after adding
+        IL + OL (measured: the s = 0 class runs that branch).  The deferred
+        end must match; set before the add, it would resume IL + OL
+        earlier."""
+        s0, s1 = self.end_take_with("PAUSE", "Paused")
+        L = s1 - s0
+        self.wait_buffers(4)
+        r = self.press_at("PAUSE", self.looper.sync_clock + 2 * self.buf)
+        self.wait_state("Playing")
+        checked = 0
+        for _ in range(12):
+            self.wait_buffers(1)
+            fr = self.looper.out_first_frame
+            val = self.looper.out_first
+            if self.looper.out_first_frame != fr:
+                continue                  # raced the callback
+            pos = (fr - r + self.IL + self.OL) % L
+            if fr - r < 128 or pos < 64 or pos > L - 64:
+                continue                  # the fade-in, and the seam
+            self.assertEqual(frame_of(val), self.loop_frame(pos),
+                             f"{fr - r} samples after the resume: not loop position {pos}")
+            checked += 1
+        self.assertGreater(checked, 4)
+
+
 class TestTriggerLatencyLayerEnds(LayerEndsMixin, TriggerLatencyAllEdgesTestCase):
     pass
+
+
+class TestTriggerLatencyTakeEnds(TakeEndsMixin, TriggerLatencyAllEdgesTestCase):
+    pass
+
+
+class TestTriggerLatencyTakeEndsEqual(TakeEndsMixin, TriggerLatencyAllEdgesTestCase):
+
+    TL = 600            # s = 0: stock timing
 
 
 class TestTriggerLatencyLayerEndsEqual(LayerEndsMixin, TriggerLatencyAllEdgesTestCase):
