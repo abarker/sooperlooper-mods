@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="370" viewBox="0 0 880 370" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13">
+  <rect x="0" y="0" width="880" height="370" fill="#ffffff"/>
+  <defs><marker id="arr" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,4 L0,8 z" fill="#52525b"/></marker><marker id="arrs" markerWidth="10" markerHeight="8" refX="1" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M10,0 L0,4 L10,8 z" fill="#52525b"/></marker></defs>
+  <line x1="245.8" y1="60.0" x2="245.8" y2="248.0" stroke="#d4d4d8" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="500.8" y1="60.0" x2="500.8" y2="248.0" stroke="#d4d4d8" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="522.4" y1="60.0" x2="522.4" y2="248.0" stroke="#d4d4d8" stroke-width="1" stroke-dasharray="4,4"/>
+  <line x1="190.0" y1="60.0" x2="860.0" y2="60.0" stroke="#27272a" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="12.0" y="57.0" fill="#27272a" text-anchor="start" font-weight="bold">Performer</text>
+  <text x="12.0" y="73.0" fill="#52525b" text-anchor="start" font-size="12">played and heard</text>
+  <line x1="190.0" y1="248.0" x2="860.0" y2="248.0" stroke="#27272a" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="12.0" y="245.0" fill="#27272a" text-anchor="start" font-weight="bold">SooperLooper</text>
+  <text x="12.0" y="261.0" fill="#52525b" text-anchor="start" font-size="12">JACK's timeline at its ports</text>
+  <circle cx="245.8" cy="60.0" r="6" fill="#15803d"/>
+  <text x="245.8" y="46.0" fill="#14532d" text-anchor="middle">P: foot down, note struck</text>
+  <circle cx="777.4" cy="60.0" r="6" fill="#2563eb"/>
+  <text x="783.4" y="46.0" fill="#1d4ed8" text-anchor="end">earliest a response is heard: P + CL + OL</text>
+  <text x="12.0" y="118.0" fill="#c2410c" text-anchor="start" font-weight="bold">CL = 685</text>
+  <text x="96.0" y="118.0" fill="#52525b" text-anchor="start" font-size="12">command</text>
+  <rect x="245.8" y="104.0" width="159.7" height="22.0" fill="#ffedd5" stroke="#ea580c"/>
+  <text x="325.7" y="119.5" fill="#c2410c" text-anchor="middle" font-size="12">pedal, MIDI, USB</text>
+  <rect x="405.5" y="104.0" width="95.3" height="22.0" fill="#fed7aa" stroke="#ea580c"/>
+  <text x="453.2" y="119.5" fill="#c2410c" text-anchor="middle" font-size="12">1 JACK period</text>
+  <text x="12.0" y="158.0" fill="#1d4ed8" text-anchor="start" font-weight="bold">IL = 743</text>
+  <text x="96.0" y="158.0" fill="#52525b" text-anchor="start" font-size="12">audio in</text>
+  <rect x="245.8" y="144.0" width="181.3" height="22.0" fill="#dbeafe" stroke="#2563eb"/>
+  <text x="336.5" y="159.5" fill="#1d4ed8" text-anchor="middle" font-size="12">converter, USB</text>
+  <rect x="427.1" y="144.0" width="95.3" height="22.0" fill="#bfdbfe" stroke="#2563eb"/>
+  <text x="474.8" y="159.5" fill="#1d4ed8" text-anchor="middle" font-size="12">1 JACK period</text>
+  <text x="12.0" y="198.0" fill="#15803d" text-anchor="start" font-weight="bold">OL = 743</text>
+  <text x="96.0" y="198.0" fill="#52525b" text-anchor="start" font-size="12">audio out</text>
+  <rect x="500.8" y="184.0" width="276.6" height="22.0" fill="#dcfce7" stroke="#15803d"/>
+  <text x="639.1" y="199.5" fill="#14532d" text-anchor="middle" font-size="12">JACK playback periods, USB, converter</text>
+  <line x1="777.4" y1="184.0" x2="777.4" y2="68.0" stroke="#15803d" stroke-width="1.5" marker-end="url(#arr)"/>
+  <circle cx="500.8" cy="248.0" r="6" fill="#ea580c"/>
+  <text x="494.8" y="270.0" fill="#c2410c" text-anchor="end">A = P + CL: the command arrives</text>
+  <circle cx="522.4" cy="248.0" r="6" fill="#2563eb"/>
+  <text x="528.4" y="270.0" fill="#1d4ed8" text-anchor="start">P + IL: the note's sound arrives</text>
+  <text x="245.8" y="270.0" fill="#52525b" text-anchor="middle">P</text>
+  <line x1="500.8" y1="292.0" x2="522.4" y2="292.0" stroke="#27272a" stroke-width="1.5"/>
+  <line x1="500.8" y1="287.0" x2="500.8" y2="297.0" stroke="#27272a" stroke-width="1.5"/>
+  <line x1="522.4" y1="287.0" x2="522.4" y2="297.0" stroke="#27272a" stroke-width="1.5"/>
+  <text x="532.4" y="296.0" fill="#27272a" text-anchor="start" font-size="12">an overdub start waits IL − trigger_latency after A,</text>
+  <text x="532.4" y="313.0" fill="#27272a" text-anchor="start" font-size="12">then takes input from the sound played at P</text>
+  <text x="532.4" y="330.0" fill="#52525b" text-anchor="start" font-size="12">(exactly, when trigger_latency = CL)</text>
+</svg>

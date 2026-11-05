@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="290" viewBox="0 0 880 290" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13">
+  <rect x="0" y="0" width="880" height="290" fill="#ffffff"/>
+  <defs><marker id="arr" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,4 L0,8 z" fill="#52525b"/></marker><marker id="arrs" markerWidth="10" markerHeight="8" refX="1" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M10,0 L0,4 L10,8 z" fill="#52525b"/></marker></defs>
+  <line x1="190.0" y1="70.0" x2="860.0" y2="70.0" stroke="#27272a" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="12.0" y="67.0" fill="#27272a" text-anchor="start" font-weight="bold">Performer</text>
+  <text x="12.0" y="83.0" fill="#52525b" text-anchor="start" font-size="12">played and heard</text>
+  <line x1="190.0" y1="230.0" x2="860.0" y2="230.0" stroke="#27272a" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="12.0" y="227.0" fill="#27272a" text-anchor="start" font-weight="bold">SooperLooper</text>
+  <text x="12.0" y="243.0" fill="#52525b" text-anchor="start" font-size="12">JACK's timeline</text>
+  <rect x="252.4" y="78.0" width="382.9" height="22.0" fill="#fee2e2"/>
+  <text x="443.8" y="93.5" fill="#b91c1c" text-anchor="middle" font-size="12">IL + OL: not heard on the first pass</text>
+  <rect x="635.3" y="78.0" width="214.7" height="22.0" fill="#dcfce7"/>
+  <text x="742.6" y="93.5" fill="#14532d" text-anchor="middle" font-size="12">the loop, in phase</text>
+  <line x1="252.4" y1="64.0" x2="252.4" y2="100.0" stroke="#b91c1c" stroke-width="1.5"/>
+  <text x="246.4" y="122.0" fill="#b91c1c" text-anchor="end" font-size="12">repeat due: Pe + (CL − IL)</text>
+  <circle cx="267.3" cy="70.0" r="6" fill="#15803d"/>
+  <text x="267.3" y="54.0" fill="#14532d" text-anchor="middle">Pe: stop pressed</text>
+  <circle cx="635.3" cy="70.0" r="6" fill="#2563eb"/>
+  <text x="635.3" y="54.0" fill="#1d4ed8" text-anchor="middle">earliest heard: Pe + CL + OL</text>
+  <line x1="267.3" y1="76.0" x2="439.8" y2="222.0" stroke="#ea580c" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="347.6" y="172.0" fill="#c2410c" text-anchor="end" font-weight="bold">CL</text>
+  <line x1="447.8" y1="222.0" x2="633.3" y2="104.0" stroke="#15803d" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="551.6" y="172.0" fill="#15803d" text-anchor="start" font-weight="bold">OL</text>
+  <circle cx="443.8" cy="230.0" r="6" fill="#ea580c"/>
+  <text x="443.8" y="256.0" fill="#c2410c" text-anchor="start" font-size="12">A: the stop arrives; playback starts IL + OL into the loop</text>
+</svg>

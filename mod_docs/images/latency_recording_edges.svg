@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="300" viewBox="0 0 880 300" font-family="DejaVu Sans, Arial, Helvetica, sans-serif" font-size="13">
+  <rect x="0" y="0" width="880" height="300" fill="#ffffff"/>
+  <defs><marker id="arr" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L10,4 L0,8 z" fill="#52525b"/></marker><marker id="arrs" markerWidth="10" markerHeight="8" refX="1" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M10,0 L0,4 L10,8 z" fill="#52525b"/></marker></defs>
+  <line x1="330.0" y1="46.0" x2="850.0" y2="46.0" stroke="#27272a" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="12.0" y="50.0" fill="#27272a" text-anchor="start" font-weight="bold">Performer time</text>
+  <line x1="330.0" y1="41.0" x2="330.0" y2="51.0" stroke="#27272a" stroke-width="1"/>
+  <text x="330.0" y="36.0" fill="#52525b" text-anchor="middle" font-size="12">−200</text>
+  <line x1="395.0" y1="41.0" x2="395.0" y2="51.0" stroke="#27272a" stroke-width="1"/>
+  <text x="395.0" y="36.0" fill="#52525b" text-anchor="middle" font-size="12">−100</text>
+  <line x1="460.0" y1="41.0" x2="460.0" y2="51.0" stroke="#27272a" stroke-width="1"/>
+  <text x="460.0" y="36.0" fill="#27272a" text-anchor="middle" font-size="12" font-weight="bold">P</text>
+  <line x1="525.0" y1="41.0" x2="525.0" y2="51.0" stroke="#27272a" stroke-width="1"/>
+  <text x="525.0" y="36.0" fill="#52525b" text-anchor="middle" font-size="12">+100</text>
+  <line x1="590.0" y1="41.0" x2="590.0" y2="51.0" stroke="#27272a" stroke-width="1"/>
+  <text x="590.0" y="36.0" fill="#52525b" text-anchor="middle" font-size="12">+200</text>
+  <line x1="655.0" y1="41.0" x2="655.0" y2="51.0" stroke="#27272a" stroke-width="1"/>
+  <text x="655.0" y="36.0" fill="#52525b" text-anchor="middle" font-size="12">+300</text>
+  <line x1="720.0" y1="41.0" x2="720.0" y2="51.0" stroke="#27272a" stroke-width="1"/>
+  <text x="720.0" y="36.0" fill="#52525b" text-anchor="middle" font-size="12">+400</text>
+  <line x1="785.0" y1="41.0" x2="785.0" y2="51.0" stroke="#27272a" stroke-width="1"/>
+  <text x="785.0" y="36.0" fill="#52525b" text-anchor="middle" font-size="12">+500</text>
+  <line x1="850.0" y1="41.0" x2="850.0" y2="51.0" stroke="#27272a" stroke-width="1"/>
+  <text x="850.0" y="36.0" fill="#52525b" text-anchor="middle" font-size="12">+600</text>
+  <line x1="460.0" y1="46.0" x2="460.0" y2="282.0" stroke="#15803d" stroke-width="1.5" stroke-dasharray="5,4"/>
+  <text x="466.0" y="292.0" fill="#14532d" text-anchor="start" font-size="12">the press</text>
+  <line x1="330.0" y1="94.0" x2="850.0" y2="94.0" stroke="#d4d4d8" stroke-width="1"/>
+  <text x="12.0" y="92.0" fill="#27272a" text-anchor="start">Record start or stop</text>
+  <text x="12.0" y="108.0" fill="#52525b" text-anchor="start" font-size="12">acts at A, on input played IL before A</text>
+  <circle cx="422.3" cy="94.0" r="6" fill="#ea580c"/>
+  <text x="412.3" y="85.0" fill="#ea580c" text-anchor="end" font-size="12">P − 58 (1.2 ms early)</text>
+  <line x1="330.0" y1="146.0" x2="850.0" y2="146.0" stroke="#d4d4d8" stroke-width="1"/>
+  <text x="12.0" y="144.0" fill="#27272a" text-anchor="start">Overdub, Replace, Substitute end</text>
+  <text x="12.0" y="160.0" fill="#52525b" text-anchor="start" font-size="12">the same, 1 sample more</text>
+  <circle cx="421.6" cy="146.0" r="6" fill="#ea580c"/>
+  <text x="411.6" y="137.0" fill="#ea580c" text-anchor="end" font-size="12">P − 59</text>
+  <line x1="330.0" y1="198.0" x2="850.0" y2="198.0" stroke="#d4d4d8" stroke-width="1"/>
+  <text x="12.0" y="196.0" fill="#27272a" text-anchor="start">Overdub-type start,</text>
+  <text x="12.0" y="212.0" fill="#52525b" text-anchor="start" font-size="12">trigger_latency = 685 (measured CL)</text>
+  <circle cx="460.0" cy="198.0" r="6" fill="#15803d"/>
+  <text x="450.0" y="189.0" fill="#15803d" text-anchor="end" font-size="12">P (exact)</text>
+  <line x1="330.0" y1="250.0" x2="850.0" y2="250.0" stroke="#d4d4d8" stroke-width="1"/>
+  <text x="12.0" y="248.0" fill="#27272a" text-anchor="start">Overdub-type start,</text>
+  <text x="12.0" y="264.0" fill="#52525b" text-anchor="start" font-size="12">trigger_latency = 256 (one period, default)</text>
+  <circle cx="738.9" cy="250.0" r="6" fill="#b91c1c"/>
+  <text x="748.9" y="241.0" fill="#b91c1c" text-anchor="start" font-size="12">P + 429 (9 ms late)</text>
+</svg>
