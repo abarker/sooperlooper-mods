@@ -983,6 +983,21 @@ static inline float startTakeEarly(SooperLooperI *pLS, LoopChunk *loop,
 }
 #endif
 
+//------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+// edgeDelaySamples() (TRIGGER_LATENCY_ALL_EDGES, plugin.hpp): how long after
+// a command its edge falls so that the edge lands on the press.  The sound
+// played at the press reaches the input input_latency after it, the command
+// trigger_latency (the command latency) after it.  Negative
+// (trigger_latency > input_latency) is left as 0, the stock timing, for now.
+static inline long edgeDelaySamples(const SooperLooperI *pLS)
+{
+	const long s = (long) *pLS->pfInputLatency - (long) *pLS->pfTriggerLatency;
+	return s > 0 ? s : 0;
+}
+#endif
+//------ albEnd ----------------------------------
+
 #if SYNC_PREROLL
 // syncPreRollSamples(): the plain Sync pre-roll, if the input history
 // holds it beyond `already` samples back and this block.
@@ -1681,6 +1696,12 @@ activateSooperLooper(LADSPA_Handle Instance) {
   pLS->lInputBufWritePos = 0;
   pLS->lFramesUntilInput = 0;
   pLS->lFramesUntilFilled = 0;
+  //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+  pLS->lEdgeDelay = 0;
+  pLS->bEdgeStopDeferred = false;
+#endif
+  //------ albEnd ----------------------------------
   memset (pLS->pInputBuf, 0, pLS->lInputBufSize * sizeof(LADSPA_Data));
   //------ albBegin ----------------------------------
   pLS->lGlobalSamplesSinceSync = 0;
@@ -3527,6 +3548,12 @@ runSooperLooper(LADSPA_Handle Instance,
 	  // after the remaps above, so record_or_overdub resolving to an
 	  // overdub counts too.
 	  pLS->lLastOverdubFrom = (lMultiCtrl == MULTI_OVERDUB) ? pLS->state : -1;
+#if TRIGGER_LATENCY_ALL_EDGES
+	  // A new command clears a pending deferred edge; the site that wants
+	  // one sets it again below.
+	  pLS->lEdgeDelay = 0;
+	  pLS->bEdgeStopDeferred = false;
+#endif
 	  //------ albEnd ----------------------------------
           DBG(fprintf(stderr, "Multictrl val is %ld\n", lMultiCtrl));
 
@@ -3554,7 +3581,26 @@ runSooperLooper(LADSPA_Handle Instance,
 
 	   switch(pLS->state) {
 	      case STATE_RECORD:
-		      
+		      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+		      // Unsynced stop: end input_latency - trigger_latency after the
+		      // command, on the press, through STATE_TRIG_STOP.  With Sync
+		      // off it keeps recording and ends on the sample its countdown
+		      // reaches 0, with the same transition to Play and playback
+		      // offset as the immediate stop below.  At 0 the stock branch
+		      // runs.
+		      if (fSyncMode == 0.0f && (fTrigThresh==0.0f) && !bRoundIntegerTempo
+		          && loop && edgeDelaySamples(pLS) > 0) {
+			      pLS->state = STATE_TRIG_STOP;
+			      pLS->nextState = STATE_PLAY;
+			      pLS->lEdgeDelay = edgeDelaySamples(pLS);
+			      pLS->bEdgeStopDeferred = true;
+			      DBG(fprintf(stderr,"%u:%u  Record stop deferred %ld samples\n", pLS->lLoopIndex, pLS->lChannelIndex, pLS->lEdgeDelay));
+			      break;
+		      }
+#endif
+		      //------ albEnd ----------------------------------
+
 		      if (fSyncMode == 0.0f && (fTrigThresh==0.0f) && !bRoundIntegerTempo) {
 			      // no sync: stop immediately
 			      pLS->state = STATE_PLAY;
@@ -3994,6 +4040,16 @@ runSooperLooper(LADSPA_Handle Instance,
 			 }
 		 } else {
 			 pLS->state = STATE_TRIG_START;
+			 //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+			 // An unsynced take with no threshold starts on
+			 // STATE_TRIG_START's first sample: start it input_latency -
+			 // trigger_latency later instead, on the press (stock's TODO
+			 // there).
+			 if (fSyncMode == 0.0f && fTrigThresh == 0.0f)
+				 pLS->lEdgeDelay = edgeDelaySamples(pLS);
+#endif
+			 //------ albEnd ----------------------------------
 #if REL_SYNC_LATE_HIT
 			 // A Rel Sync record that starts at the press (STATE_TRIG_START
 			 // decides on its first sample) starts this much earlier, if the
@@ -5383,16 +5439,25 @@ runSooperLooper(LADSPA_Handle Instance,
 	      
 	      fInputSample = pfInput[lSampleIndex];
 	      //------ albBegin ----------------------------------
+	      // TRIGGER_LATENCY_ALL_EDGES: an unsynced start waits out its
+	      // countdown (set by MULTI_RECORD; 0 otherwise) -- the TODO above.
+#if TRIGGER_LATENCY_ALL_EDGES
+	      const bool edgeDue = (pLS->lEdgeDelay <= 0);
+#else
+	      const bool edgeDue = true;
+#endif
+	      //------ albEnd ----------------------------------
+	      //------ albBegin ----------------------------------
 	      // REL_SYNC_STALE_PHASE_FIX: start at once only when the counter
 	      // is known.  The plain-Sync clause leaves Rel Sync out, so an
 	      // unknown one cannot start on a non-cycle value; it waits for the
 	      // counting at the bottom of this loop to see a cycle pulse.
 #if REL_SYNC_STALE_PHASE_FIX
-	      if ((fSyncMode == 0.0f && ((fInputSample > fTrigThresh) || (fTrigThresh==0.0f)))
+	      if ((fSyncMode == 0.0f && edgeDue && ((fInputSample > fTrigThresh) || (fTrigThresh==0.0f)))
 			  || (fSyncMode == 2.0f && pLS->lSamplesSinceSync < REL_SYNC_PHASE_UNKNOWN) // relative sync offset mode
 			  || (fSyncMode > 0.0f && fSyncMode != 2.0f && pfSyncInput[lSampleIndex] != 0.0f))
 #else
-	      if ((fSyncMode == 0.0f && ((fInputSample > fTrigThresh) || (fTrigThresh==0.0f)))
+	      if ((fSyncMode == 0.0f && edgeDue && ((fInputSample > fTrigThresh) || (fTrigThresh==0.0f)))
 			  || (fSyncMode == 2.0f) // relative sync offset mode 
 			  || (fSyncMode > 0.0f && pfSyncInput[lSampleIndex] != 0.0f))
 #endif
@@ -5502,6 +5567,13 @@ runSooperLooper(LADSPA_Handle Instance,
 	      }
 
 	      pfOutput[lSampleIndex] = fDry * fInputSample;
+
+	      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+	      // Count down a deferred start, for samples that stay here.
+	      if (pLS->lEdgeDelay > 0) pLS->lEdgeDelay--;
+#endif
+	      //------ albEnd ----------------------------------
 
 	      //------ albBegin ----------------------------------
 	      // REL_SYNC_STALE_PHASE_FIX: count while waiting, as the other
@@ -5733,8 +5805,17 @@ runSooperLooper(LADSPA_Handle Instance,
 #endif
 	      //------ albEnd ----------------------------------
 	      
+	      //------ albBegin ----------------------------------
+	      // TRIGGER_LATENCY_ALL_EDGES: a deferred unsynced stop waits out its
+	      // countdown (set by MULTI_RECORD; 0 otherwise).
+#if TRIGGER_LATENCY_ALL_EDGES
+	      const bool stopDue = (pLS->lEdgeDelay <= 0);
+#else
+	      const bool stopDue = true;
+#endif
+	      //------ albEnd ----------------------------------
 	      // exit immediately if syncmode is off, or we have a sync
-	      if ((fSyncMode == 0.0f && (!bRoundIntegerTempo || roundTempoDone))
+	      if ((fSyncMode == 0.0f && (!bRoundIntegerTempo || roundTempoDone) && stopDue)
  		  || (fSyncMode == 1.0f && (pfSyncInput[lSampleIndex] != 0.0f))
 		  || (fSyncMode == 2.0f && pLS->lSamplesSinceSync == loop->lSyncOffset)
 #if REL_SYNC_LATE_HIT
@@ -5756,6 +5837,16 @@ runSooperLooper(LADSPA_Handle Instance,
 			      // force sync for slaves... not sure if this is good
 			      pfSyncOutput[lSampleIndex] = 2.0f;
 		      }
+	      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+	      // A deferred Record stop sends the pulse the immediate stop sends
+	      // (for loops synced to this one), now that it ends.
+	      if (pLS->bEdgeStopDeferred) {
+		      pfSyncOutput[lSampleIndex] = 2.0f;
+		      pLS->bEdgeStopDeferred = false;
+	      }
+#endif
+	      //------ albEnd ----------------------------------
 
 		      if (fSyncMode == 2.0f) {
 			      //cerr << "ending recstop sync2d: " << lCurrPos << endl;
@@ -5860,6 +5951,13 @@ runSooperLooper(LADSPA_Handle Instance,
 	      
 	      
 	      *(pLoopSample) = pLS->fLoopFadeAtten * fInputSample;
+	      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+	      // Count down a deferred stop, for samples that stay (and were
+	      // just recorded).
+	      if (pLS->lEdgeDelay > 0) pLS->lEdgeDelay--;
+#endif
+	      //------ albEnd ----------------------------------
 	      
 	      // increment according to current rate
 	      loop->dCurrPos = loop->dCurrPos + fRate;

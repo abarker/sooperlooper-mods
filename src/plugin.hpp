@@ -54,6 +54,23 @@
 // boundary, from the input history, and ends as much before its closing
 // boundary.  Here, not in plugin.cc, for the LoopChunk field below.
 #define SYNC_PREROLL 1
+// TRIGGER_LATENCY_ALL_EDGES: compile-time switch for a NEW behaviour, 0
+// until tested (ROADMAP entry 39, option B, increment 1).
+// trigger_latency is taken to mean exactly the command latency: the time
+// from the press to the engine acting on the command.  Stock uses it only
+// at overdub, Multiply and Insert starts (waiting input_latency -
+// trigger_latency for the sound played at the press); every other edge
+// acts when the command arrives, as if the command latency were
+// input_latency.  This switch makes the Record command's own start and
+// stop, with Sync off, wait input_latency - trigger_latency too (stock's
+// own TODO in STATE_TRIG_START), so a take starts and ends on the
+// presses.  Takes then begin and end that much later than now; their
+// length (the press interval) and playback phase do not change.  At
+// trigger_latency = input_latency it changes nothing.  Not yet: the other
+// commands that end a take or a layer, trigger_latency > input_latency
+// (left as now), restarts, and the late-hit window.  Here, not in
+// plugin.cc, for the SooperLooperI fields below.
+#define TRIGGER_LATENCY_ALL_EDGES 0
 //------ albEnd ----------------------------------
 
 // TODO, move the whole looping core into a class
@@ -241,6 +258,17 @@ typedef struct {
 	unsigned long lInputBufWritePos;
 	long lFramesUntilInput; // used for input latency compensation
 	long lFramesUntilFilled; // used to fill the gaps right after a record
+	//------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+	// Samples left before a deferred edge fires: input_latency -
+	// trigger_latency at the command, counted down once per sample in
+	// STATE_TRIG_START (record start) and STATE_TRIG_STOP (record stop).
+	long lEdgeDelay;
+	// A deferred Record stop: send the sync pulse the immediate stop
+	// sends (for loops synced to this one) when it fires.
+	bool bEdgeStopDeferred;
+#endif
+	//------ albEnd ----------------------------------
 	
 	// the loopchunk pool
 	LoopChunk * pLoopChunks;
