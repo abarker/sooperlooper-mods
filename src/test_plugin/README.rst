@@ -220,6 +220,19 @@ testdef_trigger_feed_fade.py
     lengths later.  Overdub ended by Trigger, and Replace ended by an
     immediate Once, are controls (right in stock too).
 
+testdef_layer_placement.py
+    Tests for TL_OVER_IL_LAYER_FIX and OVERDUB_WRAP_FILL_FIX: a take of a
+    constant under a ramp-input Overdub, Replace or Substitute, so every
+    loop sample tells old layer from new and which input frame it holds.
+    Each layer sample sits where its input frame was heard; the layer
+    runs from the input played at the first press to that played at the
+    second, none lost; the old layer is intact.  At TL > IL (skipped when
+    TL_OVER_IL_LAYER_FIX is 0), TL = IL and TL < IL; started mid-loop,
+    (OL + IL) mod the block size into the loop, and exactly OL + IL in;
+    and a layer shorter than OL + IL + k.  The loop is read a whole loop
+    after the layer ends (the new chunk is filled as the play position
+    passes).
+
 testdef_signed_sync_pos.py
     Tests for SIGNED_SYNC_POS_FIX: with Sync off, a Rel Sync loop whose
     sync position is negative (an early start pressed just after a pulse)

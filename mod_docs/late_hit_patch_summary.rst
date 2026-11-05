@@ -276,6 +276,21 @@ item links to its full description.
   beat, played the loop once and then erased it: silence after that.
   Now the loop plays on, as it does when the layer is ended any other way.
 
+- **An overdub at the top of the loop keeps its start**
+  (``OVERDUB_WRAP_FILL_FIX``, on by default).  In stock 1.7.9, an
+  Overdub, Replace or Substitute started within input plus output
+  latency of the loop's start (31 ms at 743/743) lost its first few
+  milliseconds: the old layer was copied back over them.  Now the whole
+  layer is kept.
+
+- **Overdubs in time when the trigger latency is larger than the input
+  latency** (``TL_OVER_IL_LAYER_FIX``, on by default).  In stock 1.7.9,
+  an Overdub, Replace or Substitute landed that difference late, for the
+  whole layer: one period late with a common autoset setup (input
+  latency 0, trigger latency one period).  Now it lands in time, and it
+  begins and ends with what was played at the presses.  Multiply and
+  Insert still land late in that case.
+
 - **Default loop memory 120 seconds** (was 40).  The engine's ``-t``
   default and slgui's loop time for new loops.  It is rounded up to a
   power of two of samples, about 175 seconds at 48 kHz, 32 MB per
@@ -1589,6 +1604,23 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        oneshot that waited for the pulse, fades the loop's feedback back
        in, so ending a Replace or Substitute with one no longer erases the
        loop after a pass.  Set to 0 for stock.
+   * - ``OVERDUB_WRAP_FILL_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: an Overdub,
+       Replace or Substitute started less than output + input latency
+       into the loop keeps its first samples, which are written near the
+       loop's end, instead of having the previous layer copied over them.
+       Forward play only.  Set to 0 for stock.
+   * - ``TL_OVER_IL_LAYER_FIX``
+     - ``plugin.hpp``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: with
+       ``trigger_latency`` larger than ``input_latency``, an Overdub,
+       Replace or Substitute started by its command is written
+       ``trigger_latency - input_latency`` further back, where it was
+       heard, instead of that much late.  Not Multiply or Insert yet.  Set
+       to 0 for stock.
    * - ``MULTIPLY_END_FIX``
      - ``plugin.cc``
      - ``1``

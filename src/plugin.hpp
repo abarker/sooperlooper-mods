@@ -104,6 +104,32 @@
 #define ONESHOT_ONE_PASS_FIX 1
 //------ albEnd ----------------------------------
 
+//------ albBegin ----------------------------------
+// TL_OVER_IL_LAYER_FIX: compile-time safety switch for a STOCK bug
+// (stock 1.7.9 behaves the same; measured on a dummy server, ROADMAP
+// entry 42).
+//
+// The bug: when trigger_latency is larger than input_latency, the sound
+// played at the press reached the input k = TL - IL samples before the
+// command did.  An Overdub, Replace or Substitute started by its command
+// reads the input k samples back (lFramesUntilInput = -k, never counted
+// up), which is right, but writes it at the usual position, OL + IL
+// behind the play position, so the whole layer lands k samples late.
+//
+// The fix: such a layer writes k further back too (lLayerLag); its fill
+// marks allow for it, and the stretch between its write position and the
+// play position is filled from the previous layer at once, not as the
+// write position crosses it (beginOverdub()).  Both its
+// edges then fall on the presses: its first and last samples are the
+// ones played at them.  Only a layer started at once by its own command
+// (beginOverdub()'s useTriggerLag); one started at a sync pulse, or out
+// of a take, reads the current input and keeps the stock timing.
+// Multiply and Insert have the same bug; not fixed yet.  Here, not in
+// plugin.cc, for the SooperLooperI field below.
+// Set to 0 to revert to the stock (buggy) behaviour.
+#define TL_OVER_IL_LAYER_FIX 1
+//------ albEnd ----------------------------------
+
 // TODO, move the whole looping core into a class
 
 
@@ -327,6 +353,14 @@ typedef struct {
 	// What is left of a oneshot's pass, in samples at rate 1; the play
 	// loop mutes when it runs out.
 	double dOneshotLeft;
+#endif
+	//------ albEnd ----------------------------------
+
+	//------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+	// How much further back than OL + IL the current Overdub, Replace or
+	// Substitute writes (TL - IL, or 0); set by beginOverdub().
+	long lLayerLag;
 #endif
 	//------ albEnd ----------------------------------
 	

@@ -557,6 +557,31 @@ unsigned long sl_input_history_samples(unsigned long sample_rate)
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
+// OVERDUB_WRAP_FILL_FIX: compile-time safety switch for a STOCK bug
+// (stock 1.7.9 behaves the same; measured on a dummy server, ROADMAP
+// entry 44).
+//
+// The bug: an Overdub, Replace or Substitute writes OL + IL behind the
+// play position, and copies the previous layer into its new chunk in
+// front of that stretch (front fill, [0, start - OL - IL)) and behind it
+// (back fill, from the play position to the loop's end) as the play
+// position passes.  Started less than OL + IL into the loop, the layer's
+// first samples are written near the loop's end, inside the back fill,
+// and the back fill later copies the old layer over them: the layer lost
+// its first OL + IL - start samples (1287 of them 200 samples in, at
+// 743/743).  The front fill's mark, clamped to 0, also copied over
+// sample 0.
+//
+// The fix: when that stretch wraps (or starts at 0), no front fill, and
+// the back fill stops where the stretch begins; the stretch is filled as
+// it is written, as it always was.  Forward play only; a loop shorter
+// than the stretch keeps the stock marks.  With TL_OVER_IL_LAYER_FIX the
+// stretch is longer by lLayerLag, and this allows for it.
+// Set to 0 to revert to the stock (buggy) behaviour.
+#define OVERDUB_WRAP_FILL_FIX 1
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
 // MULTIPLY_END_FIX: compile-time safety switch for a STOCK bug, and for
 // this fork's late multiply end, which had its own form of it.
 //
@@ -1823,6 +1848,9 @@ activateSooperLooper(LADSPA_Handle Instance) {
 #if ONESHOT_ONE_PASS_FIX
   pLS->dOneshotLeft = 0.0;
 #endif
+#if TL_OVER_IL_LAYER_FIX
+  pLS->lLayerLag = 0;
+#endif
   //------ albEnd ----------------------------------
   memset (pLS->pInputBuf, 0, pLS->lInputBufSize * sizeof(LADSPA_Data));
   //------ albBegin ----------------------------------
@@ -2533,7 +2561,17 @@ static LoopChunk * endInsert(SooperLooperI *pLS, LoopChunk *loop, int nextstate)
    
 }
 
+//------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+// useTriggerLag: a layer started at once by its own command, which writes
+// trigger_latency - input_latency further back when that is positive (see
+// TL_OVER_IL_LAYER_FIX in plugin.hpp).  False for one started at a sync
+// pulse (transitionToNext()) or out of a take.
+static LoopChunk * beginOverdub(SooperLooperI *pLS, LoopChunk *loop, bool useTriggerLag = false)
+#else
 static LoopChunk * beginOverdub(SooperLooperI *pLS, LoopChunk *loop)
+#endif
+//------ albEnd ----------------------------------
 {
    LoopChunk * srcloop = loop;
    int xfadeSamples = (int) (*pLS->pfXfadeSamples);
@@ -2567,8 +2605,22 @@ static LoopChunk * beginOverdub(SooperLooperI *pLS, LoopChunk *loop)
 
       pLS->lFramesUntilInput = (long) lInputLatency - lTriggerLatency;
       pLS->lFramesUntilFilled = lOutputLatency + lInputLatency;
+      //------ albBegin ----------------------------------
+      // lLag: how much further back than OL + IL the layer writes.
+#if TL_OVER_IL_LAYER_FIX
+      // It reads the input -lFramesUntilInput back (the run loop), so it
+      // writes that much further back too (and fills the stretch behind
+      // the play position at once, below).
+      pLS->lLayerLag = (useTriggerLag && prevstate != STATE_RECORD
+			&& prevstate != STATE_TRIG_STOP && lTriggerLatency > lInputLatency)
+	      ? lTriggerLatency - lInputLatency : 0;
+      const long lLag = pLS->lLayerLag;
+#else
+      const long lLag = 0;
+#endif
+      //------ albEnd ----------------------------------
       DBG(cerr << pLS->lLoopIndex << ":" << pLS->lChannelIndex << "   frames until input: " << pLS->lFramesUntilInput << "  xfade samps: " << xfadeSamples << endl);
-				      
+
       if (!loop->prev) {
 	      // then we are overwriting our own source
 	      // lets just back out and revalidate the passed in loop
@@ -2631,7 +2683,13 @@ static LoopChunk * beginOverdub(SooperLooperI *pLS, LoopChunk *loop)
 	 loop->lMarkH = loop->lLoopLength - 1;
 	 loop->lMarkEndL = 0;
 	 //loop->lMarkEndH = (unsigned long) rCurrPos;
+	 //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+	 loop->lMarkEndH = (unsigned long) fmod (rCurrPos + (lOutputLatency + lInputLatency + lLag), loop->lLoopLength);
+#else
 	 loop->lMarkEndH = (unsigned long) fmod (rCurrPos + (lOutputLatency + lInputLatency), loop->lLoopLength);
+#endif
+	 //------ albEnd ----------------------------------
 
 	 if (loop->lMarkEndH < loop->lMarkL) {
 		 DBG(cerr << pLS->lLoopIndex << ":" << pLS->lChannelIndex << "  Border line rev" << endl);
@@ -2643,7 +2701,13 @@ static LoopChunk * beginOverdub(SooperLooperI *pLS, LoopChunk *loop)
 	 pLS->fCurrRate = 1.0;
 	 loop->lMarkL = 0;
 	 //loop->lMarkH = (unsigned long) fmod (rCurrPos - (lOutputLatency + lInputLatency), loop->lLoopLength)) - 1;
+	 //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+	 long markh = (long) fmod (rCurrPos - (lOutputLatency + lInputLatency + lLag), loop->lLoopLength) - 1;
+#else
 	 long markh = (long) fmod (rCurrPos - (lOutputLatency + lInputLatency), loop->lLoopLength) - 1;
+#endif
+	 //------ albEnd ----------------------------------
 	 if (markh < 0) markh = 0;
 	 loop->lMarkH = (unsigned long) markh;
 	 loop->lMarkEndL = (unsigned long) rCurrPos;
@@ -2654,8 +2718,44 @@ static LoopChunk * beginOverdub(SooperLooperI *pLS, LoopChunk *loop)
 		 loop->lMarkEndL = loop->lMarkH;
 		 loop->lMarkH = (unsigned long) rCurrPos;
 	 }
+	 //------ albBegin ----------------------------------
+#if OVERDUB_WRAP_FILL_FIX
+	 // The stretch written OL + IL (+ lLag) behind the play position
+	 // wraps to the loop's end, or starts at 0: no front fill, and the
+	 // back fill stops where the stretch begins (it is filled as it is
+	 // written).  See OVERDUB_WRAP_FILL_FIX.
+	 {
+		 const long gapStart = (long) rCurrPos - (lOutputLatency + lInputLatency + lLag);
+		 if (gapStart <= 0 && (long) loop->lLoopLength + gapStart > (long) rCurrPos) {
+			 loop->frontfill = 0;
+			 loop->lMarkL = loop->lMarkH = LONG_MAX;
+			 loop->lMarkEndL = (unsigned long) rCurrPos;
+			 loop->lMarkEndH = (unsigned long) ((long) loop->lLoopLength + gapStart - 1);
+		 }
+	 }
+#endif
+	 //------ albEnd ----------------------------------
       }
-      
+      //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+      // A lagged layer: copy the previous layer into the stretch between
+      // the write position and the play position now, as the run loop's
+      // lFramesUntilFilled pass would as the write position crosses it.
+      // That pass runs on in the next state at the unlagged position if
+      // the layer ends first, which would leave lLag samples unfilled.
+      // Bounded: OL + IL + lLag samples.  Lag 0 keeps the stock pass.
+      if (lLag > 0 && loop->lLoopLength > 0) {
+	      const long span = lOutputLatency + lInputLatency + lLag;
+	      const long L = (long) loop->lLoopLength;
+	      for (long j = 0; j <= span; ++j) {
+		      const long p = (pLS->fCurrRate < 0) ? (long) rCurrPos + j : (long) rCurrPos - j;
+		      fillLoops(pLS, loop, (unsigned long) (((p % L) + L) % L), true);
+	      }
+	      pLS->lFramesUntilFilled = 0;
+      }
+#endif
+      //------ albEnd ----------------------------------
+
       DBG(fprintf(stderr,"%u:%u  Mark at L:%lu  h:%lu\n", pLS->lLoopIndex, pLS->lChannelIndex,loop->lMarkL, loop->lMarkH));
       DBG(fprintf(stderr,"%u:%u  EndMark at L:%lu  h:%lu\n", pLS->lLoopIndex, pLS->lChannelIndex,loop->lMarkEndL, loop->lMarkEndH));
       DBG(fprintf(stderr,"%u:%u  Entering OVERDUB/repl/subs state: srcloop is %08x\n", pLS->lLoopIndex, pLS->lChannelIndex, (unsigned)srcloop));
@@ -2664,9 +2764,18 @@ static LoopChunk * beginOverdub(SooperLooperI *pLS, LoopChunk *loop)
    return loop;
 }
 
+//------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+// useTriggerLag: as beginOverdub()'s.
+static LoopChunk * beginSubstitute(SooperLooperI *pLS, LoopChunk *loop, bool useTriggerLag = false)
+{
+	LoopChunk * tloop = beginOverdub(pLS, loop, useTriggerLag);
+#else
 static LoopChunk * beginSubstitute(SooperLooperI *pLS, LoopChunk *loop)
 {
 	LoopChunk * tloop = beginOverdub(pLS, loop);
+#endif
+//------ albEnd ----------------------------------
 	int xfadeSamples = (int) (*pLS->pfXfadeSamples);
 	if (xfadeSamples < 1) xfadeSamples = 1;
 
@@ -2679,9 +2788,18 @@ static LoopChunk * beginSubstitute(SooperLooperI *pLS, LoopChunk *loop)
 	return tloop;
 }
 
+//------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+// useTriggerLag: as beginOverdub()'s.
+static LoopChunk * beginReplace(SooperLooperI *pLS, LoopChunk *loop, bool useTriggerLag = false)
+{
+	LoopChunk * tloop = beginOverdub(pLS, loop, useTriggerLag);
+#else
 static LoopChunk * beginReplace(SooperLooperI *pLS, LoopChunk *loop)
 {
 	LoopChunk * tloop = beginOverdub(pLS, loop);
+#endif
+//------ albEnd ----------------------------------
 	int xfadeSamples = (int) (*pLS->pfXfadeSamples);
 	if (xfadeSamples < 1) xfadeSamples = 1;
 
@@ -4358,7 +4476,13 @@ runSooperLooper(LADSPA_Handle Instance,
 		   if ((fOverdubQuantized == 0.0f) || (fSyncMode == 0.0f && fQuantizeMode == QUANT_OFF)) {
 
 			   if (loop) {
+				   //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+				   loop = beginOverdub(pLS, loop, true);
+#else
 				   loop = beginOverdub(pLS, loop);
+#endif
+				   //------ albEnd ----------------------------------
 				   if (loop)
 					   srcloop = loop->srcloop;
 				   else
@@ -4770,7 +4894,13 @@ runSooperLooper(LADSPA_Handle Instance,
 				      prevstate = pLS->state;
 				      
 				      DBG(fprintf(stderr, "starting replace immediately\n"));
+				      //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+				      loop = beginReplace(pLS, loop, true);
+#else
 				      loop = beginReplace(pLS, loop);
+#endif
+				      //------ albEnd ----------------------------------
 				      if (loop) srcloop = loop->srcloop;
 				      else srcloop = NULL;
 
@@ -4877,7 +5007,13 @@ runSooperLooper(LADSPA_Handle Instance,
 				      prevstate = pLS->state;
 
 				      DBG(fprintf(stderr, "starting subst immediately\n"));
+				      //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+				      loop = beginSubstitute(pLS, loop, true);
+#else
 				      loop = beginSubstitute(pLS, loop);
+#endif
+				      //------ albEnd ----------------------------------
 				      if (loop) srcloop = loop->srcloop;
 				      else srcloop = NULL;
 
@@ -6554,11 +6690,25 @@ runSooperLooper(LADSPA_Handle Instance,
 
 		 lCurrPos =(unsigned int) fmod(loop->dCurrPos, loop->lLoopLength);
 		 //rCurrPos = fmod (loop->dCurrPos - lOutputLatency), loop->lLoopLength);
+		 //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+		 // lLayerLag further back: where the input read lLayerLag back
+		 // was heard (TL_OVER_IL_LAYER_FIX).
+		 rCurrPos = fmod (loop->dCurrPos - (fRate * (lOutputLatency + lInputLatency + pLS->lLayerLag)), loop->lLoopLength);
+#else
 		 rCurrPos = fmod (loop->dCurrPos - (fRate * (lOutputLatency + lInputLatency)), loop->lLoopLength);
+#endif
+		 //------ albEnd ----------------------------------
 		 if (rCurrPos < 0) {
 		    rCurrPos += loop->lLoopLength;
 		 }
+		 //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+		 rpCurrPos = fmod (loop->dCurrPos - (fRate * (lOutputLatency + lInputLatency + pLS->lLayerLag)), srcloop->lLoopLength);
+#else
 		 rpCurrPos = fmod (loop->dCurrPos - (fRate * (lOutputLatency + lInputLatency)), srcloop->lLoopLength);
+#endif
+		 //------ albEnd ----------------------------------
 		 if (rpCurrPos < 0) {
 		    rpCurrPos += srcloop->lLoopLength;
 		 }
