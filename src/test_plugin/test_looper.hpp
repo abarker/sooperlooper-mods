@@ -52,6 +52,12 @@ class TestLooper
 	unsigned long get_channel_loop_length (unsigned int index) const;
 	/* The current take's sample at loop position pos (channel index). */
 	float get_loop_sample (unsigned int index, unsigned long pos) const;
+	/* The same in the chunk before the current take (the layer or take a
+	 * new chunk ended), 0.0f if none. */
+	float get_prev_loop_sample (unsigned int index, unsigned long pos) const;
+	/* Sets the plugin's replace_quantized (no LADSPA port; Looper sets it
+	 * through the plugin's control call). */
+	void set_replace_quantized (unsigned int index, bool value);
 	/* The head loop's lSyncPos (where the sync grid falls in the loop:
 	 * a pulse plays loop position -lSyncPos mod length), 0 if no loop. */
 	long get_channel_sync_pos (unsigned int index) const;

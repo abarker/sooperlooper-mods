@@ -283,6 +283,28 @@ TestLooper::get_loop_sample (unsigned int index, unsigned long pos) const
 	}
 	return 0.0f;
 }
+
+float
+TestLooper::get_prev_loop_sample (unsigned int index, unsigned long pos) const
+{
+	if (index < _chan_count && _instances[index]) {
+		SooperLooperI * pLS = (SooperLooperI *) _instances[index];
+		if (pLS->headLoopChunk && pLS->headLoopChunk->prev) {
+			LoopChunk * prev = pLS->headLoopChunk->prev;
+			return pLS->pSampleBuf[(prev->lLoopStart + pos)
+			                       & pLS->lBufferSizeMask];
+		}
+	}
+	return 0.0f;
+}
+
+void
+TestLooper::set_replace_quantized (unsigned int index, bool value)
+{
+	if (index < _chan_count && _instances[index]) {
+		((SooperLooperI *) _instances[index])->bReplaceQuantized = value;
+	}
+}
 //------ albEnd ----------------------------------
 
 

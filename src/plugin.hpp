@@ -65,18 +65,18 @@
 // trigger_latency too, so they land on the presses:
 //   - the Record command's own start and stop, with Sync off (stock's own
 //     TODO in STATE_TRIG_START) -- increment 1;
-//   - an overdub, Replace or Substitute ended by the same command when
-//     that end is immediate (overdub_quantized / replace_quantized off,
-//     with Sync on too), and Record -> Overdub with Sync off -- 2a;
-//   - a take ended by Multiply, Insert, Replace, Substitute, Mute, Pause,
-//     Oneshot or Trigger, with Sync off -- 2b-i.
+//   - every other end of a take or a layer that acts when its command
+//     arrives (each command's own condition, so some with Sync on too):
+//     the same command again, Record -> Overdub, a take ended by any
+//     command, a layer ended by any command -- 2a, 2b.
 // Takes then begin and end that much later than now; their length (the
-// press interval) and playback phase do not change.  At trigger_latency =
-// input_latency it changes nothing.  Not yet: a layer ended by a
-// different command (2b-ii), Reverse, Delay and Scratch ending a take,
-// trigger_latency > input_latency (left as now), restarts, and the
-// late-hit window.  Here, not in plugin.cc, for the
-// SooperLooperI fields below.
+// press interval) and playback phase do not change.  The command's own
+// effect (a mute, a new layer) comes that much later too; a restart in
+// the slack window (Sync on) keeps its phase.  At trigger_latency =
+// input_latency it changes nothing.  Not yet: trigger_latency >
+// input_latency (left as now), restarts that end nothing, and the
+// late-hit window.  Here, not in plugin.cc, for the SooperLooperI fields
+// below.
 #define TRIGGER_LATENCY_ALL_EDGES 0
 //------ albEnd ----------------------------------
 
@@ -279,10 +279,22 @@ typedef struct {
 	// command's immediate branch sends, for loops synced to this one; 0
 	// for none).
 	float fEdgeStopPulse;
-	// A deferred overdub, Replace or Substitute end (the same command
-	// again): the layer goes on until lEdgeDelay runs out, then ends as
-	// the immediate branch would have (increment 2a).
+	// A deferred overdub, Replace or Substitute end: the layer goes on
+	// until lEdgeDelay runs out, then ends as the immediate branch would
+	// have (the same command again, increment 2a; another command, 2b-ii).
 	bool bEdgeEndDeferred;
+	// Where a deferred layer end goes: STATE_PLAY (the same command
+	// again, 2a, inline) or another command's state (2b-ii, through
+	// transitionToNext()).
+	int lEdgeEndNext;
+	// A deferred take end by Reverse: negate the rate when it fires.
+	bool bEdgeStopReverse;
+	// The sync pulse a deferred layer end sends when it fires (what the
+	// command's immediate branch sends; 0 for none).
+	float fEdgeEndPulse;
+	// A deferred take end by Scratch: reverse and place it as Scratch's
+	// immediate branch does when it fires.
+	bool bEdgeStopScratch;
 #endif
 	//------ albEnd ----------------------------------
 	
