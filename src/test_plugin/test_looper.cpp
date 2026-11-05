@@ -436,6 +436,11 @@ TestLooper::run (jack_nframes_t offset, jack_nframes_t nframes)
 				const float s = out_buf[n];
 				if (s < output_min) output_min = s;
 				if (s > output_max) output_max = s;
+				if (s != 0.0f) {
+					if (output_nonzero_first < 0)
+						output_nonzero_first = (long long) (input_clock + n);
+					output_nonzero_last = (long long) (input_clock + n);
+				}
 			}
 			if (nframes > 0) output_last = out_buf[nframes - 1];
 			if (nframes > 0) {
@@ -463,6 +468,8 @@ TestLooper::reset_output_stats ()
 	output_min  =  1.0e30f;
 	output_max  = -1.0e30f;
 	output_last =  0.0f;
+	output_nonzero_first = -1;
+	output_nonzero_last  = -1;
 }
 //------ albEnd ----------------------------------
 

@@ -262,6 +262,20 @@ item links to its full description.
   starts that far into the loop, as Trigger does: in time with the beat,
   with its first moment skipped.
 
+- **A Once plays the whole loop** (``ONESHOT_ONE_PASS_FIX``, on by
+  default).  Stock 1.7.9 ended a Once (one-shot) at the end of the loop's
+  memory, not after one pass, so a Rel Sync loop whose take started
+  partway through a cycle played only part of itself.  This fork's
+  in-time restart made it worse: some of those loops played nothing at
+  all.  Now a Once plays the loop once from its first beat and stops
+  where the pass ends.
+
+- **Trigger after Replace or Substitute keeps the loop**
+  (``TRIGGER_FEED_FADE_FIX``, on by default).  In stock 1.7.9, ending a
+  Replace or Substitute with Trigger, or with a Once that waited for the
+  beat, played the loop once and then erased it: silence after that.
+  Now the loop plays on, as it does when the layer is ended any other way.
+
 - **Default loop memory 120 seconds** (was 40).  The engine's ``-t``
   default and slgui's loop time for new loops.  It is rounded up to a
   power of two of samples, about 175 seconds at 48 kHz, 32 MB per
@@ -1561,6 +1575,20 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        behavior.  A bug fix with an escape hatch, not a tunable: no
        session-file or OSC equivalent.  Unrelated to the
        ``trigger_latency`` setting.
+   * - ``ONESHOT_ONE_PASS_FIX``
+     - ``plugin.hpp``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: a oneshot plays
+       one loop length from its start (less what a slack-window start
+       skips), not until the end of the loop's buffer, so it is a whole
+       pass wherever the loop's sync position lies.  Set to 0 for stock.
+   * - ``TRIGGER_FEED_FADE_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: a Trigger, or a
+       oneshot that waited for the pulse, fades the loop's feedback back
+       in, so ending a Replace or Substitute with one no longer erases the
+       loop after a pass.  Set to 0 for stock.
    * - ``MULTIPLY_END_FIX``
      - ``plugin.cc``
      - ``1``

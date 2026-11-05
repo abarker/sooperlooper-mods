@@ -15,7 +15,8 @@ immediate end's would; a restart in the slack window keeps the loop's
 phase.  At s <= 0 nothing changes (the "Equal" classes, TL = IL, run the
 stock immediate branches; several expectations are measured there).
 
-Two cases are skipped for bugs outside this switch (ROADMAP entry 43).
+Two cases need ROADMAP entry 43's fixes (TRIGGER_FEED_FADE_FIX,
+ONESHOT_ONE_PASS_FIX), which are bugs on the stock path too.
 
 Skipped when the switch is off.  Same exact-frame presses and ramp input
 as testdef_rel_sync_late_hit.py.  The harness has no real latency, so the
@@ -292,8 +293,6 @@ class LayerEndsByOtherMixin:
     def testPause(self):
         self.end_layer_with("PAUSE", "Paused")
 
-    @unittest.skip("Trigger ending a Replace or Substitute empties the loop "
-                   "(at s = 0 too, so not this switch): ROADMAP entry 43")
     def testTrigger(self):
         self.end_layer_with("TRIGGER", "Playing")
 
@@ -555,8 +554,6 @@ class SyncRestartMixin:
         before = self.restart_from_overdub("TRIGGER", "Playing")
         self.assertEqual(self.phases(), before, "the restart moved the loop's phase")
 
-    @unittest.skip("Oneshot in the slack window ending an overdub goes straight to "
-                   "Muted (at s = 0 too, so not this switch): ROADMAP entry 43")
     def testOneshot_KeepsPhase(self):
         before = self.restart_from_overdub("ONESHOT", "OneShot")
         after = self.phases(bufs=12, skip_silent=True)

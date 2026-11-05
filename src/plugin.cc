@@ -539,6 +539,24 @@ unsigned long sl_input_history_samples(unsigned long sample_rate)
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
+// TRIGGER_FEED_FADE_FIX: compile-time safety switch for a STOCK bug
+// (stock 1.7.9 behaves identically; checked on a dummy server).
+//
+// The bug: Replace and Substitute fade the loop's feedback to 0, so the
+// new layer does not mix with the old one.  Play, Mute, Pause, and
+// MULTI_ONESHOT's immediate branch fade it back in; Trigger, and a
+// Oneshot that waited for the pulse, did not (transitionToNext()'s
+// STATE_TRIGGER_PLAY and STATE_ONESHOT cases).  Play writes
+// loop * feedback back at the write position, so the loop was erased
+// one pass after the restart: heard once, then silence.
+//
+// The fix fades the feedback in, in both cases, as STATE_PLAY does.  It
+// changes nothing where the feedback is already up.  See ROADMAP entry 43.
+// Set to 0 to revert to the stock (buggy) behaviour.
+#define TRIGGER_FEED_FADE_FIX 1
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
 // MULTIPLY_END_FIX: compile-time safety switch for a STOCK bug, and for
 // this fork's late multiply end, which had its own form of it.
 //
@@ -1067,6 +1085,19 @@ static double restartPosition(const SooperLooperI *pLS, const LoopChunk *loop,
 	if (next == STATE_ONESHOT)
 		pos = fmod(pos, loop->lLoopLength);
 	return pos;
+}
+#endif
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
+#if ONESHOT_ONE_PASS_FIX
+// startOneshotPass(): a oneshot starting now plays one loop length less
+// `skipped`, the samples of the pass that a slack-window start skips
+// (see ONESHOT_ONE_PASS_FIX in plugin.hpp).
+static inline void startOneshotPass(SooperLooperI *pLS, const LoopChunk *loop,
+				    double skipped)
+{
+	pLS->dOneshotLeft = (double) loop->lLoopLength - skipped;
 }
 #endif
 //------ albEnd ----------------------------------
@@ -1786,6 +1817,11 @@ activateSooperLooper(LADSPA_Handle Instance) {
   pLS->bEdgeStopReverse = false;
   pLS->fEdgeEndPulse = 0.0f;
   pLS->bEdgeStopScratch = false;
+#endif
+  //------ albEnd ----------------------------------
+  //------ albBegin ----------------------------------
+#if ONESHOT_ONE_PASS_FIX
+  pLS->dOneshotLeft = 0.0;
 #endif
   //------ albEnd ----------------------------------
   memset (pLS->pInputBuf, 0, pLS->lInputBufSize * sizeof(LADSPA_Data));
@@ -2757,6 +2793,13 @@ static LoopChunk * transitionToNext(SooperLooperI *pLS, LoopChunk *loop, int nex
 	      pLS->fPlayFadeDelta = 1.0f / xfadeSamples;
 	      pLS->fLoopSrcFadeDelta = -1.0f / xfadeSamples;
 	      pLS->fFeedSrcFadeDelta = 1.0f / xfadeSamples;
+	      //------ albBegin ----------------------------------
+#if TRIGGER_FEED_FADE_FIX
+	      // Fade the feedback back in, as STATE_PLAY does (a Replace or
+	      // Substitute left it at 0).
+	      pLS->fFeedFadeDelta = 1.0f / xfadeSamples;
+#endif
+	      //------ albEnd ----------------------------------
 	      if (loop) {
 		      //------ albBegin ----------------------------------
 		      // RESTART_POSITION_FIX: the state before this transition
@@ -2813,6 +2856,13 @@ static LoopChunk * transitionToNext(SooperLooperI *pLS, LoopChunk *loop, int nex
 	      pLS->fPlayFadeDelta = 1.0f / xfadeSamples;
 	      pLS->fLoopSrcFadeDelta = -1.0f / xfadeSamples;
 	      pLS->fFeedSrcFadeDelta = 1.0f / xfadeSamples;
+	      //------ albBegin ----------------------------------
+#if TRIGGER_FEED_FADE_FIX
+	      // Fade the feedback back in, as STATE_PLAY does (a Replace or
+	      // Substitute left it at 0).
+	      pLS->fFeedFadeDelta = 1.0f / xfadeSamples;
+#endif
+	      //------ albEnd ----------------------------------
 	      if (loop) {
 		      DBG(fprintf(stderr,"%u:%u  Starting ONESHOT state\n", pLS->lLoopIndex, pLS->lChannelIndex));
 		      //------ albBegin ----------------------------------
@@ -2843,6 +2893,14 @@ static LoopChunk * transitionToNext(SooperLooperI *pLS, LoopChunk *loop, int nex
 
 		      // wrap
 		      loop->dCurrPos = fmod(loop->dCurrPos, loop->lLoopLength);
+		      //------ albBegin ----------------------------------
+#if ONESHOT_ONE_PASS_FIX
+		      // One loop length, less the count added above (Rel Sync).
+		      startOneshotPass(pLS, loop,
+			      (*pLS->pfSyncMode == 2.0f && pLS->lSamplesSinceSync < eighthSamples)
+			      ? (double) pLS->lSamplesSinceSync : 0.0);
+#endif
+		      //------ albEnd ----------------------------------
 		      //------ albBegin ----------------------------------
 #if RESTART_POSITION_FIX
 		      // Start IL + OL in, as in the STATE_TRIGGER_PLAY case above.
@@ -4554,6 +4612,11 @@ runSooperLooper(LADSPA_Handle Instance,
 
 		    // wrap
 		    loop->dCurrPos = fmod(loop->dCurrPos, loop->lLoopLength);
+		    //------ albBegin ----------------------------------
+#if ONESHOT_ONE_PASS_FIX
+		    startOneshotPass(pLS, loop, 0.0);
+#endif
+		    //------ albEnd ----------------------------------
 
 		 }
 		 break;
@@ -5205,6 +5268,11 @@ runSooperLooper(LADSPA_Handle Instance,
 		    
 		    // wrap
 		    loop->dCurrPos = fmod(loop->dCurrPos, loop->lLoopLength);
+		    //------ albBegin ----------------------------------
+#if ONESHOT_ONE_PASS_FIX
+		    startOneshotPass(pLS, loop, 0.0);
+#endif
+		    //------ albEnd ----------------------------------
 
 		    DBG(fprintf(stderr,"Enter reversed ONESHOT state\n"));
 		 }
@@ -5563,6 +5631,20 @@ runSooperLooper(LADSPA_Handle Instance,
 				      // is heard in time (see RESTART_POSITION_FIX).
 				      else {
 					      loop->dCurrPos += ( lOutputLatency + lInputLatency) * fRate;
+				      }
+#endif
+				      //------ albEnd ----------------------------------
+				      //------ albBegin ----------------------------------
+#if ONESHOT_ONE_PASS_FIX
+				      // One loop length, less the slack window's count
+				      // (ONESHOT_SLACK_FIX's start, above).
+				      {
+					      double skipped = 0.0;
+#if ONESHOT_SLACK_FIX
+					      if (fSyncMode >= 1.0f && pLS->lSamplesSinceSync < eighthSamples)
+						      skipped = (double) pLS->lSamplesSinceSync + 1.0;
+#endif
+					      startOneshotPass(pLS, loop, skipped);
 				      }
 #endif
 				      //------ albEnd ----------------------------------
@@ -6253,6 +6335,14 @@ runSooperLooper(LADSPA_Handle Instance,
 			      loop->dCurrPos = restartPosition(pLS, loop, edgeNext,
 					fSyncMode >= 1.0f && !pLS->bEdgeStopScratch,
 					fSyncOffsetSamples);
+#if ONESHOT_ONE_PASS_FIX
+		      // One-pass fix: the pass, less the count restartPosition()
+		      // just added.
+		      if (edgeDeferred && loop && edgeNext == STATE_ONESHOT)
+			      startOneshotPass(pLS, loop,
+					(fSyncMode >= 1.0f && !pLS->bEdgeStopScratch)
+					? (double) pLS->lSamplesSinceSync + 1.0 : 0.0);
+#endif
 		      // A deferred take end by Reverse: reverse now, so the IL + OL
 		      // add below subtracts, as Reverse's immediate branch does.
 		      if (pLS->bEdgeStopDeferred && pLS->bEdgeStopReverse) {
@@ -6422,6 +6512,13 @@ runSooperLooper(LADSPA_Handle Instance,
 #if RESTART_POSITION_FIX
 						 loop->dCurrPos += ((long) *pLS->pfInputLatency
 							    + (long) *pLS->pfOutputLatency) * pLS->fCurrRate;
+#endif
+#if ONESHOT_ONE_PASS_FIX
+						 // One-pass fix: the pass, less the count
+						 // restartPosition() just added.
+						 if (next == STATE_ONESHOT)
+							 startOneshotPass(pLS, loop, fSyncMode >= 1.0f
+								 ? (double) pLS->lSamplesSinceSync + 1.0 : 0.0);
 #endif
 					 }
 					 if (next == STATE_ONESHOT)
@@ -7444,6 +7541,20 @@ runSooperLooper(LADSPA_Handle Instance,
 		 else {
 			 // increment and wrap at the proper loop end
 			 loop->dCurrPos = loop->dCurrPos + fRate;
+			 //------ albBegin ----------------------------------
+#if ONESHOT_ONE_PASS_FIX
+			 // The oneshot ends after one pass from its start, not at
+			 // the buffer's end (the tests below are off).
+			 if (pLS->state == STATE_ONESHOT) {
+				 pLS->dOneshotLeft -= fabs(fRate);
+				 if (pLS->dOneshotLeft <= 0.0) {
+					 DBG(fprintf(stderr, "%u:%u  finished ONESHOT pass\n", pLS->lLoopIndex, pLS->lChannelIndex));
+					 pLS->state = STATE_MUTE;
+					 pLS->fPlayFadeDelta = -1.0f / xfadeSamples;
+				 }
+			 }
+#endif
+			 //------ albEnd ----------------------------------
 		 }
 
  		 if (pLS->fNextCurrRate != 0 && pfSyncOutput[lSampleIndex] > 1.5f && fTempo > 0.0f) {
@@ -7454,6 +7565,9 @@ runSooperLooper(LADSPA_Handle Instance,
  		 }
 		 
 		 if (loop->dCurrPos >= loop->lLoopLength) {
+		    //------ albBegin ----------------------------------
+#if !ONESHOT_ONE_PASS_FIX
+		    //------ albEnd ----------------------------------
 		    if (pLS->state == STATE_ONESHOT) {
 		       // done with one shot
 			    DBG(fprintf(stderr, "%u:%u  finished ONESHOT  lcurrPos=%d\n", pLS->lLoopIndex, pLS->lChannelIndex, lCurrPos));
@@ -7463,6 +7577,9 @@ runSooperLooper(LADSPA_Handle Instance,
 		       //pLS->lRampSamples = xfadeSamples;
 		       //fWet = 0.0;
 		    }
+		    //------ albBegin ----------------------------------
+#endif
+		    //------ albEnd ----------------------------------
 
 		    if (pLS->fNextCurrRate != 0 && pfSyncOutput[lSampleIndex] > 1.5f) {
 			    // commit the new rate at boundary (quantized)
@@ -7478,6 +7595,9 @@ runSooperLooper(LADSPA_Handle Instance,
 		    // our rate must be negative
 		    // adjust around to the back
 		    loop->dCurrPos += loop->lLoopLength;
+		    //------ albBegin ----------------------------------
+#if !ONESHOT_ONE_PASS_FIX
+		    //------ albEnd ----------------------------------
 		    if (pLS->state == STATE_ONESHOT) {
 		       // done with one shot
 		       DBG(fprintf(stderr, "%u:%u  finished ONESHOT neg\n", pLS->lLoopIndex, pLS->lChannelIndex));
@@ -7486,6 +7606,9 @@ runSooperLooper(LADSPA_Handle Instance,
 		       pLS->fPlayFadeDelta = -1.0f / xfadeSamples;
 		       //pLS->lRampSamples = xfadeSamples;
 		    }
+		    //------ albBegin ----------------------------------
+#endif
+		    //------ albEnd ----------------------------------
 
 		    if (pLS->fNextCurrRate != 0 && pfSyncOutput[lSampleIndex] > 1.5f) {
 		       // commit the new rate at boundary (quantized)

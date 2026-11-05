@@ -80,6 +80,30 @@
 #define TRIGGER_LATENCY_ALL_EDGES 0
 //------ albEnd ----------------------------------
 
+//------ albBegin ----------------------------------
+// ONESHOT_ONE_PASS_FIX: compile-time safety switch for a STOCK bug
+// (stock 1.7.9 behaves the same; checked on a dummy server).
+//
+// The bug: a oneshot (Once) starts at the loop's sync point and ends when
+// the position reaches the end of the buffer, so it plays one loop length
+// only when the sync point is the buffer's start (lSyncPos 0: Sync off,
+// or a take started on the pulse).  A Rel Sync take started anywhere else
+// plays part of a pass.  The fork's RESTART_POSITION_FIX makes it worse:
+// it starts IL + OL further in, after the wrap, so the buffer's end comes
+// IL + OL sooner, and a start in its last IL + OL samples ends the
+// oneshot on its first sample.
+//
+// The fix: every place a oneshot starts sets dOneshotLeft to one loop
+// length, less what a slack-window start skips (startOneshotPass() in
+// plugin.cc); the play loop counts it down by the rate's size and mutes
+// when it runs out, in place of its two buffer-end tests.  A oneshot then
+// plays the loop once from its beat 1, wherever that lies in the buffer,
+// and ends with the loop's pass.  See ROADMAP entry 43.  Here, not in
+// plugin.cc, for the SooperLooperI field below.
+// Set to 0 to revert to the stock (buggy) behaviour.
+#define ONESHOT_ONE_PASS_FIX 1
+//------ albEnd ----------------------------------
+
 // TODO, move the whole looping core into a class
 
 
@@ -295,6 +319,14 @@ typedef struct {
 	// A deferred take end by Scratch: reverse and place it as Scratch's
 	// immediate branch does when it fires.
 	bool bEdgeStopScratch;
+#endif
+	//------ albEnd ----------------------------------
+
+	//------ albBegin ----------------------------------
+#if ONESHOT_ONE_PASS_FIX
+	// What is left of a oneshot's pass, in samples at rate 1; the play
+	// loop mutes when it runs out.
+	double dOneshotLeft;
 #endif
 	//------ albEnd ----------------------------------
 	

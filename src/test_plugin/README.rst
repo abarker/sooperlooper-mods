@@ -204,6 +204,22 @@ testdef_oneshot_slack.py
     slack window (acting at once) or waiting for the pulse plays its pass
     exactly in phase, plain Sync and Rel Sync, and still ends in Mute.
 
+testdef_oneshot_one_pass.py
+    Tests for ONESHOT_ONE_PASS_FIX: with Rel Sync and IL = OL = 743, a
+    Once from Mute plays exactly one loop length whatever the loop's sync
+    position (negative, positive under IL + OL, larger), and one pressed
+    in the slack window plays the loop less the samples since the pulse.
+    The pass is measured from the first to the last nonzero output sample
+    (output_nonzero_first / output_nonzero_last).  Skipped when the
+    switch is 0.
+
+testdef_trigger_feed_fade.py
+    Tests for TRIGGER_FEED_FADE_FIX: a Replace or Substitute ended by
+    Trigger (at once, or at the pulse with Sync on), or by a Once that
+    waited for the pulse, leaves the loop intact and playing three loop
+    lengths later.  Overdub ended by Trigger, and Replace ended by an
+    immediate Once, are controls (right in stock too).
+
 testdef_signed_sync_pos.py
     Tests for SIGNED_SYNC_POS_FIX: with Sync off, a Rel Sync loop whose
     sync position is negative (an early start pressed just after a pulse)

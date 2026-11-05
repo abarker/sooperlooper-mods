@@ -169,6 +169,10 @@ class TestLooper
 	float output_min;      /* running min since reset_output_stats() */
 	float output_max;      /* running max since reset_output_stats() */
 	float output_last;     /* last sample of the most recent block     */
+	/* input_clock frames of the first and last nonzero samples since
+	 * reset_output_stats(); -1 for none (how long a oneshot played). */
+	long long output_nonzero_first;
+	long long output_nonzero_last;
 
 	void reset_output_stats();
 	//------ albEnd ----------------------------------
