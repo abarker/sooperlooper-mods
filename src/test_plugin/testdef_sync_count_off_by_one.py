@@ -19,6 +19,7 @@ import test_engine
 from testdef_rel_sync_pos import RelSyncPosTestCase, CYCLE, EIGHTH, QUARTERS
 
 SLACK = 300             # samples after the pulse: inside the slack window
+SLACK_SPAN = 400        # a slack press lands SLACK .. SLACK + SLACK_SPAN - 1 after it
 WAIT = 3 * EIGHTH       # outside it: the restart waits for the next pulse
 
 
@@ -43,12 +44,26 @@ class SyncCountTestCase(RelSyncPosTestCase):
             self.record_at_phase(*QUARTERS[2])
         self.assertEqual(self.playback_offsets(), {0})
 
+    def press_frame(self, after):
+        """A block start about `after` samples after a pulse at least two
+        cycles on.  A press acts at the first block starting at or after
+        its frame, so "pulse + after" can land up to a block later: past
+        the eighth (1001) for a slack press with 1024-sample blocks.  For
+        one meant for the slack window (after < EIGHTH), pick a pulse
+        whose next block start is less than SLACK_SPAN later."""
+        k = self.looper.sync_clock // CYCLE + 2
+        while True:
+            f = -(-(k * CYCLE + after) // self.buf) * self.buf
+            if after >= EIGHTH or f - k * CYCLE < after + SLACK_SPAN:
+                return f
+            k += 1
+
     def restart(self, command, after):
-        """Mute, then press `command` `after` samples after a pulse."""
+        """Mute, then press `command` `after` samples after a pulse (see
+        press_frame())."""
         self.engine.request("MUTE")
         self.wait_state("Muted")
-        pulse = (self.looper.sync_clock // CYCLE + 2) * CYCLE
-        self.press_at(command, pulse + after)
+        self.press_at(command, self.press_frame(after))
         acted = self.state() == "Playing"
         self.assertEqual(acted, after < EIGHTH,
                          "in the slack window it should act at once, else wait")

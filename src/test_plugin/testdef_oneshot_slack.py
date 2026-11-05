@@ -25,8 +25,7 @@ class OneShotTestCase(SyncCountTestCase):
         start = (self.loop_frame(64) - 64) % RAMP
         self.engine.request("MUTE")
         self.wait_state("Muted")
-        pulse = (self.looper.sync_clock // CYCLE + 2) * CYCLE
-        self.press_at("ONESHOT", pulse + after)
+        self.press_at("ONESHOT", self.press_frame(after))
         self.assertEqual(self.state() == "OneShot", after < EIGHTH,
                          "in the slack window it should act at once, else wait")
         self.wait_state("OneShot", units=2)
