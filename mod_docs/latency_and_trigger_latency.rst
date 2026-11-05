@@ -357,12 +357,13 @@ default; the rest are not built.  Everything above describes the default.
 
   The option ``TRIGGER_LATENCY_ALL_EDGES`` in ``src/plugin.hpp`` does
   this where ``input_latency`` is larger than ``trigger_latency``: a
-  record's own start and stop with sync off; the end of an overdub,
-  Replace, or Substitute by the same command, when that end is not
-  quantized; Record to Overdub with sync off; and, with sync off, a take
-  ended by Multiply, Insert, Replace, Substitute, Mute, Pause, Oneshot,
-  or Trigger.  Not covered yet: a layer ended by a different command, a
-  ``trigger_latency`` larger than ``input_latency``, and restarts.
+  record's own start and stop with sync off, and every end of a take or
+  a layer that acts as soon as its command arrives (with sync on too,
+  where the command acts at once).  The command's own effect, such as a
+  mute or a new layer, comes that much later as well; a restart in the
+  slack window keeps the loop's phase.  Not covered yet: a
+  ``trigger_latency`` larger than ``input_latency``, and restarts that
+  end nothing.
 * **A measuring mode in** ``sllatency``: presses beside a mic, reporting
   CL - IL and offering to set ``trigger_latency``.
 * **The late-hit window** measures lateness from the command's arrival,
