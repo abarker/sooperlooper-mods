@@ -61,15 +61,19 @@
 // at overdub, Multiply and Insert starts (waiting input_latency -
 // trigger_latency for the sound played at the press); every other edge
 // acts when the command arrives, as if the command latency were
-// input_latency.  This switch makes the Record command's own start and
-// stop, with Sync off, wait input_latency - trigger_latency too (stock's
-// own TODO in STATE_TRIG_START), so a take starts and ends on the
-// presses.  Takes then begin and end that much later than now; their
-// length (the press interval) and playback phase do not change.  At
-// trigger_latency = input_latency it changes nothing.  Not yet: the other
-// commands that end a take or a layer, trigger_latency > input_latency
-// (left as now), restarts, and the late-hit window.  Here, not in
-// plugin.cc, for the SooperLooperI fields below.
+// input_latency.  This switch makes these edges wait input_latency -
+// trigger_latency too, so they land on the presses:
+//   - the Record command's own start and stop, with Sync off (stock's own
+//     TODO in STATE_TRIG_START) -- increment 1;
+//   - an overdub, Replace or Substitute ended by the same command when
+//     that end is immediate (overdub_quantized / replace_quantized off,
+//     with Sync on too), and Record -> Overdub with Sync off -- 2a.
+// Takes then begin and end that much later than now; their length (the
+// press interval) and playback phase do not change.  At trigger_latency =
+// input_latency it changes nothing.  Not yet: the other commands that end
+// a take or a layer (2b), trigger_latency > input_latency (left as now),
+// restarts, and the late-hit window.  Here, not in plugin.cc, for the
+// SooperLooperI fields below.
 #define TRIGGER_LATENCY_ALL_EDGES 0
 //------ albEnd ----------------------------------
 
@@ -267,6 +271,10 @@ typedef struct {
 	// A deferred Record stop: send the sync pulse the immediate stop
 	// sends (for loops synced to this one) when it fires.
 	bool bEdgeStopDeferred;
+	// A deferred overdub, Replace or Substitute end (the same command
+	// again): the layer goes on until lEdgeDelay runs out, then ends as
+	// the immediate branch would have (increment 2a).
+	bool bEdgeEndDeferred;
 #endif
 	//------ albEnd ----------------------------------
 	

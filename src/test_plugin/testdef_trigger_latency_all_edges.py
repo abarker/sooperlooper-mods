@@ -1,11 +1,12 @@
 #! /usr/bin/env python3
 """
-Tests for TRIGGER_LATENCY_ALL_EDGES (plugin.hpp), increment 1:
-trigger_latency is taken to mean exactly the command latency, and the
-Record command's own start and stop, with Sync off, wait input_latency -
-trigger_latency (s) after the command, so the take starts and ends on the
-presses.  The length stays the press interval and playback keeps the stock
-latency compensation.  At s <= 0 nothing changes.
+Tests for TRIGGER_LATENCY_ALL_EDGES (plugin.hpp): trigger_latency is taken
+to mean exactly the command latency, and these edges wait input_latency -
+trigger_latency (s) after the command, so they land on the presses:
+the Record command's own start and stop with Sync off (increment 1), and
+Record -> Overdub and a Replace or Substitute ended by the same command
+(increment 2a).  The length stays the press interval and playback keeps
+the stock latency compensation.  At s <= 0 nothing changes.
 
 Skipped when the switch is off.  Same exact-frame presses and ramp input
 as testdef_rel_sync_late_hit.py.  The harness has no real latency, so the
@@ -85,6 +86,64 @@ class TestTriggerLatencyAllEdges(TriggerLatencyAllEdgesTestCase):
     def testPlaybackKeepsCompensation(self):
         s0, s1 = self.take(int(0.6 * self.cycle))
         self.assertPlaysWithOffset(s1 - s0, self.IL + self.OL)
+
+
+class LayerEndsMixin:
+    """Increment 2a: Record -> Overdub, and a Replace or Substitute ended
+    by the same command.  Replace and Substitute write the input itself
+    (no sum), so the newest input frame anywhere in the loop is the last
+    sample the layer took: s - 1 after the ending press (-1 at s = 0)."""
+
+    def s(self):
+        return max(0, self.IL - self.TL)
+
+    def newest_offset(self, ref, span):
+        """The newest input frame in the loop, as a signed offset from
+        input frame `ref`; frames more than `span` away are ignored."""
+        L = self.length()
+        best = None
+        for pos in range(L):
+            d = (self.loop_frame(pos) - ref) % RAMP
+            if d > RAMP // 2:
+                d -= RAMP
+            if abs(d) <= span and (best is None or d > best):
+                best = d
+        return best
+
+    def layer_end(self, command, state):
+        s0, s1 = self.take(int(0.6 * self.cycle))
+        self.wait_buffers(4)
+        r0 = self.press_at(command, self.looper.sync_clock + 2 * self.buf)
+        self.wait_state(state)
+        r1 = self.press_at(command, r0 + int(0.15 * self.cycle))
+        self.wait_state("Playing")
+        self.wait_buffers(4)
+        delta = self.looper.input_minus_sync
+        return self.newest_offset(r1 + delta, self.cycle)
+
+    def testRecordIntoOverdub_TakeOnThePresses(self):
+        s0 = self.press_at("RECORD", self.looper.sync_clock + 2 * self.buf)
+        self.wait_state("Recording")
+        self.wait_buffers(2)
+        self.assertStartsAt(s0, -self.s())     # read before the overdub writes
+        s1 = self.press_at("OVERDUB", s0 + int(0.6 * self.cycle))
+        self.wait_state("Overdubbing")
+        self.assertEqual(self.length(), s1 - s0)
+
+    def testReplaceEnd_OnThePress(self):
+        self.assertEqual(self.layer_end("REPLACE", "Replacing"), self.s() - 1)
+
+    def testSubstituteEnd_OnThePress(self):
+        self.assertEqual(self.layer_end("SUBSTITUTE", "Substitute"), self.s() - 1)
+
+
+class TestTriggerLatencyLayerEnds(LayerEndsMixin, TriggerLatencyAllEdgesTestCase):
+    pass
+
+
+class TestTriggerLatencyLayerEndsEqual(LayerEndsMixin, TriggerLatencyAllEdgesTestCase):
+
+    TL = 600            # s = 0: stock timing
 
 
 class TestTriggerLatencyEqualToInput(TriggerLatencyAllEdgesTestCase):

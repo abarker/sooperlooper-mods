@@ -1700,6 +1700,7 @@ activateSooperLooper(LADSPA_Handle Instance) {
 #if TRIGGER_LATENCY_ALL_EDGES
   pLS->lEdgeDelay = 0;
   pLS->bEdgeStopDeferred = false;
+  pLS->bEdgeEndDeferred = false;
 #endif
   //------ albEnd ----------------------------------
   memset (pLS->pInputBuf, 0, pLS->lInputBufSize * sizeof(LADSPA_Data));
@@ -3553,6 +3554,7 @@ runSooperLooper(LADSPA_Handle Instance,
 	  // one sets it again below.
 	  pLS->lEdgeDelay = 0;
 	  pLS->bEdgeStopDeferred = false;
+	  pLS->bEdgeEndDeferred = false;
 #endif
 	  //------ albEnd ----------------------------------
           DBG(fprintf(stderr, "Multictrl val is %ld\n", lMultiCtrl));
@@ -4085,6 +4087,18 @@ runSooperLooper(LADSPA_Handle Instance,
 	      case STATE_OVERDUB:
 		      // don't sync overdub ops unless asked to
 		      if ((fOverdubQuantized == 0.0f) || (fSyncMode == 0.0f && fQuantizeMode == QUANT_OFF)) {
+		      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+		      // End input_latency - trigger_latency after the command, on
+		      // the press: the layer goes on, and its sample loop ends it
+		      // as below when the countdown runs out.  At 0, as below now.
+		      if (edgeDelaySamples(pLS) > 0) {
+			      pLS->lEdgeDelay = edgeDelaySamples(pLS);
+			      pLS->bEdgeEndDeferred = true;
+			      break;
+		      }
+#endif
+		      //------ albEnd ----------------------------------
 
 			      pLS->state = STATE_PLAY;
 			      pLS->wasMuted = false;
@@ -4117,6 +4131,20 @@ runSooperLooper(LADSPA_Handle Instance,
 	   case STATE_TRIG_STOP:
 		   // lets sync on ending record with overdub
 		   if (fSyncMode == 0.0f && !bRoundIntegerTempo) {
+			   //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+			   // End the take input_latency - trigger_latency after the
+			   // command, on the press: through STATE_TRIG_STOP, which with
+			   // Sync off ends when the countdown runs out and goes into the
+			   // overdub as below (the stock synced record-into-overdub path).
+			   if (pLS->state == STATE_RECORD && loop && edgeDelaySamples(pLS) > 0) {
+				   pLS->state = STATE_TRIG_STOP;
+				   pLS->nextState = STATE_OVERDUB;
+				   pLS->lEdgeDelay = edgeDelaySamples(pLS);
+				   break;
+			   }
+#endif
+			   //------ albEnd ----------------------------------
 			   if (loop) {
 
 				   loop = beginOverdub(pLS, loop);
@@ -4466,6 +4494,18 @@ runSooperLooper(LADSPA_Handle Instance,
 	   switch(pLS->state) {
 	      case STATE_REPLACE:
 		      if ((bReplaceQuantized == 0.0f) || (fSyncMode == 0.0f && fQuantizeMode == QUANT_OFF)) {
+		      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+		      // End input_latency - trigger_latency after the command, on
+		      // the press: the layer goes on, and its sample loop ends it
+		      // as below when the countdown runs out.  At 0, as below now.
+		      if (edgeDelaySamples(pLS) > 0) {
+			      pLS->lEdgeDelay = edgeDelaySamples(pLS);
+			      pLS->bEdgeEndDeferred = true;
+			      break;
+		      }
+#endif
+		      //------ albEnd ----------------------------------
 			      pLS->state = STATE_PLAY;
 			      pLS->wasMuted = false;
 			      DBG(fprintf(stderr,"%u:%u  Entering PLAY state\n", pLS->lLoopIndex, pLS->lChannelIndex));
@@ -4545,6 +4585,18 @@ runSooperLooper(LADSPA_Handle Instance,
 	   switch(pLS->state) {
 	      case STATE_SUBSTITUTE:
 		      if ((bReplaceQuantized == 0.0f) || (fSyncMode == 0.0f && fQuantizeMode == QUANT_OFF)) {
+		      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+		      // End input_latency - trigger_latency after the command, on
+		      // the press: the layer goes on, and its sample loop ends it
+		      // as below when the countdown runs out.  At 0, as below now.
+		      if (edgeDelaySamples(pLS) > 0) {
+			      pLS->lEdgeDelay = edgeDelaySamples(pLS);
+			      pLS->bEdgeEndDeferred = true;
+			      break;
+		      }
+#endif
+		      //------ albEnd ----------------------------------
 			      pLS->state = STATE_PLAY;
 			      pLS->wasMuted = false;
 			      DBG(fprintf(stderr,"Entering PLAY state\n"));
@@ -6014,6 +6066,28 @@ runSooperLooper(LADSPA_Handle Instance,
 	      for (;lSampleIndex < SampleCount;
 		   lSampleIndex++)
 	      {
+		 //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+		 // A deferred end (MULTI_OVERDUB / REPLACE / SUBSTITUTE): once the
+		 // countdown runs out, do what the command's immediate branch does,
+		 // here, and let the outer loop run the rest of the block in Play.
+		 if (pLS->bEdgeEndDeferred) {
+			 if (pLS->lEdgeDelay <= 0) {
+				 pLS->bEdgeEndDeferred = false;
+				 pLS->state = STATE_PLAY;
+				 pLS->wasMuted = false;
+				 DBG(fprintf(stderr,"%u:%u  Deferred layer end: entering PLAY state\n", pLS->lLoopIndex, pLS->lChannelIndex));
+				 pLS->fLoopFadeDelta = -1.0f / xfadeSamples;
+				 pLS->fPlayFadeDelta = 1.0f / xfadeSamples;
+				 pLS->fFeedFadeDelta = 1.0f / xfadeSamples;
+				 // then send out a sync here for any slaves
+				 pfSyncOutput[lSampleIndex] = 1.0f;
+				 break;
+			 }
+			 pLS->lEdgeDelay--;
+		 }
+#endif
+		 //------ albEnd ----------------------------------
 	         fWet += wetDelta;
                  fDry += dryDelta;
 	         fFeedback += feedbackDelta;
