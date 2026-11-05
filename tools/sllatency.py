@@ -617,9 +617,10 @@ class SLRun:
         explain("""
             Input and output latency are what this tool checks.  Trigger latency
             is separate: it is how late SooperLooper takes a command to arrive
-            after the press, and it only changes where overdub, multiply,
-            insert, replace and substitute start taking input.  Autoset sets one buffer.  This
-            tool leaves it as it is.
+            after the press.  It only changes where overdub, multiply,
+            insert, replace, and substitute start taking input, and how much
+            earlier a Relative Sync recording started at the press begins.
+            Autoset sets one buffer.  This tool leaves it as it is.
         """)
         if self.saved.get("auto_disable_latency") and (self.common_dry or 0) > 0:
             print()

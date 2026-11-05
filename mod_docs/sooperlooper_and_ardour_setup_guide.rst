@@ -1,16 +1,18 @@
 .. SooperLooper + Ardour live-looping setup and latency guide
 
 =========================================================================
-Live Looping with SooperLooper and Ardour: A Low-Budget Example Setup
+Live Looping with SooperLooper and Ardour: An Example Setup
 =========================================================================
 
-This guide describes a practical, low-budget live-looping setup on Linux using
-a fork of SooperLooper, Hydrogen as the JACK transport (timebase) master, and
-Ardour for recording and latency verification. It covers software
-configuration, signal routing, and -- in the most detail -- latency calibration.
-
-The forked SooperLooper used in this setup is at
-https://github.com/abarker/sooperlooper-mods.
+This guide describes a practical, fairly low-budget live-looping setup on Linux
+using a fork of SooperLooper.  The forked version of SooperLooper is at the
+current repo: https://github.com/abarker/sooperlooper-mods.  The setup uses
+Hydrogen as the JACK transport (timebase) master, Ardour for recording and
+latency verification, and two companion programs for footswitch control and
+tempo control (a MIDI remapper and Big Tempo, both described below).  This
+guide covers software configuration, signal routing, and latency calibration.
+Different people's hardware and setups will tend to be different; this guide is
+meant to be an introduction and a possible starting point.
 
 **Contents**
 
@@ -22,52 +24,64 @@ https://github.com/abarker/sooperlooper-mods.
 
 .. note::
 
-   This guide assumes the modified SooperLooper 1.7.9 from the fork above.
-   Among other things, it adds **late-hit corrections** (a press just after
-   the beat counts as on time), sync that stays on the JACK transport master's
-   beat through tempo changes, a command that -- bound to a long press on
-   record -- stops a playing loop and keeps it, muted, and **direct JACK
-   MIDI** input and output. Stock SooperLooper 1.7.9 has no JACK MIDI; with it
-   you route MIDI over ALSA using ``aconnect`` and **a2jmidid**. With this
-   fork you can connect directly over JACK and skip ALSA entirely. The fork's
-   ``mod_docs/late_hit_patch_summary.rst`` lists every change in detail.
+   This guide assumes the modified SooperLooper 1.7.9-mods.1 from the current
+   repo.  Among other things, it adds **late-hit corrections** (a press just
+   after the beat counts as on time), sync that stays on the JACK transport
+   master's beat through tempo changes, a command that, when bound to a long
+   press on record, stops a playing loop and keeps it (muted), and **direct
+   JACK MIDI** input and output. Stock SooperLooper 1.7.9 has no JACK MIDI;
+   with it you route MIDI over ALSA using ``aconnect`` and **a2jmidid**. With
+   this fork ALSA can be skipped entirely. The fork's
+   ``mod_docs/late_hit_patch_summary.rst`` page lists every change in detail.
 
 
 Overview
 ========
 
-This is a fairly low-budget setup built around commodity Linux audio hardware
-and open-source software. It lets you build loops locked to a Hydrogen drum
-pattern and record the result in Ardour with sample-accurate alignment. The
-Hydrogen beat plays continuously in the background as a click track and sync
-source. It is not captured in a loop, but can be recorded in the DAW for
-mixing and played through a PA. Most of the work in getting it to feel right
-is **latency calibration** -- making sure the loop you record lines up with
-what you actually heard when you played it. That is covered in detail in
-`2. Latency: Concepts and Calibration`_.
+This is a fairly low-budget setup built around Linux audio hardware and
+open-source software. It lets you build loops locked to a Hydrogen drum pattern
+and record the result in Ardour with sample-accurate alignment. The Hydrogen
+beat plays continuously (in pattern mode) when drums are started and acts as a
+click track and sync source. The drums are not captured in a loop, but can be
+recorded in the DAW for mixing and/or played through a PA.  This is useful
+for practice sessions, at the least.
+
+Much of the work in getting it to feel right is **latency calibration**: making
+sure the loop you record lines up with what you actually heard when you played
+it. That is covered in detail in `2. Latency: Concepts and Calibration`_.
 
 The signal/control chain at a glance:
 
 * A four-button **ActitioN** MIDI footswitch sends momentary CC events
   (press + release).
-* A **remapper** program turns those raw events into higher-level gestures
-  (chords, long presses, repeat-on-hold, double taps) and switches banks.
-  One bank controls Hydrogen -- patterns, tempo, and so on -- so drum
+
+* A MIDI remapper program, `midi-remapper`_, turns those raw events into
+  higher-level gestures (chords, long presses, repeat-on-hold, double taps) and
+  switches banks.  One bank controls the drums (patterns and tempo) so drum
   patterns can be switched mid-performance from the footswitch, for example
-  from a 4/4 to a 3/4 pattern. The remapper is optional, but its gestures
-  let more commands fit on a fixed number of buttons.
+  from a 4/4 to a 3/4 pattern. The remapper is optional, but its gestures allow
+  more commands fit on a fixed number of buttons.  (Some MIDI control pedals
+  can be directly configured with similar gestures.)
+
 * SooperLooper receives the mapped MIDI and records and plays loops, locked
-  to the Hydrogen beat while JACK transport is running -- and staying on it
-  through tempo changes.
-* Hydrogen runs in pattern mode as the JACK timebase master. Its drum
-  pattern acts as a click track -- it can be any Hydrogen pattern, simple or
-  complex.
-* Big Tempo watches the JACK transport (which Hydrogen, as timebase master,
-  starts and stops). When the transport starts or stops, Big Tempo sends MIDI
-  to switch SooperLooper's sync and mute-quantize on or off to match, so loops
-  can be recorded either locked to the Hydrogen beat or free-running. It also
-  shows a large tempo readout for the performer.
-* Ardour records everything and can be used to measure and verify latency.
+  to the Hydrogen beat via JACK while transport is running.
+
+* Hydrogen runs in pattern mode as the JACK timebase master. Its drum pattern
+  acts as a click track.  Any Hydrogen patterns can be used, simple or complex.
+
+* `Big Tempo`_ is a small tempo controller with a large BPM readout that can
+  be read from across a room. It holds the tempo for the setup: tempo changes
+  from the footswitch go through it, and it sends each one on to Hydrogen via
+  OSC. It also watches the JACK transport, which Hydrogen starts and stops as
+  timebase master. When the transport starts or stops, Big Tempo tells
+  SooperLooper over OSC to switch sync and mute-quantize on or off to match,
+  so loops can be recorded either locked to the Hydrogen beat or free-running.
+
+* Ardour records everything and can be used to measure and verify latency.  It
+  is not synced to JACK transport.
+
+.. _midi-remapper: https://github.com/abarker/midi-remapper
+.. _Big Tempo: https://github.com/abarker/big-tempo
 
 
 System Description
@@ -80,8 +94,8 @@ OS                            Ubuntu 24.04
 Kernel                        Generic kernel (low-latency settings applied)
 JACK                          JACK2 standalone server
 SooperLooper                  1.7.9, forked (see the note above)
-Remapper                      https://github.com/abarker/midi-remapper
-Big Tempo                     https://github.com/abarker/big-tempo
+MIDI remapper                 `midi-remapper`_
+Big Tempo                     `Big Tempo`_
 MIDI footswitch               ActitioN four-button MIDI controller
 Audio interface               Behringer UMC404HD (four inputs)
 Mixer                         Behringer Xenyx 802S
@@ -91,7 +105,7 @@ Mixer                         Behringer Xenyx 802S
 
    The dedicated low-latency kernel is probably the better audio choice, but
    the generic kernel is used here because it includes a driver needed for
-   other hardware that the low-latency kernel currently lacks.
+   other hardware which the low-latency kernel currently lacks.
 
 .. note::
 
@@ -143,12 +157,15 @@ The key audio and MIDI connections needed for this setup are:
 * Footswitch MIDI (the interface's MIDI input) -> remapper MIDI in
 * Remapper MIDI out -> SooperLooper MIDI in
 * Remapper MIDI out -> Hydrogen MIDI in (drum bank commands)
-* Big Tempo MIDI out -> SooperLooper MIDI in (sync/mute-quantize toggle)
+* Remapper MIDI out -> Big Tempo MIDI in (tempo commands)
 * UMC404HD capture ports -> Ardour track inputs (guitar mic, etc.)
 * UMC404HD capture ports -> SooperLooper loop inputs (what gets looped)
 * SooperLooper audio out -> Ardour track inputs (for loop recording)
 * Hydrogen audio out -> Ardour track input (for direct drum reference)
 * Ardour/SooperLooper/Hydrogen audio out -> UMC404HD playback ports
+
+Big Tempo sends to Hydrogen and SooperLooper over OSC, which requires no JACK
+connection.
 
 The exact port names depend on the hardware and the sessions. In practice a
 startup script makes the connections, using ``jack_connect`` or the JACK
@@ -161,10 +178,9 @@ applications.
 -----------------
 
 SooperLooper is started with **slgui**, the GUI built from this fork.
-Optionally, also start **slbigstate**, a separate window that is part of
-this fork: it shows each loop's state (recording, playing, muted, and so on)
-in large text, readable at a distance, for when your attention is on the
-pedal rather than the screen.
+Optionally, also start **slbigstate**, a separate window that is part of this
+fork: it shows each loop's state (recording, playing, muted, and so on) in
+large text, readable at a distance.
 
 **Connecting MIDI**
 
@@ -244,6 +260,23 @@ and with this fork it stays on that beat through tempo changes. Hydrogen, as
 the JACK timebase master, starts and stops the transport; Big Tempo detects
 this and tells SooperLooper over OSC to switch sync on and off, which is what
 allows recording a loop either locked to the beat or free-running.
+
+.. warning::
+
+   **Hydrogen's song mode.**  This setup runs Hydrogen in pattern mode.  If
+   you use song mode instead, turn off one of this fork's build options
+   before building: in ``src/audio_driver.hpp``, comment out the line
+   ``#define ALB_JACK_BBT_TRACKING``, then rebuild from clean (``make
+   clean``, ``make``, and ``sudo make install``).  Also leave
+   ``auto_realign`` (below) off, as it is by default: a realign moves the
+   transport, which in song mode also moves Hydrogen's place in the song,
+   and it has not been tried with song mode.  With the build option on,
+   SooperLooper follows the bar and beat position that Hydrogen publishes.
+   After a tempo change made while the transport rolls, Hydrogen in song
+   mode can publish a position that differs from what it is playing, and
+   the loops would follow it off the drums.  Pattern mode is not affected:
+   Hydrogen publishes no moving position there.  This holds until Hydrogen
+   fixes the position it publishes.
 
 **Keeping the drums on the loops.** A tempo change made while the
 transport rolls, followed later by an xrun, can leave the drums off the
@@ -835,67 +868,76 @@ resulting ~782-sample offset visible when zoomed in:
    :alt: Zoomed view showing ~782-sample offset between overdubbed and loop beats
    :target: images/overdub_error_example_test_zoomed.png
 
-2.9 Trigger latency (overdub starts)
--------------------------------------
+2.9 Trigger latency (recording starts)
+---------------------------------------
 
-SooperLooper has a third latency setting, the **trigger latency**:
-``trigger_latency`` on each loop's line in the session file.  slgui shows
-no control for it, so edit the session file while SooperLooper is not
-running.  It tells SooperLooper how late a command arrives after you
-press the pedal.
+SooperLooper has a third latency setting, the **trigger latency**, which is how
+long a command takes to reach SooperLooper after you press the pedal.  It
+affects only the moment some recordings start:
 
-It is used in one place only: the start of an overdub, and of Multiply,
-Insert, Replace and Substitute, which start the same way.  When one of
-them starts, SooperLooper waits for the sound you played at the moment of
-the press to come in -- that takes the input latency -- and starts
-recording with it.  The command itself arrives a little after the press,
-so part of that wait is already over when it gets there.  The trigger
-latency is that part, and SooperLooper waits that much less.  Nothing else
-uses it: not plain recording, not the end of an overdub, not Mute or
-Trigger, and not where recorded material lands in the loop, which the
-input and output latency settings decide.
+* an overdub, and Multiply, Insert, Replace, and Substitute, which start
+  the same way;
+* with Relative Sync, a recording that starts at the press: this fork
+  starts it earlier by the trigger latency, so the notes you played as you
+  pressed are in the loop.
+
+It does not change where recorded material lands in the loop, which the input
+and output latency settings determine.  It is not used for plain recording, the
+end of an overdub, Mute, or Trigger.
 
 Set too low, an overdub starts a little after your press: a note you
 strike right as you press loses the start of its attack.  Set too high,
 the overdub takes in a little of what you played just before the press.
-Either way the error is the difference, a few milliseconds.
 
-What to set:
+**The default is close enough for most playing.**  Autoset (the
+"Automatically set Latency Compensation Values" box in slgui's
+**Preferences -> Latency/Misc**), which is on for a new loop, sets the
+trigger latency to one JACK period, the buffer size.  When you turn
+autoset off to enter measured input and output latencies (section 2.6),
+the trigger latency keeps that value.  One period is the least the delay
+can be: JACK hands MIDI from a hardware port on a period later, as it
+does audio.  The pedal, the MIDI cable, and the interface add more, so
+with one period an overdub never takes in sound from before the
+press, and at worst starts a few milliseconds late.
 
-* At least one JACK period: the buffer size, **Frames/Period** in
-  QjackCtl's setup dialog (256 in this setup, 5.3 ms at 48 kHz).  JACK
-  hands MIDI from a hardware port on a period later, as it does audio.
-  This is what SooperLooper's autoset (**Preferences -> Latency**) sets.
-* The MIDI hardware adds more: the pedal's own switch handling, the MIDI
-  cable and the interface.  In this setup -- a 5-pin DIN MIDI pedal into
-  the audio interface's MIDI input -- commands measured 685 samples
-  (14 ms) after the press, about 2.7 periods.  Other pedals will differ.
-* Commands through the remapper with ``--jack-rt`` arrive as early as from
-  the pedal directly, so the same value applies.  Without ``--jack-rt``,
-  add one period.
-* If you can't measure it, use one period.  That is as low as the true
-  value can be, so an overdub never takes in sound from before the press;
-  at worst it starts a few milliseconds late (in this setup, 9 ms late).
-* With autoset off, the value is whatever the session holds, and 0 for a
-  loop where it was never set.  Zero is the least accurate choice: every
-  overdub then starts the whole command delay after the press (14 ms
-  here).
+Set it by hand in two cases:
+
+* **The buffer size changed while autoset was off.**  The value is still
+  the old period.
+* **The session holds 0**, as some older sessions do.  Every overdub then
+  starts the whole command delay late.
+
+``sllatency`` shows the current value when it starts.  The period is
+**Frames/Period** in QjackCtl's setup dialog; ``jack_bufsize`` also prints
+it.  If commands go through the remapper without ``--jack-rt``, add one
+more period.
+
+**Setting it.**  slgui has no control for it.  Either send it over OSC
+while SooperLooper runs, using ``oscsend`` from the ``liblo-tools``
+package, then save the session (configuration only) to keep it (``-1``
+means all loops, ``0`` the first loop)::
+
+    oscsend localhost 9951 /sl/-1/set sf trigger_latency 256
+
+or, with SooperLooper not running, edit the session file: each loop's
+``<Looper>`` block has a line ``<Control name="trigger_latency"
+value="256"/>``.
 
 2.10 Additional tests
 ----------------------
 
-* **Footswitch-noise marker.** Put a mic on the floor next to the footswitch
-  to catch the switch's mechanical click. This is most useful with the drums
-  off: without sync, the loop starts playing the moment the button is pressed
-  rather than waiting for the beat, so you can see the delay between the
-  switch click and the start of loop playback directly.
+* **Footswitch-noise marker.** Put a mic on the floor next to the footswitch to
+  catch the switch's mechanical click. This is most useful with the drums off:
+  without sync.  The loop ideally starts playing the moment the button is
+  pressed rather than waiting for the beat, so you can see and measure the
+  actual delay between the switch click and the start of loop playback.
 
-* **Constant-signal / fan test.** Turn on a fan next to the guitar mic for a
-  continuous signal (with or without drums). This can give a cleaner picture
-  than the drum method, because there is usually a short silence before the
-  first drum beat: the fan noise is there from the first sample, so the loop's
-  start edge is easy to see. (The noise floor rising can often be spotted even
-  before the first drum hit.)
+* **Constant-signal / fan test.** Turn on a fan or other constant noise source
+  next to the guitar mic for a continuous signal (with or without drums). This
+  can give a cleaner picture than the drum method, because there is usually a
+  short silence before the first drum beat: the fan noise is there from the
+  first sample, so the loop's start edge is easy to see. (The noise floor
+  rising can often be spotted even before the first drum hit.)
 
 
 3. Automating the Setup
@@ -903,16 +945,19 @@ What to set:
 
 Once the setup is dialed in, automate the repetitive parts:
 
-* **MIDI bindings.** Save from slgui as an ``.slb`` file (this setup uses
-  ``sl_midi_config_actition_bindings.slb``). Hydrogen remembers its MIDI setup
-  automatically.
-* **SooperLooper session.** Save the session to restore the loop and sync
+* **MIDI bindings.** Save from slgui as an ``.slb`` file.
+  Hydrogen remembers its MIDI setup automatically.
+
+* **SooperLooper session.** Save the session to later restore the loop and sync
   configuration and the latency settings. Keep a separate file per buffer
-  size, since the latency settings differ: ``SL_session_save_256.slsess`` and
+  size, since the latency settings differ, e.g.: ``SL_session_save_256.slsess`` and
   ``SL_session_save_512.slsess``. SooperLooper has two ways to save a
   session: one saves only the configuration -- loop counts, sync settings,
   latency values and so on -- and the other also saves the recorded audio.
   For a startup configuration, use the configuration-only one.
+
 * **JACK connections.** Use a startup script with ``jack_connect`` or the JACK
   Python API to make the connections automatically; the list in `1.1 JACK`_
-  has the key ones to include.
+  has the key ones to include.  There are also other tools available which could
+  be used to save and restore JACK connections.
+
