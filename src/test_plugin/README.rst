@@ -247,8 +247,10 @@ testdef_insert_placement.py
     Tests for TL_OVER_IL_LAYER_FIX's Insert half: the inserted stretch
     starts where the press was heard, every sample in place, the first
     and (unrounded) last ones played at the presses, the old loop intact
-    before it.  What follows the stretch is not checked (ROADMAP entry
-    47, stock).
+    before it.  And INSERT_GAP_FILL_FIX: the old loop whole after the
+    inserted cycles (OL + IL + k samples lost without it), and a rounded
+    insert's cycles holding the input to their end.  Run at IL = OL, IL >
+    OL, and OL > IL.
 
 testdef_signed_sync_pos.py
     Tests for SIGNED_SYNC_POS_FIX: with Sync off, a Rel Sync loop whose

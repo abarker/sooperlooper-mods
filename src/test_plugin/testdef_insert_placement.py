@@ -10,11 +10,14 @@ ends with the input played at the second press.
 
 As testdef_multiply_placement.py: a take of a constant (BASE), the
 inserted input a ramp; input frame g belongs at P(p0) + g - IL - OL - p0.
-Only the inserted stretch and the old loop before it are checked: what
-follows is stock behaviour not covered here (the old loop resumes at the
-play position, not the heard one, and a rounded Insert's last OL + IL
-(+ k) samples are silent; ROADMAP entry 47).  Sync and Quantize off,
-IL = OL; started mid-loop.
+Also INSERT_GAP_FILL_FIX (plugin.cc; ROADMAP entry 47, a stock fix, on):
+the old loop resumes after the inserted cycles, at the play position
+where the insert finished; the OL + IL (+ k) samples before it were never
+written (the old loop just before the insert's start lost, rounded or
+not).  Now they are filled from the old loop: after the inserted cycles
+the old loop is whole, and a rounded insert's cycles hold the input to
+their end.  Sync and Quantize off; started mid-loop; IL = OL, and IL
+unequal to OL.
 """
 
 import unittest
@@ -33,7 +36,7 @@ class InsertPlacementTestCase(LayerPlacementTestCase):
     def insert(self, rounded, frames):
         self.looper.set_port(test_engine.Round, 1.0 if rounded else 0.0)
         s0, s1 = self.base_take(16000)
-        L = s1 - s0
+        L = self.L = s1 - s0
         f = -(-(self.looper.sync_clock + 2 * self.buf) // self.buf) * self.buf
         while not (L // 3 <= (f - s1 + self.IL + self.OL) % L < L // 3 + self.buf):
             f += self.buf
@@ -71,6 +74,21 @@ class InsertPlacementTestCase(LayerPlacementTestCase):
                              p1 - k - 1, "last inserted sample")
             self.assertEqual(self.looper.get_loop_sample(0, last + 1), 0.0,
                              "inserted past the second press")
+        # INSERT_GAP_FILL_FIX: after the inserted cycles the old loop
+        # resumes, whole, from where the insert started.
+        ins = newL - self.L
+        after = [pos for pos in range(first + ins, newL)
+                 if self.looper.get_loop_sample(0, pos) != BASE]
+        self.assertEqual(after[:5], [], f"{len(after)} old-loop samples after the insert lost")
+        if rounded:
+            # The inserted cycles recorded to their end.
+            wrong = []
+            for pos in range(first, first + ins):
+                v = self.looper.get_loop_sample(0, pos)
+                g = (frame_of(v) - delta) % RAMP
+                if v == BASE or pos != d + g - self.IL - self.OL - p0:
+                    wrong.append((pos, g))
+            self.assertEqual(wrong[:5], [], f"{len(wrong)} of {ins} inserted samples misplaced")
 
 
 class InsertPlacementTests:
@@ -90,6 +108,19 @@ class TestInsertPlacementTLOverIL(InsertPlacementTests, InsertPlacementTestCase)
 
 class TestInsertPlacementTLEqualIL(InsertPlacementTests, InsertPlacementTestCase):
     TL = 1100                  # k = 0: the stock path
+
+
+class TestInsertPlacementILOverOL(InsertPlacementTests, InsertPlacementTestCase):
+    IL, OL, TL = 1300, 900, 1300
+
+
+class TestInsertPlacementOLOverIL(InsertPlacementTests, InsertPlacementTestCase):
+    IL, OL, TL = 900, 1300, 900
+
+
+@unittest.skipUnless(LAYER_FIX, "TL_OVER_IL_LAYER_FIX is 0")
+class TestInsertPlacementILOverOL_TLOverIL(InsertPlacementTests, InsertPlacementTestCase):
+    IL, OL, TL = 1300, 900, 1700
 
 
 if __name__ == "__main__":

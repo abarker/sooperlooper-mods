@@ -664,6 +664,26 @@ unsigned long sl_input_history_samples(unsigned long sample_rate)
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
+// INSERT_GAP_FILL_FIX: compile-time safety switch for a STOCK bug
+// (ROADMAP entry 47; harness, stock 1.7.9 not run).
+//
+// The bug: an Insert with Quantize off writes its input OL + IL (plus
+// TL_OVER_IL_LAYER_FIX's lLayerLag) behind the play position, from where
+// the press was heard, and finishes when the PLAY position reaches the
+// end of the inserted cycles, where the old loop resumes (the back fill,
+// from the old loop's position at the press).  The OL + IL samples
+// before that point were never recorded or filled: OL + IL of the old
+// loop, just before the insert's start, were lost (silence, or whatever
+// a reused chunk held), rounded or not.
+//
+// The fix fills those samples from the old loop when the insert
+// finishes, as the back fill would have.  Quantized Inserts are not
+// changed (not measured).  Set to 0 to revert to the stock (buggy)
+// behaviour.
+#define INSERT_GAP_FILL_FIX 1
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
 // SYNCWDEBUG: master switch for ALL debug output in this file.
 // When defined:
 //   - a sentinel file is written at binary-load time.
@@ -7873,6 +7893,28 @@ runSooperLooper(LADSPA_Handle Instance,
 		    // we be done.. this only happens in round mode
 		    // adjust curr position to 0
 
+		    //------ albBegin ----------------------------------
+#if INSERT_GAP_FILL_FIX
+		    // The old loop resumes here; the OL + IL (+ lag) before here
+		    // were never written: fill them from the old loop now.
+		    if (*pLS->pfQuantMode == QUANT_OFF) {
+#if TL_OVER_IL_LAYER_FIX
+			    const unsigned long gap = lOutputLatency + lInputLatency + pLS->lLayerLag;
+#else
+			    const unsigned long gap = lOutputLatency + lInputLatency;
+#endif
+			    const unsigned long end = loop->lMarkEndH;
+			    if (gap > 0 && loop->lInsPos >= gap && end >= gap) {
+				    loop->backfill = 1;
+				    loop->lMarkEndL = end - gap;
+				    loop->lMarkEndH = end - 1;
+				    for (unsigned long i = end - gap; i < end; ++i) {
+					    fillLoops(pLS, loop, i, false);
+				    }
+			    }
+		    }
+#endif
+		    //------ albEnd ----------------------------------
 		    
 		    loop->lMarkEndL = (unsigned long) loop->dCurrPos;
 		    loop->lMarkEndH = loop->lLoopLength - 1;
