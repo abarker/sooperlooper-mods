@@ -124,8 +124,10 @@
 // ones played at them.  Only a layer started at once by its own command
 // (beginOverdub()'s useTriggerLag); one started at a sync pulse, or out
 // of a take, reads the current input and keeps the stock timing.
-// Multiply and Insert have the same bug; not fixed yet.  Here, not in
-// plugin.cc, for the SooperLooperI field below.
+// Multiply and Insert the same (beginMultiply(), beginInsert(); a
+// lagged Multiply's rounded end waits lLayerLag longer, and its
+// unrounded end fills the lLayerLag its leftover fill does not).  Here,
+// not in plugin.cc, for the SooperLooperI field below.
 // Set to 0 to revert to the stock (buggy) behaviour.
 #define TL_OVER_IL_LAYER_FIX 1
 //------ albEnd ----------------------------------

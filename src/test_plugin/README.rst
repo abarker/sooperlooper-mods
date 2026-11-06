@@ -233,6 +233,22 @@ testdef_layer_placement.py
     after the layer ends (the new chunk is filled as the play position
     passes).
 
+testdef_multiply_placement.py
+    Tests for TL_OVER_IL_LAYER_FIX's Multiply half, as above (IL = OL,
+    to keep ROADMAP entry 45 out): every multiplied sample where its
+    input frame was heard, the first one played at the press; unrounded,
+    the last at the second press and the old loop intact after it (the
+    end fills the k samples its leftover fill does not); rounded within
+    one cycle, recorded to the loop's end.  A two-cycle rounded case is
+    skipped for ROADMAP entry 46 (stock).
+
+testdef_insert_placement.py
+    Tests for TL_OVER_IL_LAYER_FIX's Insert half: the inserted stretch
+    starts where the press was heard, every sample in place, the first
+    and (unrounded) last ones played at the presses, the old loop intact
+    before it.  What follows the stretch is not checked (ROADMAP entry
+    47, stock).
+
 testdef_signed_sync_pos.py
     Tests for SIGNED_SYNC_POS_FIX: with Sync off, a Rel Sync loop whose
     sync position is negative (an early start pressed just after a pulse)

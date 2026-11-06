@@ -285,11 +285,11 @@ item links to its full description.
 
 - **Overdubs in time when the trigger latency is larger than the input
   latency** (``TL_OVER_IL_LAYER_FIX``, on by default).  In stock 1.7.9,
-  an Overdub, Replace or Substitute landed that difference late, for the
-  whole layer: one period late with a common autoset setup (input
-  latency 0, trigger latency one period).  Now it lands in time, and it
-  begins and ends with what was played at the presses.  Multiply and
-  Insert still land late in that case.
+  an Overdub, Replace, Substitute, Multiply or Insert landed that
+  difference late, for the whole layer: one period late with a common
+  autoset setup (input latency 0, trigger latency one period).  Now it
+  lands in time, and it begins and ends with what was played at the
+  presses.
 
 - **Default loop memory 120 seconds** (was 40).  The engine's ``-t``
   default and slgui's loop time for new loops.  It is rounded up to a
@@ -1617,10 +1617,9 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
      - ``1``
      - When 1 (default), a stock 1.7.9 bug fix is active: with
        ``trigger_latency`` larger than ``input_latency``, an Overdub,
-       Replace or Substitute started by its command is written
-       ``trigger_latency - input_latency`` further back, where it was
-       heard, instead of that much late.  Not Multiply or Insert yet.  Set
-       to 0 for stock.
+       Replace, Substitute, Multiply or Insert started by its command is
+       written ``trigger_latency - input_latency`` further back, where it
+       was heard, instead of that much late.  Set to 0 for stock.
    * - ``MULTIPLY_END_FIX``
      - ``plugin.cc``
      - ``1``

@@ -2123,7 +2123,14 @@ static inline void fillLoops(SooperLooperI *pLS, LoopChunk *mloop, unsigned long
 static LoopChunk* transitionToNext(SooperLooperI *pLS, LoopChunk *loop, int nextstate);
 
 
+//------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+// useTriggerLag: as beginOverdub()'s (TL_OVER_IL_LAYER_FIX, plugin.hpp).
+static LoopChunk* beginMultiply(SooperLooperI *pLS, LoopChunk *loop, bool useTriggerLag = false)
+#else
 static LoopChunk* beginMultiply(SooperLooperI *pLS, LoopChunk *loop)
+#endif
+//------ albEnd ----------------------------------
 {
    LoopChunk * srcloop = loop;
    int xfadeSamples = (int) (*pLS->pfXfadeSamples);
@@ -2196,6 +2203,20 @@ static LoopChunk* beginMultiply(SooperLooperI *pLS, LoopChunk *loop)
       long lOutputLatency = (long) (*pLS->pfOutputLatency);
       long lTriggerLatency = (long) (*pLS->pfTriggerLatency);
       pLS->lFramesUntilInput = (long) lInputLatency - lTriggerLatency;
+      //------ albBegin ----------------------------------
+      // lLag: how much further back than OL + IL the multiply writes.
+#if TL_OVER_IL_LAYER_FIX
+      // As beginOverdub(): it reads the input -lFramesUntilInput back, so
+      // it writes that much further back too.
+      pLS->lLayerLag = (useTriggerLag && prevstate != STATE_RECORD
+			&& prevstate != STATE_TRIG_STOP && lTriggerLatency > lInputLatency)
+	      ? lTriggerLatency - lInputLatency : 0;
+      const long lLag = pLS->lLayerLag;
+#else
+      const long lLag = 0;
+#endif
+      (void) lLag;
+      //------ albEnd ----------------------------------
 
       // start out with the single cycle as our length as a marker
       loop->lLoopLength = srcloop->lCycleLength;
@@ -2270,7 +2291,13 @@ static LoopChunk* beginMultiply(SooperLooperI *pLS, LoopChunk *loop)
 		  loop->lMarkL = 0;
 		  //loop->lMarkH = (unsigned long) rCurrPos - 1;
 		  //loop->lMarkH = (unsigned long) max (rCurrPos - (lOutputLatency + lInputLatency), 1.0) - 1;
+		  //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+		  long markh = (long) fmod (rCurrPos - (lOutputLatency + lInputLatency + lLag), loop->lLoopLength) - 1;
+#else
 		  long markh = (long) fmod (rCurrPos - (lOutputLatency + lInputLatency), loop->lLoopLength) - 1;
+#endif
+		  //------ albEnd ----------------------------------
 		  //cerr << "Low MARK H: " << markh << endl;
 		  if (markh < 0) markh = 0;
 		  loop->lMarkH = markh;
@@ -2348,6 +2375,21 @@ static LoopChunk * endMultiply(SooperLooperI *pLS, LoopChunk *loop, int nextstat
 	 //loop->dCurrPos -= loop->lStartAdj;
 	 loop->lMarkEndL = (unsigned long) loop->dCurrPos;
 	 loop->lMarkEndH = loop->lLoopLength - 1;
+	 //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+	 // A lagged multiply wrote up to OL + IL + lLayerLag behind the play
+	 // position; the leftover fill above covers only the last OL + IL of
+	 // that (at the next state's unlagged record position).  Fill the
+	 // lLayerLag before it from the source now.
+	 if (pLS->lLayerLag > 0 && loop->lLoopLength > 0) {
+		 const long L = (long) loop->lLoopLength;
+		 const long w = (long) loop->dCurrPos - (lInputLatency + lOutputLatency);
+		 for (long j = 1; j <= pLS->lLayerLag; ++j) {
+			 fillLoops(pLS, loop, (unsigned long) ((((w - j) % L) + L) % L), true);
+		 }
+	 }
+#endif
+	 //------ albEnd ----------------------------------
 
 	 DBG(fprintf(stderr,"%u:%u  Entering %d from MULTIPLY. Length %lu.  %lu cycles\n", pLS->lLoopIndex, pLS->lChannelIndex,nextstate,
 		 loop->lLoopLength, loop->lCycles)); 
@@ -2405,7 +2447,14 @@ static LoopChunk * finishRoundedMultiply(SooperLooperI *pLS, LoopChunk *loop)
 //------ albEnd ----------------------------------
 
 
+//------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+// useTriggerLag: as beginOverdub()'s (TL_OVER_IL_LAYER_FIX, plugin.hpp).
+static LoopChunk * beginInsert(SooperLooperI *pLS, LoopChunk *loop, bool useTriggerLag = false)
+#else
 static LoopChunk * beginInsert(SooperLooperI *pLS, LoopChunk *loop)
+#endif
+//------ albEnd ----------------------------------
 {
    LoopChunk *srcloop = loop;
    int xfadeSamples = (int) (*pLS->pfXfadeSamples);
@@ -2453,6 +2502,20 @@ static LoopChunk * beginInsert(SooperLooperI *pLS, LoopChunk *loop)
       long lTriggerLatency = (long) (*pLS->pfTriggerLatency);
       
       pLS->lFramesUntilInput = (long) lInputLatency - lTriggerLatency;
+      //------ albBegin ----------------------------------
+      // lLag: how much further back than OL + IL the insert writes.
+#if TL_OVER_IL_LAYER_FIX
+      // As beginOverdub(): it reads the input -lFramesUntilInput back, so
+      // it writes that much further back too.
+      pLS->lLayerLag = (useTriggerLag && prevstate != STATE_RECORD
+			&& prevstate != STATE_TRIG_STOP && lTriggerLatency > lInputLatency)
+	      ? lTriggerLatency - lInputLatency : 0;
+      const long lLag = pLS->lLayerLag;
+#else
+      const long lLag = 0;
+#endif
+      (void) lLag;
+      //------ albEnd ----------------------------------
       
       // start out with the single cycle extra as our length
       loop->lLoopLength = srcloop->lLoopLength + srcloop->lCycleLength;
@@ -2500,7 +2563,13 @@ static LoopChunk * beginInsert(SooperLooperI *pLS, LoopChunk *loop)
       }
       
       if (loop->dCurrPos > 0) {
+	      //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+	      long markh = (long) fmod (rCurrPos - (lOutputLatency + lInputLatency + lLag), loop->lLoopLength) - 1;
+#else
 	      long markh = (long) fmod (rCurrPos - (lOutputLatency + lInputLatency), loop->lLoopLength) - 1;
+#endif
+	      //------ albEnd ----------------------------------
 	      if (markh < 0) markh = 0;
 	      loop->lMarkL = 0;
 	      loop->lMarkH = (unsigned long) markh;
@@ -4680,7 +4749,13 @@ runSooperLooper(LADSPA_Handle Instance,
 			      if (loop) {
 				      prevstate = pLS->state;
 
+				      //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+				      loop = beginMultiply(pLS, loop, true);
+#else
 				      loop = beginMultiply(pLS, loop);
+#endif
+				      //------ albEnd ----------------------------------
 				      if (loop)
 					      srcloop = loop->srcloop;
 				      else
@@ -4781,7 +4856,13 @@ runSooperLooper(LADSPA_Handle Instance,
 			      {
 				      prevstate = pLS->state;
 				      
+				      //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+				      loop = beginInsert(pLS, loop, true);
+#else
 				      loop = beginInsert(pLS, loop);
+#endif
+				      //------ albEnd ----------------------------------
 				      if (loop) srcloop = loop->srcloop;
 				      else srcloop = NULL;
 
@@ -6950,11 +7031,24 @@ runSooperLooper(LADSPA_Handle Instance,
 		 lpCurrPos =(unsigned int) fmod(loop->dCurrPos + loop->lStartAdj, srcloop->lLoopLength);
 		 slCurrPos =(long) loop->dCurrPos;
 
+		 //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+		 // lLayerLag further back (TL_OVER_IL_LAYER_FIX).
+		 rCurrPos = fmod (loop->dCurrPos - lOutputLatency - lInputLatency - pLS->lLayerLag, loop->lLoopLength);
+#else
 		 rCurrPos = fmod (loop->dCurrPos - lOutputLatency - lInputLatency, loop->lLoopLength);
+#endif
+		 //------ albEnd ----------------------------------
 		 if (rCurrPos < 0) {
 		    rCurrPos += loop->lLoopLength;
 		 }
+		 //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+		 rpCurrPos = fmod (loop->dCurrPos - lOutputLatency - lInputLatency - pLS->lLayerLag, srcloop->lLoopLength);
+#else
 		 rpCurrPos = fmod (loop->dCurrPos - lOutputLatency - lInputLatency, srcloop->lLoopLength);
+#endif
+		 //------ albEnd ----------------------------------
 		 if (rpCurrPos < 0) {
 		    rpCurrPos += srcloop->lLoopLength;
 		 }
@@ -7132,9 +7226,17 @@ runSooperLooper(LADSPA_Handle Instance,
 				 // This sample is done (its position advanced past it), so
 				 // the next state starts on the next one, not on it again.
 #if MULTIPLY_END_FIX
+#if TL_OVER_IL_LAYER_FIX
+				 // TL_OVER_IL_LAYER_FIX: the record position is lLayerLag
+				 // further back.
+				 if (loop->dCurrPos < (double) loop->lLoopLength + (double) (lInputLatency + lOutputLatency + pLS->lLayerLag)) {
+					 continue;
+				 }
+#else
 				 if (loop->dCurrPos < (double) loop->lLoopLength + (double) (lInputLatency + lOutputLatency)) {
 					 continue;
 				 }
+#endif
 				 backfill = 0;
 				 loop = finishRoundedMultiply(pLS, loop);
 				 ++lSampleIndex;
@@ -7218,11 +7320,24 @@ runSooperLooper(LADSPA_Handle Instance,
 		 lpCurrPos =(unsigned int) fmod(loop->dCurrPos, srcloop->lLoopLength);
 		 lCurrPos =(unsigned int) loop->dCurrPos;
 
+		 //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+		 // lLayerLag further back (TL_OVER_IL_LAYER_FIX).
+		 rCurrPos = fmod (loop->dCurrPos - lOutputLatency - lInputLatency - pLS->lLayerLag, loop->lLoopLength);
+#else
 		 rCurrPos = fmod (loop->dCurrPos - lOutputLatency - lInputLatency, loop->lLoopLength);
+#endif
+		 //------ albEnd ----------------------------------
 		 if (rCurrPos < 0) {
 		    rCurrPos += loop->lLoopLength;
 		 }
+		 //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+		 rpCurrPos = fmod (loop->dCurrPos - lOutputLatency - lInputLatency - pLS->lLayerLag, srcloop->lLoopLength);
+#else
 		 rpCurrPos = fmod (loop->dCurrPos - lOutputLatency - lInputLatency, srcloop->lLoopLength);
+#endif
+		 //------ albEnd ----------------------------------
 		 if (rpCurrPos < 0) {
 		    rpCurrPos += srcloop->lLoopLength;
 		 }

@@ -44,6 +44,7 @@ IL, OL = 1300, 900
 
 class LayerPlacementTestCase(RelSyncLateHitTestCase):
 
+    IL, OL = IL, OL
     TL = 1700                  # k = 400
 
     def setUp(self):
@@ -52,8 +53,8 @@ class LayerPlacementTestCase(RelSyncLateHitTestCase):
         self.looper.set_port(test_engine.Quantize, 0.0)
         self.looper.set_port(test_engine.UseSafetyFeedback, 0.0)
         self.looper.set_port(test_engine.Feedback, 1.0)
-        self.looper.set_port(test_engine.InputLatency, float(IL))
-        self.looper.set_port(test_engine.OutputLatency, float(OL))
+        self.looper.set_port(test_engine.InputLatency, float(self.IL))
+        self.looper.set_port(test_engine.OutputLatency, float(self.OL))
         self.looper.set_port(test_engine.TriggerLatency, float(self.TL))
         self.wait_buffers(4)
 
@@ -65,7 +66,7 @@ class LayerPlacementTestCase(RelSyncLateHitTestCase):
         super().tearDown()
 
     def k(self):
-        return max(0, self.TL - IL)
+        return max(0, self.TL - self.IL)
 
     def base_take(self, length):
         """A take of BASE, `length` frames between the presses; returns
@@ -82,14 +83,14 @@ class LayerPlacementTestCase(RelSyncLateHitTestCase):
         # With TRIGGER_LATENCY_ALL_EDGES and s = IL - TL > 0 the take
         # starts and ends s after each press (same length): use the
         # frames where it really did.
-        shift = max(0, IL - self.TL) if ALL_EDGES else 0
+        shift = max(0, self.IL - self.TL) if ALL_EDGES else 0
         return s0 + shift, s1 + shift
 
     def reachable(self, s1, desired, below=False):
         """The play position at a block start nearest `desired`, at or
         above it (at or below with `below`): block starts give OL + IL +
         whole blocks after the take's end s1."""
-        rr = (IL + OL - s1) % self.buf
+        rr = (self.IL + self.OL - s1) % self.buf
         if below:
             return desired - ((desired - rr) % self.buf)
         return desired + ((rr - desired) % self.buf)
@@ -102,17 +103,17 @@ class LayerPlacementTestCase(RelSyncLateHitTestCase):
         command `frames` later.  Returns (p0, p1, the play position at
         p0)."""
         L = s1 - s0
-        s = max(0, IL - self.TL)
+        s = max(0, self.IL - self.TL)
         if start_pos == "near":
             start_pos = self.reachable(s1, 0)
         elif start_pos == "latency":
             # The layer writes from s after the press, OL + IL behind.
-            start_pos = self.reachable(s1, OL + IL - s, below=True)
+            start_pos = self.reachable(s1, self.OL + self.IL - s, below=True)
         f = -(-(self.looper.sync_clock + 2 * self.buf) // self.buf) * self.buf
         for _ in range(4 * L // self.buf + 8):
             # Play position at sync frame f: playback after the take starts
             # OL + IL into the loop at s1.
-            pos = (f - s1 + IL + OL) % L
+            pos = (f - s1 + self.IL + self.OL) % L
             if (pos == start_pos) if start_pos is not None else (L // 2 <= pos < L // 2 + self.buf):
                 break
             f += self.buf
@@ -146,10 +147,10 @@ class LayerPlacementTestCase(RelSyncLateHitTestCase):
     def check_layer(self, command, state, start_pos=None, frames=None):
         s0, s1 = self.base_take(16000)
         L = s1 - s0
-        self.assertGreater(L, 4 * (OL + IL + self.k()))
+        self.assertGreater(L, 4 * (self.OL + self.IL + self.k()))
         p0, p1, d = self.layer(s0, s1, command, state, start_pos, frames or L // 4)
         layer, base = self.read_loop(s0, s1, command)
-        k, s = self.k(), max(0, IL - self.TL)
+        k, s = self.k(), max(0, self.IL - self.TL)
         # Placement: each layer sample where its input frame was heard.
         wrong = [(pos, g) for pos, g in layer.items() if (g - s0) % L != pos]
         self.assertEqual(wrong[:5], [], f"{len(wrong)} of {len(layer)} layer samples misplaced"
@@ -166,8 +167,12 @@ class LayerPlacementTestCase(RelSyncLateHitTestCase):
         self.assertEqual(len(base), L - len(layer), "old layer damaged")
         # Where the layer starts in the loop: OL + IL + k behind the play
         # position (less s), wrapped if that is before the loop's start.
-        self.assertEqual((got[0] - s0) % L, (d - OL - IL - k + s) % L)
+        self.assertEqual((got[0] - s0) % L, (d - self.OL - self.IL - k + s) % L)
         return d
+
+
+class LayerPlacementTests:
+    """The cases, run by each TL class below."""
 
     def testOverdub(self):
         self.check_layer("OVERDUB", "Overdubbing")
@@ -201,19 +206,17 @@ class LayerPlacementTestCase(RelSyncLateHitTestCase):
 
 
 @unittest.skipUnless(LAYER_FIX, "TL_OVER_IL_LAYER_FIX is 0")
-class TestLayerPlacementTLOverIL(LayerPlacementTestCase):
+class TestLayerPlacementTLOverIL(LayerPlacementTests, LayerPlacementTestCase):
     TL = 1700                  # k = 400
 
 
-class TestLayerPlacementTLEqualIL(LayerPlacementTestCase):
+class TestLayerPlacementTLEqualIL(LayerPlacementTests, LayerPlacementTestCase):
     TL = IL                    # k = 0: the stock path; OVERDUB_WRAP_FILL_FIX only
 
 
-class TestLayerPlacementTLUnderIL(LayerPlacementTestCase):
+class TestLayerPlacementTLUnderIL(LayerPlacementTests, LayerPlacementTestCase):
     TL = 1000                  # waits IL - TL = 300; the stock path
 
-
-del LayerPlacementTestCase    # only the subclasses run
 
 
 if __name__ == "__main__":
