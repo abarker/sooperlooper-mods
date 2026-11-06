@@ -17,6 +17,13 @@ play position runs on from the old one's at the press, so input frame g,
 heard at frame g - IL - OL, belongs at position P(p0) + g - IL - OL - p0.
 Sync and Quantize off; started mid-loop.  The loop is read a whole loop
 after the Multiply ends.
+
+Also two stock fixes (plugin.cc): MULTIPLY_FRONTFILL_FIX (ROADMAP entry
+45), the classes with input_latency unequal to output_latency, which
+left a gap (IL > OL) or an overlap (OL > IL) before the multiply; and
+ROUNDED_MULTIPLY_FILL_FIX (entry 46), testRounded, a two-cycle rounded
+Multiply whose second press copied the old loop over OL + IL recorded
+samples one cycle back.
 """
 
 import unittest
@@ -29,8 +36,6 @@ LAYER_FIX = bool(getattr(test_engine, "TL_OVER_IL_LAYER_FIX", 0))
 
 class MultiplyPlacementTestCase(LayerPlacementTestCase):
 
-    # IL = OL: stock beginMultiply() leaves an IL - OL gap otherwise
-    # (ROADMAP entry 45), not this test's subject.
     IL = OL = 1100
     TL = 1500                  # k = 400
 
@@ -95,9 +100,6 @@ class MultiplyPlacementTests:
         # more samples with the lag (MULTIPLY_END_FIX's wait).
         self.check(True, 16000 // 3)
 
-    @unittest.skip("Rounded Multiply past its first cycle: the end's leftover fill "
-                   "copies the source over OL + IL samples one cycle back "
-                   "(stock): ROADMAP entry 46")
     def testRounded(self):
         self.check(True, 16000 + 16000 // 2)
 
@@ -109,6 +111,19 @@ class TestMultiplyPlacementTLOverIL(MultiplyPlacementTests, MultiplyPlacementTes
 
 class TestMultiplyPlacementTLEqualIL(MultiplyPlacementTests, MultiplyPlacementTestCase):
     TL = 1100                  # k = 0: the stock path
+
+
+class TestMultiplyPlacementILOverOL(MultiplyPlacementTests, MultiplyPlacementTestCase):
+    IL, OL, TL = 1300, 900, 1300
+
+
+class TestMultiplyPlacementOLOverIL(MultiplyPlacementTests, MultiplyPlacementTestCase):
+    IL, OL, TL = 900, 1300, 900
+
+
+@unittest.skipUnless(LAYER_FIX, "TL_OVER_IL_LAYER_FIX is 0")
+class TestMultiplyPlacementILOverOL_TLOverIL(MultiplyPlacementTests, MultiplyPlacementTestCase):
+    IL, OL, TL = 1300, 900, 1700
 
 
 

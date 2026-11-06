@@ -291,6 +291,19 @@ item links to its full description.
   lands in time, and it begins and ends with what was played at the
   presses.
 
+- **No gap before a Multiply when input and output latencies differ**
+  (``MULTIPLY_FRONTFILL_FIX``, on by default).  In stock 1.7.9, with the
+  input latency larger than the output latency, the old loop went silent
+  for the difference just before the multiplied part; with it smaller,
+  the old loop was copied over the first samples of the multiply.  Equal
+  latencies were not affected.
+
+- **A rounded Multiply of more than one cycle keeps all of its
+  recording** (``ROUNDED_MULTIPLY_FILL_FIX``, on by default).  In stock
+  1.7.9, with Round on, the second press copied the old loop over input
+  plus output latency of the new recording (31 ms at 743/743), one or
+  more cycles back.
+
 - **Default loop memory 120 seconds** (was 40).  The engine's ``-t``
   default and slgui's loop time for new loops.  It is rounded up to a
   power of two of samples, about 175 seconds at 48 kHz, 32 MB per
@@ -1631,6 +1644,20 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        Set to 0 to revert to stock behavior, and to the old late Multiply
        end.  A bug fix with an escape hatch, not a tunable: no
        session-file or OSC equivalent.
+   * - ``MULTIPLY_FRONTFILL_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: a Multiply's
+       copy of the old loop ends where the multiply's recording begins,
+       with no gap and no overlap when ``input_latency`` and
+       ``output_latency`` differ.  Set to 0 for stock.
+   * - ``ROUNDED_MULTIPLY_FILL_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: a rounded
+       Multiply end starts no leftover fill, which copied the old loop
+       over recorded samples one or more cycles back in a Multiply longer
+       than one cycle.  Set to 0 for stock.
    * - ``SYNCWDEBUG``
      - ``plugin.cc``
      - *(commented out)*

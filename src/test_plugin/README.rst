@@ -234,13 +234,14 @@ testdef_layer_placement.py
     passes).
 
 testdef_multiply_placement.py
-    Tests for TL_OVER_IL_LAYER_FIX's Multiply half, as above (IL = OL,
-    to keep ROADMAP entry 45 out): every multiplied sample where its
-    input frame was heard, the first one played at the press; unrounded,
-    the last at the second press and the old loop intact after it (the
-    end fills the k samples its leftover fill does not); rounded within
-    one cycle, recorded to the loop's end.  A two-cycle rounded case is
-    skipped for ROADMAP entry 46 (stock).
+    Tests for TL_OVER_IL_LAYER_FIX's Multiply half, as above: every
+    multiplied sample where its input frame was heard, the first one
+    played at the press; unrounded, the last at the second press and the
+    old loop intact after it (the end fills the k samples its leftover
+    fill does not); rounded, recorded to the loop's end, within one cycle
+    and over two (ROUNDED_MULTIPLY_FILL_FIX).  Run at IL = OL and, for
+    MULTIPLY_FRONTFILL_FIX, at IL > OL and OL > IL (no gap or overlap
+    before the multiply).
 
 testdef_insert_placement.py
     Tests for TL_OVER_IL_LAYER_FIX's Insert half: the inserted stretch

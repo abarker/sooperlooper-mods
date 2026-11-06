@@ -617,6 +617,44 @@ unsigned long sl_input_history_samples(unsigned long sample_rate)
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
+// MULTIPLY_FRONTFILL_FIX: compile-time safety switch for a STOCK bug
+// (ROADMAP entry 45; harness, stock 1.7.9 not run).
+//
+// The bug: beginMultiply() ended its front fill (the old loop copied into
+// the new chunk before the multiply's first write) at
+// dCurrPos - (IL - OL) - (OL + IL), while the multiply's first write is at
+// dCurrPos - (OL + IL).  With input_latency > output_latency the IL - OL
+// samples between were never filled: silence in the old loop just before
+// the multiply.  With output_latency > input_latency the fill copied the
+// old loop over the first OL - IL samples the multiply wrote.  No effect
+// when the two are equal.
+//
+// The fix drops the IL - OL (as beginOverdub() and beginInsert() have it,
+// commented out).  Set to 0 to revert to the stock (buggy) behaviour.
+#define MULTIPLY_FRONTFILL_FIX 1
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
+// ROUNDED_MULTIPLY_FILL_FIX: compile-time safety switch for a STOCK bug
+// (ROADMAP entry 46; harness, stock 1.7.9 not run).
+//
+// The bug: endMultiply() starts an OL + IL "leftover" fill at every end.
+// With Round on the multiply runs on to the cycle's end, and the
+// STATE_MULTIPLY loop does that fill at rpCurrPos, the record position
+// modulo the SOURCE loop's length, used as a position in the new loop.
+// Past the multiply's first cycle the two differ by whole cycles, so the
+// fill copied the old loop over OL + IL already-recorded samples one or
+// more cycles back (31 ms at 743/743).  Within the first cycle it only
+// touched samples the multiply then wrote again.
+//
+// The fix: no leftover fill at a rounded end.  A rounded multiply records
+// on to the end, so it writes every position the fill would.  An
+// unrounded end keeps it.  Set to 0 to revert to the stock (buggy)
+// behaviour.
+#define ROUNDED_MULTIPLY_FILL_FIX 1
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
 // SYNCWDEBUG: master switch for ALL debug output in this file.
 // When defined:
 //   - a sentinel file is written at binary-load time.
@@ -2338,7 +2376,11 @@ static LoopChunk* beginMultiply(SooperLooperI *pLS, LoopChunk *loop)
       double rCurrPos = srcloop->dCurrPos;
 
       if (prevstate != STATE_RECORD && prevstate != STATE_TRIG_STOP) {
+	      //------ albBegin ----------------------------------
+#if !MULTIPLY_FRONTFILL_FIX
 	      rCurrPos -= lInputLatency - lOutputLatency;
+#endif
+	      //------ albEnd ----------------------------------
 	      
 	      if (rCurrPos < 0) {
 		      rCurrPos += loop->lLoopLength;
@@ -2423,7 +2465,15 @@ static LoopChunk * endMultiply(SooperLooperI *pLS, LoopChunk *loop, int nextstat
       
       long lInputLatency = (long) (*pLS->pfInputLatency);
       long lOutputLatency = (long) (*pLS->pfOutputLatency);
+      //------ albBegin ----------------------------------
+#if ROUNDED_MULTIPLY_FILL_FIX
+      // Leftover fill only for an unrounded end: a rounded multiply
+      // records on to the end (ROUNDED_MULTIPLY_FILL_FIX).
+      if (*pLS->pfRoundMode == 0) pLS->lFramesUntilFilled = lInputLatency + lOutputLatency;
+#else
       pLS->lFramesUntilFilled = lInputLatency + lOutputLatency; //  to take care of leftover filling
+#endif
+      //------ albEnd ----------------------------------
       
       if (*pLS->pfRoundMode == 0) {
 	 // calculate loop length
