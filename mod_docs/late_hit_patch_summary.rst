@@ -215,6 +215,17 @@ item links to its full description.
   in the loop, and it ends as much before its closing boundary, so it is
   still a whole number of cycles.  See `Sync Pre-Roll`_.
 
+- **Trigger latency at every edge** (``TRIGGER_LATENCY_ALL_EDGES``, new
+  in this fork, on by default).  Stock uses the trigger latency only
+  where an overdub, Multiply, or Insert starts; a recording's start and
+  stop, and the end of an overdub, landed as if the command delay were
+  the input latency.  Now every edge uses it, so with a measured value
+  every recording starts and ends on its presses; an unsynced Trigger
+  plays from the press; and the late-hit and mute windows count from the
+  press.  Set the trigger latency equal to the input latency unless it
+  has been measured (setup guide, "Trigger latency"): autoset's one
+  period puts every edge several milliseconds after its press.
+
 - **Free pre-roll** (``FREE_PREROLL``, new in this fork, off in this
   build, and only with ``TRIGGER_LATENCY_ALL_EDGES`` on).  A recording
   with Sync off keeps the ``free_preroll_ms`` just before the Record
@@ -1593,6 +1604,16 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
      - ``0.0f``
      - Compile-time initial value for ``g_sync_preroll_ms``.  Overridden
        at runtime by the session file or OSC ``/set``.
+   * - ``TRIGGER_LATENCY_ALL_EDGES``
+     - ``plugin.hpp``
+     - ``1``
+     - When 1 (default), ``trigger_latency`` is used at every recording
+       edge, not only where stock uses it: a recording's start and stop
+       and the end of every take or layer land at the press, an
+       unsynced restart starts ``trigger_latency`` + output latency into
+       the loop, and the late-hit, mute, and slack windows count from the
+       press (see ``latency_and_trigger_latency.rst``).  Set to 0 for
+       stock's edges.
    * - ``FREE_PREROLL``
      - ``plugin.hpp``
      - ``0``
@@ -2030,12 +2051,13 @@ delay is what the setting describes.  (An earlier version of this fork set
 ``TriggerLatency`` to 0 for JACK MIDI commands at a nonzero offset, on the
 reasoning that such a command was already placed at the press.  A pedal
 measured with a mic on its switch showed the command 685 samples after the
-press at 256 frames, so that was removed.)  ``TriggerLatency`` is read only
+press at 256 frames, so that was removed.)  Stock reads ``TriggerLatency`` only
 where overdub, multiply and insert (and replace and substitute, through
 overdub) start taking input (``lFramesUntilInput = input_latency −
-trigger_latency``), and where a Rel Sync record that starts at the press
-takes its early start (see `Rel Sync Recordings`_); a plain Sync record,
-the end of an overdub, mute and trigger do not use it.  The setup guide's
+trigger_latency``); this fork also reads it where a Rel Sync record that
+starts at the press takes its early start (see `Rel Sync Recordings`_),
+and by default at every other recording edge, unsynced restart, and
+window (``TRIGGER_LATENCY_ALL_EDGES``).  The setup guide's
 "Trigger latency" section says what value to use.
 
 **MIDI clock on the JACK MIDI input.**  Clock, Start and Stop messages on

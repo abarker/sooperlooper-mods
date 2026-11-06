@@ -54,8 +54,9 @@
 // boundary, from the input history, and ends as much before its closing
 // boundary.  Here, not in plugin.cc, for the LoopChunk field below.
 #define SYNC_PREROLL 1
-// TRIGGER_LATENCY_ALL_EDGES: compile-time switch for a NEW behaviour, 0
-// until tested (ROADMAP entry 39, option B, increment 1).
+// TRIGGER_LATENCY_ALL_EDGES: compile-time switch for a NEW behaviour, on
+// by default since its rig try (ROADMAP entry 39, option B); set to 0 for
+// stock's edges.
 // trigger_latency is taken to mean exactly the command latency: the time
 // from the press to the engine acting on the command.  Stock uses it only
 // at overdub, Multiply and Insert starts (waiting input_latency -
@@ -79,7 +80,7 @@
 // Trigger and Once restarts play from the press -- (d).  The late-hit,
 // mute, and slack windows are counted from the press -- (e).  Here, not
 // in plugin.cc, for the SooperLooperI fields below.
-#define TRIGGER_LATENCY_ALL_EDGES 0
+#define TRIGGER_LATENCY_ALL_EDGES 1
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------

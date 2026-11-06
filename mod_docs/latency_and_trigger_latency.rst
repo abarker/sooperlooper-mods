@@ -112,7 +112,10 @@ overdub (Replace and Substitute go through the same code), the start of
 a Multiply, and the start of an Insert.  This fork adds a fourth: a Rel
 Sync recording that starts at the press starts that much earlier, taking
 the missing audio from SooperLooper's input history, and ends as much
-earlier (see ``late_hit_patch_summary.rst``).
+earlier (see ``late_hit_patch_summary.rst``).  And by default this fork
+uses it at every recording edge, for where a restart starts, and for
+the late-hit, mute, and slack windows (see `Trigger latency at every
+edge`_).
 
 
 What the setting means
@@ -188,9 +191,14 @@ delay that varies from press to press, is left as an error.
 Where each recording edge lands
 ===============================
 
-Measured on a dummy JACK server with this fork's engine: input latency
-743, output latency 743, sync and quantize off, no crossfade, commands
-sent as JACK MIDI at exact frames.  The input was noise; each edge was
+This section is stock's behaviour, which this fork keeps with the option
+``TRIGGER_LATENCY_ALL_EDGES`` off.  By default (the option on) every edge
+in the table lands at P + (CL - ``trigger_latency``); see `Trigger
+latency at every edge`_.
+
+Measured on a dummy JACK server with this fork's engine, the option off:
+input latency 743, output latency 743, sync and quantize off, no
+crossfade, commands sent as JACK MIDI at exact frames.  The input was noise; each edge was
 found by matching the loop's output against the input.  Each figure is
 where the edge lands in the performer's time, relative to the press, for
 a command latency of CL.
@@ -238,9 +246,11 @@ The same measurements, and a few more:
 * **With sync on**, the late-hit window is measured from the command's
   arrival: a press 196 ms after the beat started at once and one at
   204 ms waited for the next beat (window 200 ms), at a trigger latency
-  of 0 and of 685 alike.
+  of 0 and of 685 alike.  With the option on, it is measured from the
+  press.
 * **Playback** after a record stop, and after a Trigger, starts IL + OL
-  into the take whatever the trigger latency.
+  into the take whatever the trigger latency.  With the option on, a
+  Trigger with sync off starts ``trigger_latency`` + OL in.
 
 
 Should an overdub use the same value at both ends?
@@ -253,12 +263,13 @@ timing.  A plain recording also sets the loop's length, so its start and
 stop have to move together; an overdub has no such constraint.
 
 Even so, both ends mark where the performer meant the layer to begin and
-end, and both should rest on the same estimate of CL.  At present the start
+end, and both should rest on the same estimate of CL.  In stock the start
 uses ``trigger_latency`` and the end uses IL.  When the two differ, the end
 cuts off the last IL - ``trigger_latency`` before the press that ends it
 (if positive) or adds that much after it (if negative).  For an overdub that
 is mild, especially with a crossfade.  For Replace the end also decides
-where the original comes back, so it shows a little more.
+where the original comes back, so it shows a little more.  This fork's
+default uses ``trigger_latency`` at both ends.
 
 
 The real-time limit on playback
@@ -288,7 +299,10 @@ Pe + CL + OL:
 SooperLooper deals with this by starting playback IL + OL into the loop,
 so the loop is heard in phase from its first sample on, and the first
 IL + OL of the loop is heard from the second pass on.  Stock does this
-after a record stop and the other record endings.
+after a record stop and the other record endings.  (With
+``TRIGGER_LATENCY_ALL_EDGES`` on, the take ends at Pe + (CL -
+``trigger_latency``) instead, and the first pass is in phase all the
+same.)
 
 Stock does not do it everywhere:
 
@@ -324,7 +338,8 @@ Partly by construction, partly by the hardware:
 So ``trigger_latency`` = ``input_latency`` is a reasonable guess when CL
 has not been measured, and much closer than one period in the example
 setup.  It also makes every edge in the table above rest on the same
-assumption.  It is still a guess.
+assumption, and puts every edge where stock's would be, with the option
+``TRIGGER_LATENCY_ALL_EDGES`` on or off.  It is still a guess.
 
 
 Measuring CL - IL
@@ -338,7 +353,8 @@ command CL after it, so for each press
     CL - IL = command frame - click frame
 
 with no latency setting involved.  The value for ``trigger_latency`` that
-puts an overdub start exactly on the press is then
+puts an overdub start exactly on the press (and, by default in this
+fork, every edge) is then
 
     trigger_latency = input_latency setting + (command frame - click frame)
 
@@ -357,49 +373,62 @@ The ``sllatency`` tool does not measure this yet: it measures the audio round tr
 shows the current ``trigger_latency``, and leaves it unchanged.
 
 
+Trigger latency at every edge
+=============================
+
+By default this fork uses ``trigger_latency`` at every recording edge,
+not only at the starts stock uses it for: every edge waits
+``input_latency - trigger_latency`` after its command, or takes from the
+input history when that is negative, so it lands at P + (CL -
+``trigger_latency``).  With a measured value, every edge lands on its
+press.  The option ``TRIGGER_LATENCY_ALL_EDGES`` in ``src/plugin.hpp``
+turns this off (0) for stock's edges.
+
+It covers a record's own start and stop with sync off, and every end of
+a take or a layer that acts as soon as its command arrives (with sync on
+too, where the command acts at once).  Where ``input_latency`` is
+larger, those edges wait; the command's own effect, such as a mute or a
+new layer, comes that much later as well, and a restart in the slack
+window keeps the loop's phase.  Where ``trigger_latency`` is larger, a
+take starts that much early, from the input history, and every end of
+it is cut back by the same amount, so its length is still the interval
+between the presses and playback stays in phase.  The pre-rolls work
+the same way: a take that starts ``sync_preroll_ms`` or
+``rel_sync_preroll_ms`` early also ends that much early (see
+``late_hit_patch_summary.rst``).  Overdub, Replace, Substitute,
+Multiply, and Insert need nothing more for this: with
+``trigger_latency`` larger, they already read the input from the press,
+and this fork writes it where it was heard (stock wrote it the
+difference late).
+
+A restart that ends nothing (Trigger, a oneshot, or ``mute_trigger``
+from Mute, with sync off) starts ``trigger_latency`` + OL into the loop
+instead of IL + OL, as it happened at the press.  Every window (the
+late-hit windows, the mute window, and the slack window in which a
+Trigger or oneshot with sync on acts at once) is decided from the
+press: it is ``trigger_latency`` longer, counted to the command's
+arrival.  Where the loop is placed still counts to the arrival.
+
+The value matters more than in stock.  Set too low, every edge lands
+after its press: with autoset's one period (256) in the example setup,
+CL - 256 = 429 samples (9 ms) after, where stock's record start and stop
+land 58 before.  A recording then loses the attack of a note struck with
+the Record press, and takes in the first 9 ms after the stop press.
+When CL has not been measured, ``trigger_latency`` = ``input_latency``
+is the better guess (see `Why CL tends to be close to IL`_): the edges
+then land where stock's do.
+
+
 Possible changes
 ================
 
-The first is partly built, as a compile-time option that is off by
-default; the rest are not built.  Everything above describes the default.
+The first is built, as a compile-time option that is off by default; the
+second is not built.  Everything above describes the default.
 
-* **Use** ``trigger_latency`` **at every recording edge**: record start
-  and stop, and the ends of overdub, Replace, and Substitute, each
-  waiting ``input_latency - trigger_latency`` after its command (or taking
-  from the input history when that is negative), as the Rel Sync early
-  start already does.  Exact with a measured value; with the default of
-  one period, plain takes would start and stop several milliseconds
-  *after* the presses on a pedal like the example's, worse than now.  So
-  it would need a way to measure CL first.
-
-  The option ``TRIGGER_LATENCY_ALL_EDGES`` in ``src/plugin.hpp`` does
-  this for a record's own start and stop with sync off, and for every
-  end of a take or a layer that acts as soon as its command arrives
-  (with sync on too, where the command acts at once).  Where
-  ``input_latency`` is larger, those edges wait; the command's own
-  effect, such as a mute or a new layer, comes that much later as well,
-  and a restart in the slack window keeps the loop's phase.  Where
-  ``trigger_latency`` is larger, a take starts that much early, from the
-  input history, and every end of it is cut back by the same amount, so
-  its length is still the interval between the presses and playback
-  stays in phase.  The pre-rolls work the same way: a take that starts
-  ``sync_preroll_ms`` or ``rel_sync_preroll_ms`` early also ends that
-  much early (see ``late_hit_patch_summary.rst``).  Overdub, Replace,
-  Substitute, Multiply, and Insert need no option for this: with
-  ``trigger_latency`` larger, they already read the input from the
-  press, and this fork writes it where it was heard (stock wrote it the
-  difference late).  With the option on, a restart that ends nothing
-  (Trigger, a oneshot, or ``mute_trigger`` from Mute, with sync off)
-  starts ``trigger_latency`` + OL into the loop instead of IL + OL, as it
-  happened at the press; and every window (the late-hit windows, the
-  mute window, and the slack window in which a Trigger or oneshot with
-  sync on acts at once) is decided from the press: it is
-  ``trigger_latency`` longer, counted to the command's arrival.  Where the
-  loop is placed still counts to the arrival.
-
-  A second option, ``FREE_PREROLL`` (also in ``src/plugin.hpp``, off, and
-  only with ``TRIGGER_LATENCY_ALL_EDGES`` on), gives takes with sync off
-  a pre-roll: the global setting ``free_preroll_ms`` counts as extra
+* **A pre-roll for takes with sync off.**  The option ``FREE_PREROLL``
+  (also in ``src/plugin.hpp``, off, and only with
+  ``TRIGGER_LATENCY_ALL_EDGES`` on) gives takes with sync off a
+  pre-roll: the global setting ``free_preroll_ms`` counts as extra
   command latency at both edges of such a take.  It starts that much
   before the press, from the input history, and ends that much before
   the stop press, so its length is still the interval between the

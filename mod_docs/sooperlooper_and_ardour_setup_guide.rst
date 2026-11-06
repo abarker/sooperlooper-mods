@@ -868,48 +868,59 @@ resulting ~782-sample offset visible when zoomed in:
    :alt: Zoomed view showing ~782-sample offset between overdubbed and loop beats
    :target: images/overdub_error_example_test_zoomed.png
 
-2.9 Trigger latency (recording starts)
----------------------------------------
+2.9 Trigger latency (where recordings start and end)
+-----------------------------------------------------
 
 SooperLooper has a third latency setting, the **trigger latency**, which is how
-long a command takes to reach SooperLooper after you press the pedal.  It
-affects only the moment some recordings start:
+long a command takes to reach SooperLooper after you press the pedal.  In
+this fork it decides where every recording starts and ends relative to
+your presses:
 
-* an overdub, and Multiply, Insert, Replace, and Substitute, which start
-  the same way;
-* with Relative Sync, a recording that starts at the press: this fork
-  starts it earlier by the trigger latency, so the notes you played as you
-  pressed are in the loop.  It ends that much earlier too, so the loop is
-  still a whole number of cycles.  The pre-roll settings,
+* a recording's start and stop;
+* the start and end of an overdub, and of Multiply, Insert, Replace, and
+  Substitute;
+* with Relative Sync, a recording that starts at the press: it starts
+  earlier by the trigger latency, from the input history, so the notes you
+  played as you pressed are in the loop.  It ends that much earlier too,
+  so the loop is still a whole number of cycles.  The pre-roll settings,
   ``sync_preroll_ms`` and ``rel_sync_preroll_ms``, work the same way: a
   recording that starts early ends as much early (see
   ``late_hit_patch_summary.rst``).
 
-It does not change where recorded material lands in the loop, which the input
-and output latency settings determine.  It is not used for plain recording, the
-end of an overdub, Mute, or Trigger.
+It also sets where a Trigger with Sync off starts playing, and the
+late-hit and mute windows count from your press.  It does not change a
+loop's length (the time between your presses) or where recorded material
+lands in the loop, which the input and output latency settings
+determine.  (Stock SooperLooper uses it only for the start of an overdub
+and the commands that start the same way.)
 
-Set too low, an overdub starts a little after your press: a note you
-strike right as you press loses the start of its attack.  Set too high,
-the overdub takes in a little of what you played just before the press.
+Set too low, every recording starts and ends a little after your
+presses: a note you strike right as you press Record loses the start of
+its attack, and the loop takes in a little of what you played after the
+stop press.  Set too high, it starts and ends a little before them.
 
-**The default is close enough for most playing.**  Autoset (the
-"Automatically set Latency Compensation Values" box in slgui's
-**Preferences -> Latency/Misc**), which is on for a new loop, sets the
-trigger latency to one JACK period, the buffer size.  When you turn
-autoset off to enter measured input and output latencies (section 2.6),
-the trigger latency keeps that value.  One period is the least the delay
-can be: JACK hands MIDI from a hardware port on a period later, as it
-does audio.  The pedal, the MIDI cable, and the interface add more, so
-with one period an overdub never takes in sound from before the
-press, and at worst starts a few milliseconds late.
+**Set it equal to the input latency unless you have measured it.**
+Autoset (the "Automatically set Latency Compensation Values" box in
+slgui's **Preferences -> Latency/Misc**), which is on for a new loop,
+sets the trigger latency to one JACK period, the buffer size.  One period
+is the least the delay can be (JACK hands MIDI from a hardware port on a
+period later, as it does audio), but the pedal, the MIDI cable, and the
+interface add more: with one period, recordings start and end several
+milliseconds after your presses (9 ms in the example of
+``latency_and_trigger_latency.rst``).  The delay of a pedal and the input
+latency are often close, so once you have turned autoset off and
+entered your input and output latencies (section 2.6), set the trigger
+latency to the same value as the input latency.  Recordings then start
+and end where stock SooperLooper's plain recordings do.
+``latency_and_trigger_latency.rst`` explains how to measure the exact
+value.
 
-Set it by hand in two cases:
+Set it by hand in these cases too:
 
-* **The buffer size changed while autoset was off.**  The value is still
-  the old period.
-* **The session holds 0**, as some older sessions do.  Every overdub then
-  starts the whole command delay late.
+* **The buffer size changed.**  The input latency changes with it; set
+  the trigger latency to match again.
+* **The session holds 0**, as some older sessions do.  Every recording
+  then starts and ends the whole command delay late.
 
 **One value for all commands.**  The trigger latency applies to every
 command the loop receives, from the pedal, from slgui's buttons, or from
