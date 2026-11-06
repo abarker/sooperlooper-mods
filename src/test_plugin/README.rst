@@ -6,6 +6,67 @@ plugin.cc via SWIG and runs each looper instance as a real JACK client,
 taking it through its states from Python.
 
 
+What the tests check, from the performer's side
+-----------------------------------------------
+
+The tests play the looper the way a performer would: they press its
+commands at exact moments and feed it input, then read back what it
+recorded and what it plays.  The input is usually a ramp or a constant,
+so every recorded sample says which moment of the input it came from.
+Most checks are therefore exact to the sample, not approximate.
+
+What they check:
+
+- **Where recordings start and end.**  A recording, overdub, Replace,
+  Substitute, Multiply, or Insert begins and ends with what was played
+  at the presses, with the trigger latency below, equal to, and above
+  the input latency.  With Sync on, a recording lands on the beat, and a
+  press a little after the beat counts as on it.  The sync pre-roll and
+  the free pre-roll start a recording early by the set amount.
+- **How long loops are.**  With Sync off, a loop is as long as the time
+  between the presses.  With Sync on, it is a whole number of cycles.
+  Multiply and Insert add whole cycles.
+- **Whether playback is in time.**  What is heard lines up with what was
+  played: on the first pass after a recording, and after every restart
+  (Trigger, ``mute_trigger``, Once), whether it acts at once, in the
+  slack window, or on the beat, including several restarts in a row.
+  The beats a loop sends to other loops are checked too.
+- **That nothing is lost.**  Every sample of a new layer is the input
+  played at that point; the layers underneath are intact; there are no
+  silent gaps at a Multiply's end, around an Insert, or where an overdub
+  crosses the loop's start; a Trigger does not empty the loop.
+- **Which presses count.**  Which presses are corrected as late hits
+  and which wait for the next beat, with the window's edge exact, for
+  Record, Mute, and the commands that end a recording.
+- **States and safety.**  The state each command leads to from each
+  state; the cancel, undo, and redo commands; the record failsafe; a
+  recording that runs out of memory ends without a crash; the two
+  channels of a stereo loop stay together.
+
+What they do not check (see also `Not covered`_):
+
+- **The real delays.**  "On the press" means on the press as the input,
+  output, and trigger latency settings describe it.  Whether those
+  settings match the hardware is for ``sllatency`` and measurements on
+  the rig.
+- **How it sounds.**  The crossfade is one sample in almost every test,
+  so fade shapes, clicks at a loop's seam or a layer's edges, and level
+  changes there are mostly not checked.  The exception: a Record started
+  or stopped late on the beat, with a 64-sample fade, must play back
+  flat.  Levels are otherwise checked only as exact copies or as "not
+  silent".
+- **The rest of the system.**  Several loops playing together, timing
+  jitter from a real sync source (beats are injected exactly), MIDI
+  through the remapper, slgui, saving and loading sessions, and
+  real-time performance (xruns).
+- **Some modes.**  A quantized Insert, and rate changes, Reverse, and
+  Scratch beyond the moment they end a recording.
+
+The dummy-server probes outside this directory (``rig_probes/``) cover
+part of the second list: they run the whole engine, with JACK MIDI
+presses, on a private server.
+
+
 Dependencies
 ------------
 
@@ -321,6 +382,15 @@ testdef_eighth_cycle_runaway.py
 
 Not covered
 -----------
+
+Besides what `What the tests check, from the performer's side`_ lists:
+the crossfade (``FadeSamples``) is left at 0, which plugin.cc treats as
+1 sample, in every test but testdef_late_hit.py's late-take cases (64
+and longer; a constant take must play back flat, so a misplaced fade
+dips or overlays) and testdef_multiply_end.py (64; checks for silence
+only).  Elsewhere a fade that is missing, misplaced, or the wrong length
+passes; only a fade level left at 0 or 1 shows, as lost or doubled
+content.
 
 The harness builds plugin.cc but not looper.cpp, so two late-hit details
 that looper.cpp handles are untested here:
