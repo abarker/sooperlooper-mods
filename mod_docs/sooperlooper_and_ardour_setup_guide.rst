@@ -879,7 +879,11 @@ affects only the moment some recordings start:
   the same way;
 * with Relative Sync, a recording that starts at the press: this fork
   starts it earlier by the trigger latency, so the notes you played as you
-  pressed are in the loop.
+  pressed are in the loop.  It ends that much earlier too, so the loop is
+  still a whole number of cycles.  The pre-roll settings,
+  ``sync_preroll_ms`` and ``rel_sync_preroll_ms``, work the same way: a
+  recording that starts early ends as much early (see
+  ``late_hit_patch_summary.rst``).
 
 It does not change where recorded material lands in the loop, which the input
 and output latency settings determine.  It is not used for plain recording, the
@@ -906,6 +910,12 @@ Set it by hand in two cases:
   the old period.
 * **The session holds 0**, as some older sessions do.  Every overdub then
   starts the whole command delay late.
+
+**One value for all commands.**  The trigger latency applies to every
+command the loop receives, from the pedal, from slgui's buttons, or from
+any other program over OSC.  Set it for your pedal.  Commands from slgui
+and over OSC take a different time to arrive, so a recording started
+from slgui lands a little off; for mouse clicks that rarely matters.
 
 ``sllatency`` shows the current value when it starts.  The period is
 **Frames/Period** in QjackCtl's setup dialog; ``jack_bufsize`` also prints

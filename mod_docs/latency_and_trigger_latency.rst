@@ -140,6 +140,23 @@ is still the least CL can be.  A new loop starts with autoset on, so a
 loop whose setting was never touched has one period.
 
 
+Commands from other sources
+===========================
+
+``trigger_latency`` is one value per loop, used for every command
+whatever its source: JACK MIDI from a pedal, ALSA MIDI, and OSC,
+including slgui's buttons, which send OSC.  Nothing measures or
+corrects each source on its own, and their delays differ.  A command
+over OSC or ALSA MIDI reaches SooperLooper after the sender's own delay
+(for a mouse click, the time slgui takes to send it), and is then applied
+exactly one period later (see the next section).  A pedal's command over
+this fork's JACK MIDI input arrives at its exact frame after the device's
+delay.  So with ``trigger_latency`` measured for the pedal, edges from
+slgui or another OSC program land off by the difference.  Clicks in
+slgui are rarely that timing-critical; a setup that plays from OSC would
+want its own value instead.
+
+
 Sources of jitter and how they are handled
 ==========================================
 
@@ -356,14 +373,22 @@ default; the rest are not built.  Everything above describes the default.
   it would need a way to measure CL first.
 
   The option ``TRIGGER_LATENCY_ALL_EDGES`` in ``src/plugin.hpp`` does
-  this where ``input_latency`` is larger than ``trigger_latency``: a
-  record's own start and stop with sync off, and every end of a take or
-  a layer that acts as soon as its command arrives (with sync on too,
-  where the command acts at once).  The command's own effect, such as a
-  mute or a new layer, comes that much later as well; a restart in the
-  slack window keeps the loop's phase.  Not covered yet: a
-  ``trigger_latency`` larger than ``input_latency``, and restarts that
-  end nothing.
+  this for a record's own start and stop with sync off, and for every
+  end of a take or a layer that acts as soon as its command arrives
+  (with sync on too, where the command acts at once).  Where
+  ``input_latency`` is larger, those edges wait; the command's own
+  effect, such as a mute or a new layer, comes that much later as well,
+  and a restart in the slack window keeps the loop's phase.  Where
+  ``trigger_latency`` is larger, a take starts that much early, from the
+  input history, and every end of it is cut back by the same amount, so
+  its length is still the interval between the presses and playback
+  stays in phase.  The pre-rolls work the same way: a take that starts
+  ``sync_preroll_ms`` or ``rel_sync_preroll_ms`` early also ends that
+  much early (see ``late_hit_patch_summary.rst``).  Overdub, Replace,
+  Substitute, Multiply, and Insert need no option for this: with
+  ``trigger_latency`` larger, they already read the input from the
+  press, and this fork writes it where it was heard (stock wrote it the
+  difference late).  Not covered yet: restarts that end nothing.
 * **A measuring mode in** ``sllatency``: presses beside a mic, reporting
   CL - IL and offering to set ``trigger_latency``.
 * **The late-hit window** measures lateness from the command's arrival,
