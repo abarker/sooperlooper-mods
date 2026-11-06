@@ -223,8 +223,9 @@ item links to its full description.
   every recording starts and ends on its presses; an unsynced Trigger
   plays from the press; and the late-hit and mute windows count from the
   press.  Set the trigger latency equal to the input latency unless it
-  has been measured (setup guide, "Trigger latency"): autoset's one
-  period puts every edge several milliseconds after its press.
+  has been measured (setup guide, "Trigger latency"): one period, what
+  autoset sets when it reads input latency 0, puts every edge several
+  milliseconds after its press.
 
 - **Free pre-roll** (``FREE_PREROLL``, new in this fork, off in this
   build, and only with ``TRIGGER_LATENCY_ALL_EDGES`` on).  A recording
@@ -355,6 +356,15 @@ item links to its full description.
   beat, a threshold, or the trigger latency's wait) and fades out over
   the fade length as the take starts.  A muted loop stays silent.  With
   a threshold set, the loop plays until the input crosses it.
+
+- **Autoset's trigger latency follows the input latency**
+  (``AUTOSET_TL_FROM_INPUT``, on by default).  In stock 1.7.9, autoset
+  sets the trigger latency to one period whatever input latency it
+  reads; with trigger latency at every edge, a larger input latency
+  then puts every edge that much after its press.  Now autoset sets the
+  input latency it reads, or one period if that is larger.  Where
+  autoset reads input latency 0 (loops connected individually), it
+  still sets one period.  Hand-set values are not affected.
 
 - **Default loop memory 120 seconds** (was 40).  The engine's ``-t``
   default and slgui's loop time for new loops.  It is rounded up to a
@@ -1759,6 +1769,13 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        while a loop is heard keeps the loop playing until the take
        starts, then fades it out over ``fade_samples``, instead of
        cutting it off at the press.  Set to 0 for stock.
+   * - ``AUTOSET_TL_FROM_INPUT``
+     - ``looper.cpp``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: with autoset
+       on, the trigger latency is the input latency autoset reads, or one
+       period if that is larger, instead of always one period.  Set to 0
+       for stock.
    * - ``MULTIPLY_END_FIX``
      - ``plugin.cc``
      - ``1``

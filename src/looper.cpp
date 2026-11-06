@@ -635,6 +635,11 @@ void Looper::set_disable_latency_compensation(bool val)
 	}
 }
 
+//------ albBegin ----------------------------------
+// See the albBegin block in recompute_latencies().
+#define AUTOSET_TL_FROM_INPUT 1
+//------ albEnd ----------------------------------
+
 void
 Looper::recompute_latencies()
 {
@@ -660,8 +665,20 @@ Looper::recompute_latencies()
 			}
 		}
 
+		//------ albBegin ----------------------------------
+		// AUTOSET_TL_FROM_INPUT: stock fix, on (ROADMAP entry 39 follow-up).
+		// STOCK: trigger latency = one period, whatever the input latency.
+		// With TRIGGER_LATENCY_ALL_EDGES that puts every edge (IL - period)
+		// after the press when IL is larger.  Now max(IL, period): never
+		// below stock's value, and IL when autoset found one.
+		// Set to 0 to revert to the stock behaviour.
+#if AUTOSET_TL_FROM_INPUT
+		if (ports[InputLatency] > ports[TriggerLatency])
+			ports[TriggerLatency] = ports[InputLatency];
+#endif
+		//------ albEnd ----------------------------------
 	}
-	
+
 	if (_disable_latency) {
 		ports[TriggerLatency] = 0; // should we?
 		ports[InputLatency] = 0;

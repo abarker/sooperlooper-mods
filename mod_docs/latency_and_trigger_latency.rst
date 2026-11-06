@@ -142,6 +142,15 @@ fork's JACK MIDI input the period comes from JACK instead, so one period
 is still the least CL can be.  A new loop starts with autoset on, so a
 loop whose setting was never touched has one period.
 
+This fork's autoset (``AUTOSET_TL_FROM_INPUT``, on) sets the input
+latency it reads instead, when that is larger than a period: CL tends to
+be close to IL (see `Why CL tends to be close to IL`_), and with trigger
+latency at every edge a value of one period puts every edge IL - period
+after its press.  Where autoset reads input latency 0, as on loops
+connected individually, it still sets one period.  Commands from slgui
+and OSC take about one period to arrive, so with the larger value their
+edges land up to IL - period before the click.
+
 
 Commands from other sources
 ===========================
@@ -413,7 +422,8 @@ press: it is ``trigger_latency`` longer, counted to the command's
 arrival.  Where the loop is placed still counts to the arrival.
 
 The value matters more than in stock.  Set too low, every edge lands
-after its press: with autoset's one period (256) in the example setup,
+after its press: with one period (256, what autoset sets when it reads
+input latency 0) in the example setup,
 CL - 256 = 429 samples (9 ms) after, where stock's record start and stop
 land 58 before.  A recording then loses the attack of a note struck with
 the Record press, and takes in the first 9 ms after the stop press.

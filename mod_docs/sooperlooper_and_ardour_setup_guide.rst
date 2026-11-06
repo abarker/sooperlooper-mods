@@ -902,12 +902,15 @@ stop press.  Set too high, it starts and ends a little before them.
 **Set it equal to the input latency unless you have measured it.**
 Autoset (the "Automatically set Latency Compensation Values" box in
 slgui's **Preferences -> Latency/Misc**), which is on for a new loop,
-sets the trigger latency to one JACK period, the buffer size.  One period
-is the least the delay can be (JACK hands MIDI from a hardware port on a
-period later, as it does audio), but the pedal, the MIDI cable, and the
-interface add more: with one period, recordings start and end several
-milliseconds after your presses (9 ms in the example of
-``latency_and_trigger_latency.rst``).  The delay of a pedal and the input
+sets the trigger latency to the input latency it reads, or to one JACK
+period, the buffer size, if that is larger.  When autoset reads the
+input latency correctly, that is already the value suggested here.  When
+it reads 0, as it does for loops connected individually (section 2.6),
+it sets one period.  One period is the least the delay can be (JACK
+hands MIDI from a hardware port on a period later, as it does audio),
+but the pedal, the MIDI cable, and the interface add more: with one
+period, recordings start and end several milliseconds after your presses
+(9 ms in the example of ``latency_and_trigger_latency.rst``).  The delay of a pedal and the input
 latency are often close, so once you have turned autoset off and
 entered your input and output latencies (section 2.6), set the trigger
 latency to the same value as the input latency.  Recordings then start
