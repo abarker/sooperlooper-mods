@@ -366,6 +366,27 @@ item links to its full description.
   autoset reads input latency 0 (loops connected individually), it
   still sets one period.  Hand-set values are not affected.
 
+- **Autoset sees latency reported by other programs**
+  (``JACK_LATENCY_RANGE_FIX``, on by default).  Stock 1.7.9 reads port
+  latency with a JACK call deprecated since about 2011, which does not
+  see latency that a program between the interface and SooperLooper
+  reports (a plugin host, a DAW): through one, autoset read input
+  latency 0.  Now it uses JACK's latency ranges (the largest value), as
+  DAWs do.  Wired straight to the interface the values are the same as
+  before.  A JACK too old to have the range call builds with the old
+  one.
+
+- **``-S`` selects the JACK server** (``JACK_SERVER_NAME_FIX``, on by
+  default).  In stock 1.7.9, ``-S`` / ``--jack-server-name`` was
+  ignored, and the engine joined the server named by
+  ``JACK_DEFAULT_SERVER``, or the default one.  Now it joins the named
+  server.
+
+- **Builds need ``jack_client_open()``.**  Stock 1.7.9 fell back to the
+  deprecated ``jack_client_new()`` when ``configure`` did not find it;
+  that path is removed, and ``configure`` stops with a message instead.
+  Every JACK from about 2006 on, and every jack2, has it.
+
 - **Default loop memory 120 seconds** (was 40).  The engine's ``-t``
   default and slgui's loop time for new loops.  It is rounded up to a
   power of two of samples, about 175 seconds at 48 kHz, 32 MB per
@@ -1776,6 +1797,21 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        on, the trigger latency is the input latency autoset reads, or one
        period if that is larger, instead of always one period.  Set to 0
        for stock.
+   * - ``JACK_LATENCY_RANGE_FIX``
+     - ``jack_audio_driver.cpp``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: autoset reads
+       port latency with ``jack_port_get_latency_range()`` (capture range
+       for inputs, playback range for outputs, the max) instead of the
+       deprecated ``jack_port_get_total_latency()``, which misses latency
+       reported by clients in between.  Used only when ``configure``
+       finds the range call.  Set to 0 for stock.
+   * - ``JACK_SERVER_NAME_FIX``
+     - ``jack_audio_driver.cpp``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: ``-S`` selects
+       the JACK server (``JackServerName`` passed to
+       ``jack_client_open()``).  Set to 0 for stock, which ignores ``-S``.
    * - ``MULTIPLY_END_FIX``
      - ``plugin.cc``
      - ``1``

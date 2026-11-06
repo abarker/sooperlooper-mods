@@ -220,8 +220,16 @@ then
     dnl test with JACK_LIBS alone, whatever the library is called.
     alb_save_LIBS="$LIBS"
     LIBS="$JACK_LIBS $LIBS"
+    dnl ROADMAP entry 50: jack_client_open() is now required (the
+    dnl jack_client_new() path is gone; in JACK since about 2006), and the
+    dnl latency-range API is used when present (since about 2011), else
+    dnl the deprecated jack_port_get_total_latency().
     AC_CHECK_FUNC(jack_client_open,
-                  [ AC_DEFINE([HAVE_JACK_CLIENT_OPEN], 1, [Have newer JACK connect call])])
+                  [ AC_DEFINE([HAVE_JACK_CLIENT_OPEN], 1, [Have newer JACK connect call])],
+                  [ AC_MSG_ERROR([*** JACK has no jack_client_open(); SooperLooper needs a newer JACK (JACK1 from about 2006, or any jack2)]) ])
+    AC_CHECK_FUNC(jack_port_get_latency_range,
+                  [ AC_DEFINE([HAVE_JACK_PORT_GET_LATENCY_RANGE], 1, [Have the JACK latency-range API])],
+                  [ AC_MSG_WARN([JACK has no jack_port_get_latency_range(); autoset will use the deprecated jack_port_get_total_latency()]) ])
     LIBS="$alb_save_LIBS"
     dnl ------ albEnd ----------------------------------
     fi

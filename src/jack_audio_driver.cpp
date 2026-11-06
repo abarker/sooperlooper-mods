@@ -17,10 +17,41 @@
 **  
 */
 
+//------ albBegin ----------------------------------
+// config.h explicitly: HAVE_JACK_PORT_GET_LATENCY_RANGE below must not
+// depend on another header happening to include it.
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+//------ albEnd ----------------------------------
+
 #include <string>
 #include <iostream>
 
 #include <jack/jack.h>
+
+//------ albBegin ----------------------------------
+// ROADMAP entry 50: the deprecated JACK calls, and a stock -S bug.
+//
+// JACK_LATENCY_RANGE_FIX: stock fix, on.  get_input_port_latency() and
+// get_output_port_latency() (what autoset reads) used the deprecated
+// jack_port_get_total_latency(), which does not see latency that a
+// client between the hardware and SooperLooper reports through the
+// latency-range API (a plugin host, Ardour): autoset read 0 through such
+// a client.  Now jack_port_get_latency_range(), the capture range for an
+// input port and the playback range for an output port, taking the max
+// (as Ardour does).  Falls back to the old call when configure finds no
+// jack_port_get_latency_range() (JACK before about 2011).
+// Set to 0 to revert to the stock behaviour.
+#define JACK_LATENCY_RANGE_FIX 1
+//
+// JACK_SERVER_NAME_FIX: stock fix, on.  -S / --jack-server-name was
+// ignored: the name went to jack_client_open() without JackServerName
+// in the options, so JACK never read it, and the engine went to
+// $JACK_DEFAULT_SERVER or the default server.
+// Set to 0 to revert to the stock behaviour.
+#define JACK_SERVER_NAME_FIX 1
+//------ albEnd ----------------------------------
 
 #include "jack_audio_driver.hpp"
 #include "engine.hpp"
@@ -113,7 +144,14 @@ JackAudioDriver::connect_to_jack ()
 
 	_jack = 0;
 
-#ifdef HAVE_JACK_CLIENT_OPEN
+	//------ albBegin ----------------------------------
+	// STOCK (sooperlooper 1.7.9): this block was inside
+	// #ifdef HAVE_JACK_CLIENT_OPEN, with an #else branch that opened the
+	// client with the deprecated jack_client_new(), trying the names
+	// sooperlooper_1 .. sooperlooper_9 (or <name>_1 .. _9).  CHANGE
+	// (ROADMAP entry 50): the #else branch is gone; configure now stops
+	// when JACK lacks jack_client_open() (in JACK since about 2006).
+	//------ albEnd ----------------------------------
 	jack_options_t options = JackNullOption;
 	jack_status_t status;
 	const char *server_name = NULL;
@@ -121,6 +159,13 @@ JackAudioDriver::connect_to_jack ()
 	// support for server name
 	if (!_server_name.empty()) {
 		server_name = _server_name.c_str();
+		//------ albBegin ----------------------------------
+		// JACK_SERVER_NAME_FIX (see the top of this file).  STOCK: no
+		// option, so jack_client_open() ignored server_name.
+#if JACK_SERVER_NAME_FIX
+		options = (jack_options_t) (options | JackServerName);
+#endif
+		//------ albEnd ----------------------------------
 	}
 	
 	if (_client_name.empty()) {
@@ -140,38 +185,6 @@ JackAudioDriver::connect_to_jack ()
 	if (status & JackNameNotUnique) {
 		_client_name = jack_get_client_name (_jack);
 	}
-
-#else
-	char namebuf[100];
-	
-	/* try to become a client of the JACK server */
-	if (_client_name.empty()) {
-		// find a name predictably
-		for (int i=1; i < 10; i++) {
-			snprintf(namebuf, sizeof(namebuf)-1, "sooperlooper_%d", i);
-			if ((_jack = jack_client_new (namebuf)) != 0) {
-				_client_name = namebuf;
-				break;
-			}
-		}
-	}
-	else {
-		// try the passed name, or base a predictable name from it
-		if ((_jack = jack_client_new (_client_name.c_str())) == 0) {
-			for (int i=1; i < 10; i++) {
-				snprintf(namebuf, sizeof(namebuf)-1, "%s_%d", _client_name.c_str(), i);
-				if ((_jack = jack_client_new (namebuf)) != 0) {
-					_client_name = namebuf;
-					break;
-				}
-			}
-		}
-	}
-	
-	if (!_jack) {
-		return -1;
-	}
-#endif
 	
 	jack_set_xrun_callback (_jack, _xrun_callback, this);
 	jack_on_shutdown (_jack, _shutdown_callback, this);
@@ -343,7 +356,17 @@ JackAudioDriver::get_input_port_latency (port_id_t port)
 {
 	if (!_jack || port > _input_ports.size() || port == 0) return 0;
 
+	//------ albBegin ----------------------------------
+	// JACK_LATENCY_RANGE_FIX (see the top of this file).
+	// STOCK: return jack_port_get_total_latency (_jack, _input_ports[port-1]);
+#if JACK_LATENCY_RANGE_FIX && defined(HAVE_JACK_PORT_GET_LATENCY_RANGE)
+	jack_latency_range_t range;
+	jack_port_get_latency_range (_input_ports[port-1], JackCaptureLatency, &range);
+	return range.max;
+#else
 	return jack_port_get_total_latency (_jack, _input_ports[port-1]);
+#endif
+	//------ albEnd ----------------------------------
 }
 
 nframes_t
@@ -351,7 +374,17 @@ JackAudioDriver::get_output_port_latency (port_id_t port)
 {
 	if (!_jack || port > _output_ports.size() || port == 0) return 0;
 
+	//------ albBegin ----------------------------------
+	// JACK_LATENCY_RANGE_FIX (see the top of this file).
+	// STOCK: return jack_port_get_total_latency (_jack, _output_ports[port-1]);
+#if JACK_LATENCY_RANGE_FIX && defined(HAVE_JACK_PORT_GET_LATENCY_RANGE)
+	jack_latency_range_t range;
+	jack_port_get_latency_range (_output_ports[port-1], JackPlaybackLatency, &range);
+	return range.max;
+#else
 	return jack_port_get_total_latency (_jack, _output_ports[port-1]);
+#endif
+	//------ albEnd ----------------------------------
 }
 
 void
