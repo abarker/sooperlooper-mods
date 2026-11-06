@@ -73,10 +73,12 @@
 // press interval) and playback phase do not change.  The command's own
 // effect (a mute, a new layer) comes that much later too; a restart in
 // the slack window (Sync on) keeps its phase.  At trigger_latency =
-// input_latency it changes nothing.  Not yet: trigger_latency >
-// input_latency (left as now), restarts that end nothing, and the
-// late-hit window.  Here, not in plugin.cc, for the SooperLooperI fields
-// below.
+// input_latency it changes nothing.  With trigger_latency >
+// input_latency, a take starts trigger_latency - input_latency early,
+// from the input history, and ends as much early -- (c).  Unsynced
+// Trigger and Once restarts play from the press -- (d).  The late-hit,
+// mute, and slack windows are counted from the press -- (e).  Here, not
+// in plugin.cc, for the SooperLooperI fields below.
 #define TRIGGER_LATENCY_ALL_EDGES 0
 //------ albEnd ----------------------------------
 
@@ -130,6 +132,28 @@
 // not in plugin.cc, for the SooperLooperI field below.
 // Set to 0 to revert to the stock (buggy) behaviour.
 #define TL_OVER_IL_LAYER_FIX 1
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
+// FREE_PREROLL: compile-time switch for a NEW behaviour, off until tried
+// live (ROADMAP entry 40).  Needs TRIGGER_LATENCY_ALL_EDGES, whose take
+// edges it moves.
+//
+// Neither Sync pre-roll reaches a take that does not start on a boundary.
+// With this, an unsynced take (Sync off, no threshold) starts P =
+// free_preroll_ms (g_free_preroll_ms, plugin.cc) before the press, from
+// the input history, so an attack struck with the press, or a pickup just
+// before it, is in the loop.  P counts as command latency at both of the
+// take's edges: it ends P before the stop press too, so its length is
+// still the press interval, and the first pass after the stop is in
+// phase.  The loop's sync position (beat 1) is at P, where the start
+// press was: a restart puts that point on the restart's press.  At 0
+// (the default) nothing changes.  Here, not in plugin.cc, for the fields
+// below.
+#define FREE_PREROLL 0
+#if FREE_PREROLL && !TRIGGER_LATENCY_ALL_EDGES
+#error "FREE_PREROLL needs TRIGGER_LATENCY_ALL_EDGES"
+#endif
 //------ albEnd ----------------------------------
 
 // TODO, move the whole looping core into a class
@@ -261,6 +285,11 @@ typedef struct _LoopChunk {
 	// point.  Set by plugin.cc.
 	unsigned long lStartEarly;
 #endif
+#if FREE_PREROLL
+	// lFreePreroll: the free pre-roll this take started with
+	// (FREE_PREROLL), 0 if none.  Set by plugin.cc.
+	unsigned long lFreePreroll;
+#endif
 #if REL_SYNC_LATE_HIT
 	// lRelSyncLastPoint: loop position where a Rel Sync take last passed
 	// its end point while recording.  Set by plugin.cc.
@@ -330,6 +359,11 @@ typedef struct {
 	// And at a take's end by another command: samples STATE_TRIG_STOP
 	// trims off the take when it fires (at once); 0 for none.
 	unsigned long lEdgeTrim;
+#if FREE_PREROLL
+	// The free pre-roll MULTI_RECORD chose for the take STATE_TRIG_START
+	// starts next (FREE_PREROLL); 0 for none.
+	unsigned long lFreePrerollNext;
+#endif
 	// A deferred take end (Record, or another command pressed while
 	// recording): when it fires, send fEdgeStopPulse and redo what the
 	// immediate branch does that STATE_TRIG_STOP does not.

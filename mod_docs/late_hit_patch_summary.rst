@@ -106,10 +106,10 @@ item links to its full description.
   an empty loop, or one started from Mute or Pause.  See
   `New Feature: record failsafe`_.
 
-- **Seven settings, one place.** ``late_hit_window_ms``,
+- **Eight settings, one place.** ``late_hit_window_ms``,
   ``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds``,
-  ``mute_late_hit_ms``, ``rel_sync_preroll_ms``, ``sync_preroll_ms`` and
-  ``auto_realign`` are all saved in the session file's ``<Globals>`` line,
+  ``mute_late_hit_ms``, ``rel_sync_preroll_ms``, ``sync_preroll_ms``,
+  ``free_preroll_ms`` and ``auto_realign`` are all saved in the session file's ``<Globals>`` line,
   and can be read and set live over OSC.  See `Record Late-Hit Window
   Size`_, `Realigning the Drums`_ and `OSC Control`_.
 
@@ -214,6 +214,12 @@ item links to its full description.
   starts on, so a strum attack or pickup played just ahead of the one is
   in the loop, and it ends as much before its closing boundary, so it is
   still a whole number of cycles.  See `Sync Pre-Roll`_.
+
+- **Free pre-roll** (``FREE_PREROLL``, new in this fork, off in this
+  build, and only with ``TRIGGER_LATENCY_ALL_EDGES`` on).  A recording
+  with Sync off keeps the ``free_preroll_ms`` just before the Record
+  press, and ends as much before the stop press, so its length is still
+  the interval between the presses.  See `Free Pre-Roll`_.
 
 - **No crash when a pending stop outlasts the loop memory**
   (``TRIG_STOP_MEMORY_FIX``, on by default).  A recording waiting for its
@@ -528,6 +534,39 @@ boundary on every pass, as it was played the first time.
   ``sync_preroll_ms`` early.
 
 Set ``sync_preroll_ms`` like the other settings: in the session file's
+``<Globals>`` line, or over OSC with ``/set`` (see `OSC Control`_).
+
+Free Pre-Roll
+~~~~~~~~~~~~~
+
+A recording with Sync off starts at the press, so an attack struck with
+the press, or a pickup just before it, falls on the loop's seam or is
+lost.  With ``free_preroll_ms`` set, the recording starts that much
+before the press, from the input history, and ends the same amount
+before the stop press, so its length is still the interval between the
+presses.  It works like the Sync pre-roll, for recordings that do not
+start on a boundary:
+
+* The loop sounds the same while it plays round.  What moves is the
+  seam: it falls ``free_preroll_ms`` before the start press, so the
+  attack plays intact.
+* What was played in the last ``free_preroll_ms`` before the stop press
+  is replaced by the loop's own pre-roll at the wrap; with continuous
+  playing that is the same music.
+* The first pass after the stop is in phase, and the loop's first beat
+  is where the start press was: a Trigger, a oneshot, or
+  ``mute_trigger`` plays that point at its press, and a Trigger or other
+  command that ends the recording keeps the phase.
+* Every end of the recording allows for it: Record again, and any other
+  command that ends it.
+* Only with no threshold (``rec_thresh`` 0).  A pre-roll the input
+  history does not hold is dropped.  Default 0: no pre-roll.  Negative
+  values are refused.
+* Needs ``TRIGGER_LATENCY_ALL_EDGES`` on: the pre-roll counts as extra
+  command latency at the recording's two edges, which that option
+  places from the presses.  Both options are off in this build.
+
+Set ``free_preroll_ms`` like the other settings: in the session file's
 ``<Globals>`` line, or over OSC with ``/set`` (see `OSC Control`_).
 
 Rel Sync Recordings
@@ -931,10 +970,10 @@ and set ``late_hit_max_quant_unit_fraction`` to the fraction you want.
 OSC Control
 ~~~~~~~~~~~
 
-All seven settings -- ``late_hit_window_ms``,
+All eight settings -- ``late_hit_window_ms``,
 ``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds``,
-``mute_late_hit_ms``, ``rel_sync_preroll_ms``, ``sync_preroll_ms`` and
-``auto_realign`` (0 off, any other value on) -- can be read and changed
+``mute_late_hit_ms``, ``rel_sync_preroll_ms``, ``sync_preroll_ms``,
+``free_preroll_ms`` and ``auto_realign`` (0 off, any other value on) -- can be read and changed
 while SooperLooper runs,
 with the same global OSC ``/set`` and ``/get`` messages used for ``tempo``,
 ``eighth_per_cycle`` and the other ``<Globals>`` values:
@@ -1547,6 +1586,20 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
      - ``plugin.cc``
      - ``0.0f``
      - Compile-time initial value for ``g_sync_preroll_ms``.  Overridden
+       at runtime by the session file or OSC ``/set``.
+   * - ``FREE_PREROLL``
+     - ``plugin.hpp``
+     - ``0``
+     - New behavior, off until tried live; needs
+       ``TRIGGER_LATENCY_ALL_EDGES``.  When 1, inactive while
+       ``free_preroll_ms`` is 0: a recording with Sync off starts
+       ``free_preroll_ms`` before the press and ends as much before the
+       stop press, with the loop's first beat at the start press (see
+       `Free Pre-Roll`_).
+   * - ``FREE_PREROLL_MS_DEFAULT``
+     - ``plugin.cc``
+     - ``0.0f``
+     - Compile-time initial value for ``g_free_preroll_ms``.  Overridden
        at runtime by the session file or OSC ``/set``.
    * - ``TRIG_STOP_MEMORY_FIX``
      - ``plugin.cc``
@@ -2379,10 +2432,10 @@ allocates a float, calls ``connect_port()``, and ``plugin.cc`` reads it via a po
 ``SooperLooperI``. That is the correct mechanism for a value that needs full GUI exposure
 (a slider in ``slgui``) or push-on-change OSC updates.
 
-The six settings globals -- ``g_late_hit_window_ms``,
+The seven settings globals -- ``g_late_hit_window_ms``,
 ``g_late_hit_max_quant_unit_fraction``, ``g_record_failsafe_seconds``,
-``g_mute_late_hit_ms``, ``g_sync_preroll_ms`` and ``g_rel_sync_preroll_ms``
--- are intentionally **not** LADSPA ports. Each is a plain
+``g_mute_late_hit_ms``, ``g_sync_preroll_ms``, ``g_free_preroll_ms`` and
+``g_rel_sync_preroll_ms`` -- are intentionally **not** LADSPA ports. Each is a plain
 file-scope global in ``plugin.cc``, declared ``extern`` in ``engine.cpp``, written during
 session load from the ``<Globals>`` node, and also reachable through the engine's generic
 ``/set``/``/get`` dispatch (see `OSC Control`_ earlier in this document). This still avoids
@@ -2805,6 +2858,8 @@ session is next loaded; OSC ``/set`` changes it at once (see `OSC Control`_).
    * - ``mute_late_hit_ms``
      - 100
    * - ``sync_preroll_ms``
+     - 0 (off)
+   * - ``free_preroll_ms``
      - 0 (off)
    * - ``rel_sync_preroll_ms``
      - 0

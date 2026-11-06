@@ -97,6 +97,7 @@ extern float g_mute_late_hit_ms;
 extern float g_rel_sync_preroll_ms;
 // SYNC_PREROLL's plain Sync pre-roll (plugin.cc), likewise.
 extern float g_sync_preroll_ms;
+extern float g_free_preroll_ms;
 //------ albBegin ----------------------------------
 // Realign (``/set realign_transport``, any value): relocate the JACK
 // transport to the frame where frame x tempo equals the beat count
@@ -189,7 +190,8 @@ static void warn_if_history_short (AudioDriver * driver)
 		return;
 	}
 	const double have = sl_input_history_samples ((unsigned long) sr) * 1000.0 / sr;
-	const double need = g_late_hit_window_ms + g_sync_preroll_ms
+	const double need = g_late_hit_window_ms
+		+ (g_sync_preroll_ms > g_free_preroll_ms ? g_sync_preroll_ms : g_free_preroll_ms)
 		+ driver->get_buffersize() * 1000.0 / sr;
 	if (need > have) {
 		fprintf (stderr,
@@ -197,7 +199,8 @@ static void warn_if_history_short (AudioDriver * driver)
 		         " history, but there is only %.0f ms: presses late by nearly the whole window"
 		         " will miss the late-hit correction or the pre-roll.  Start with"
 		         " --input-history=<seconds> to keep more.\n",
-		         g_late_hit_window_ms, g_sync_preroll_ms > 0.0f ? " with sync_preroll_ms" : "",
+		         g_late_hit_window_ms,
+		         g_sync_preroll_ms > 0.0f || g_free_preroll_ms > 0.0f ? " with the pre-roll" : "",
 		         need, have);
 	}
 }
@@ -2616,6 +2619,9 @@ Engine::process_nonrt_event (EventNonRT * event)
 		else if (gg_event->param == "sync_preroll_ms") {
 			gg_event->ret_value = g_sync_preroll_ms;
 		}
+		else if (gg_event->param == "free_preroll_ms") {
+			gg_event->ret_value = g_free_preroll_ms;
+		}
 		else if (gg_event->param == "auto_realign") {
 			// 0 off, 1 on, 2 on but stopped after a hold that was not
 			// one cycle (s_auto_realign_blocked).  The session saves 0/1.
@@ -2749,7 +2755,13 @@ Engine::process_nonrt_event (EventNonRT * event)
 				g_sync_preroll_ms = gs_event->value;
 			}
 		}
-		if (gs_event->param == "late_hit_window_ms" || gs_event->param == "sync_preroll_ms") {
+		else if (gs_event->param == "free_preroll_ms") {
+			if (gs_event->value >= 0.0f) {
+				g_free_preroll_ms = gs_event->value;
+			}
+		}
+		if (gs_event->param == "late_hit_window_ms" || gs_event->param == "sync_preroll_ms"
+		    || gs_event->param == "free_preroll_ms") {
 			warn_if_history_short (_driver);
 		}
 		//------ albEnd ----------------------------------
@@ -4163,6 +4175,12 @@ Engine::load_session (std::string fname, string * readstr)
 				g_sync_preroll_ms = val;
 			}
 		}
+		if ((prop = globals_node->property ("free_preroll_ms")) != 0) {
+			float val;
+			if (sscanf (prop->value().c_str(), "%g", &val) == 1 && val >= 0.0f) {
+				g_free_preroll_ms = val;
+			}
+		}
 		if ((prop = globals_node->property ("auto_realign")) != 0) {
 			int val;
 			if (sscanf (prop->value().c_str(), "%d", &val) == 1) {
@@ -4179,6 +4197,7 @@ Engine::load_session (std::string fname, string * readstr)
 		        "  mute_late_hit_ms: %.4g"
 		        "  rel_sync_preroll_ms: %.4g"
 		        "  sync_preroll_ms: %.4g"
+		        "  free_preroll_ms: %.4g"
 #ifdef ALB_RT_SAFE_COND_SIGNAL
 		        "  rt_safe_cond_signal: ON"
 #else
@@ -4196,7 +4215,7 @@ Engine::load_session (std::string fname, string * readstr)
 #endif
 		        g_late_hit_window_ms, g_late_hit_max_quant_unit_fraction,
 		        g_record_failsafe_seconds, g_mute_late_hit_ms,
-		        g_rel_sync_preroll_ms, g_sync_preroll_ms);
+		        g_rel_sync_preroll_ms, g_sync_preroll_ms, g_free_preroll_ms);
 		warn_if_history_short (_driver);
 		//------ albEnd ----------------------------------
 
@@ -4307,6 +4326,8 @@ Engine::save_session (std::string fname, bool write_audio, string * writestr)
 	globals_node->add_property ("rel_sync_preroll_ms", buf);
 	snprintf(buf, sizeof(buf), "%.10g", g_sync_preroll_ms);
 	globals_node->add_property ("sync_preroll_ms", buf);
+	snprintf(buf, sizeof(buf), "%.10g", g_free_preroll_ms);
+	globals_node->add_property ("free_preroll_ms", buf);
 	globals_node->add_property ("auto_realign", s_auto_realign.load () ? "1" : "0");
 	//------ albEnd ----------------------------------
 

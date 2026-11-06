@@ -24,11 +24,17 @@ latency settings here only move where the engine starts and stops taking
 input and where playback starts; the expected values follow from them.
 """
 
+import struct
 import unittest
 import test_engine
 from testdef_rel_sync_late_hit import RelSyncLateHitTestCase, RAMP, frame_of
 
 ENABLED = bool(getattr(test_engine, "TRIGGER_LATENCY_ALL_EDGES", 0))
+PREROLL = bool(getattr(test_engine, "FREE_PREROLL", 0))
+
+
+def f32(x):
+    return struct.unpack("f", struct.pack("f", x))[0]
 
 
 @unittest.skipUnless(ENABLED, "TRIGGER_LATENCY_ALL_EDGES is 0")
@@ -37,9 +43,18 @@ class TriggerLatencyAllEdgesTestCase(RelSyncLateHitTestCase):
     IL = 600
     OL = 0
     TL = 200            # s = IL - TL = 400
+    PREROLL_MS = 0      # FREE_PREROLL's free_preroll_ms (the Preroll classes)
+
+    def P(self):
+        """The free pre-roll in samples, as the engine computes it (in
+        float); 0 for none."""
+        if not self.PREROLL_MS:
+            return 0
+        return int(f32(f32(f32(self.PREROLL_MS) * f32(0.001)) * f32(self.sr)))
 
     def setUp(self):
         super().setUp()
+        test_engine.cvar.g_free_preroll_ms = float(self.PREROLL_MS)
         self.looper.set_port(test_engine.Sync, 0.0)
         self.looper.set_port(test_engine.Quantize, 0.0)
         self.looper.set_port(test_engine.InputLatency, float(self.IL))
@@ -51,6 +66,7 @@ class TriggerLatencyAllEdgesTestCase(RelSyncLateHitTestCase):
         self.looper.set_port(test_engine.InputLatency, 0.0)
         self.looper.set_port(test_engine.OutputLatency, 0.0)
         self.looper.set_port(test_engine.TriggerLatency, 0.0)
+        test_engine.cvar.g_free_preroll_ms = 0.0
         super().tearDown()
 
     def take(self, length):
@@ -89,7 +105,8 @@ class TestTriggerLatencyAllEdges(TriggerLatencyAllEdgesTestCase):
     def testStartAndStopOnThePresses(self):
         s = self.IL - self.TL
         s0, s1 = self.take(int(0.6 * self.cycle))
-        self.assertStartsAt(s0, -s)          # input s after the press
+        self.assertStartsAt(s0, self.P() - s)   # input s after the press,
+                                                # less the pre-roll
         self.assertEqual(self.length(), s1 - s0)
         self.assertContiguous(self.length())
 
@@ -137,7 +154,7 @@ class LayerEndsMixin:
         s0 = self.press_at("RECORD", self.looper.sync_clock + 2 * self.buf)
         self.wait_state("Recording")
         self.wait_buffers(2)
-        self.assertStartsAt(s0, -self.s())     # read before the overdub writes
+        self.assertStartsAt(s0, self.P() - self.s())   # read before the overdub writes
         s1 = self.press_at("OVERDUB", s0 + int(0.6 * self.cycle))
         self.wait_state("Overdubbing")
         self.assertEqual(self.length(), s1 - s0)
@@ -222,7 +239,8 @@ class TakeEndsMixin:
             idx = (frame_of(val) - base) % RAMP
             if not (64 < idx < L - 64):
                 continue                  # the seam
-            self.assertEqual((idx + fr - end) % L, (L - self.IL - self.OL) % L,
+            # With a pre-roll the press is at loop position P.
+            self.assertEqual((idx + fr - end) % L, (L - self.IL - self.OL + self.P()) % L,
                              f"{fr - end} samples after the end: loop position {idx}")
             checked += 1
         self.assertGreater(checked, 4)
@@ -245,8 +263,9 @@ class TakeEndsMixin:
             val = self.looper.out_first
             if self.looper.out_first_frame != fr:
                 continue                  # raced the callback
-            # At s < 0 the pause came -s after the take's end (the press).
-            pos = (fr - r + self.IL + self.OL + max(0, -self.s())) % L
+            # At s < 0 the pause came -s after the take's end (the press),
+            # and with a pre-roll P - s (when positive).
+            pos = (fr - r + self.IL + self.OL + max(0, self.P() - self.s())) % L
             if fr - r < 128 or pos < 64 or pos > L - 64:
                 continue                  # the fade-in, and the seam
             self.assertEqual(frame_of(val), self.loop_frame(pos),
@@ -280,7 +299,8 @@ class RestartsMixin:
             val = self.looper.out_first
             if self.looper.out_first_frame != fr:
                 continue                  # raced the callback
-            pos = (fr - r + self.TL + self.OL) % L
+            # With a pre-roll the loop's beat 1 is at P (FREE_PREROLL).
+            pos = (fr - r + self.TL + self.OL + self.P()) % L
             if fr - r < 128 or pos < 64 or pos > L - 64:
                 continue                  # the fade-in, and the seam
             self.assertEqual(frame_of(val), self.loop_frame(pos),
@@ -547,6 +567,40 @@ class TestTriggerLatencyAboveInput(TestTriggerLatencyAllEdges):
     TL = 900            # s = -300 (increment (c)): the take starts 300
                         # samples before the command, from the input
                         # history, and ends as much before the second
+
+
+# FREE_PREROLL (ROADMAP entry 40): the same cases with an unsynced
+# pre-roll P, which counts as command latency at the take's edges: the
+# take starts and ends P earlier (a shorter wait, or more history), keeps
+# the press interval as its length and its playback phase, and has its
+# beat 1 at P, so a restart plays position P at the press.  At P < s the
+# edges still wait s - P; at P = s they act at once; above, they start
+# early and are trimmed.  Layers are unchanged.
+
+def _preroll_classes():
+    combos = {
+        "UnderWait":   dict(TL=200, PREROLL_MS=5),    # s 400, P 240: waits 160
+        "EqualToWait": dict(TL=360, PREROLL_MS=5),    # s 240, P 240: at once
+        "OverWait":    dict(TL=200, PREROLL_MS=15),   # s 400, P 720: 320 early
+        "TLEqualIL":   dict(TL=600, PREROLL_MS=5),    # s 0, P 240: 240 early
+        "TLOverIL":    dict(TL=900, PREROLL_MS=5),    # s -300, P 240: 540 early
+    }
+    bases = {
+        "Takes": (TestTriggerLatencyAllEdges,),
+        "TakeEnds": (TakeEndsMixin, TriggerLatencyAllEdgesTestCase),
+        "LayerEnds": (LayerEndsMixin, TriggerLatencyAllEdgesTestCase),
+        "Restarts": (RestartsMixin, TriggerLatencyAllEdgesTestCase),
+    }
+    out = {}
+    for cname, attrs in combos.items():
+        for bname, bs in bases.items():
+            name = f"TestPreroll{cname}{bname}"
+            cls = type(name, bs, dict(attrs))
+            out[name] = unittest.skipUnless(PREROLL, "FREE_PREROLL is 0")(cls)
+    return out
+
+
+globals().update(_preroll_classes())
 
 
 from testdef_rel_sync_pos import RelSyncPosTestCase, CYCLE, QUARTERS

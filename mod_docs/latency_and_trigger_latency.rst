@@ -396,5 +396,14 @@ default; the rest are not built.  Everything above describes the default.
   sync on acts at once) is decided from the press: it is
   ``trigger_latency`` longer, counted to the command's arrival.  Where the
   loop is placed still counts to the arrival.
+
+  A second option, ``FREE_PREROLL`` (also in ``src/plugin.hpp``, off, and
+  only with ``TRIGGER_LATENCY_ALL_EDGES`` on), gives takes with sync off
+  a pre-roll: the global setting ``free_preroll_ms`` counts as extra
+  command latency at both edges of such a take.  It starts that much
+  before the press, from the input history, and ends that much before
+  the stop press, so its length is still the interval between the
+  presses and playback stays in phase.  The loop's first beat is where
+  the start press was, so a restart plays that point at its press.
 * **A measuring mode in** ``sllatency``: presses beside a mic, reporting
   CL - IL and offering to set ``trigger_latency``.

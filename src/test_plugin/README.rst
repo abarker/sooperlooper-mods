@@ -285,6 +285,26 @@ testdef_restart_position.py
     starts input + output latency into the loop, as playback after a
     record does, except from Record, where it is not doubled.
 
+testdef_trigger_latency_all_edges.py
+    Tests for TRIGGER_LATENCY_ALL_EDGES (skipped when it is off): every
+    take and layer edge that acts when its command arrives lands on the
+    press, at trigger latency below, equal to, and above the input
+    latency.  A take keeps the press interval as its length and its
+    playback phase whatever command ends it; a Pause, Reverse or Scratch
+    ending a take resumes or plays where the immediate end's would;
+    unsynced restarts play from the press; restarts in the slack window
+    keep the loop's phase.  The Preroll classes (FREE_PREROLL, skipped
+    when it is off) run the take cases again with a free pre-roll below,
+    equal to, and above the wait, and at trigger latency equal to and
+    above the input latency: the take starts the pre-roll earlier, keeps
+    its length and phase, and restarts play its position P at the press.
+
+testdef_command_latency_windows.py
+    Tests for TRIGGER_LATENCY_ALL_EDGES's windows (increment (e); skipped
+    when it is off): a late Record start, and a Trigger from Mute in the
+    slack window, are decided from the press, trigger latency before the
+    command's arrival, and the restart still plays in phase.
+
 testdef_pause_from_mute.py
     Tests for PAUSE_FROM_MUTE_FIX: a quantized Pause pressed while Muted
     resolves to Paused, not Playing, with the position frozen, and an
