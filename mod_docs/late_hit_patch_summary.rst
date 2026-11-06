@@ -327,6 +327,35 @@ item links to its full description.
   started, was lost: silence where the old loop resumes after the
   inserted part, rounded or not.  Quantized Inserts are unchanged.
 
+- **A layer's fade-out follows its end when the trigger latency is
+  larger than the input latency** (part of ``TL_OVER_IL_LAYER_FIX``).
+  With the layer written where it was heard, its fade-out was still
+  written at the usual place, the difference later: the layer ended
+  with a click, and its fade-out came as a separate bump after a
+  stretch of the old loop.  Every layer type: Overdub, Replace,
+  Substitute, Multiply, Insert.  Now the fade-out follows the layer's
+  last sample.
+
+- **Clean layer starts when the trigger latency is smaller than the
+  input latency** (``TL_UNDER_IL_LAYER_FIX``, on by default).  In stock
+  1.7.9, a layer started by its command waits the difference before it
+  records, and two things ran on through that wait as if it had
+  recorded.  A Replace or Substitute began with a step: the old loop
+  dropped at once by the wait over the fade length (29% with
+  ``trigger_latency`` 685, ``input_latency`` 743, fade 200).  A Multiply
+  or Insert left the samples of the wait just before the press silent
+  (58 at 685/743), with a click on each side.  Now both start with a
+  plain fade.  Quantized layers were not affected.
+
+- **A Record over a playing loop fades it out** (``RECORD_OVER_PLAY_FADE``,
+  on by default).  In stock 1.7.9, Record pressed while a loop played
+  (or recorded a layer) cut the loop off within a sample: a click
+  wherever the loop was not near silence, and with Sync on, silence
+  until the beat.  Now the loop plays on while the take waits (for the
+  beat, a threshold, or the trigger latency's wait) and fades out over
+  the fade length as the take starts.  A muted loop stays silent.  With
+  a threshold set, the loop plays until the input crosses it.
+
 - **Default loop memory 120 seconds** (was 40).  The engine's ``-t``
   default and slgui's loop time for new loops.  It is rounded up to a
   power of two of samples, about 175 seconds at 48 kHz, 32 MB per
@@ -1712,7 +1741,24 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        ``trigger_latency`` larger than ``input_latency``, an Overdub,
        Replace, Substitute, Multiply or Insert started by its command is
        written ``trigger_latency - input_latency`` further back, where it
-       was heard, instead of that much late.  Set to 0 for stock.
+       was heard, instead of that much late, and so is its fade-out.  Set
+       to 0 for stock.
+   * - ``TL_UNDER_IL_LAYER_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: with
+       ``trigger_latency`` smaller than ``input_latency``, a layer started
+       by its command fades the old loop from its first recorded sample,
+       not from the command (Replace, Substitute), and a Multiply or
+       Insert with Quantize off copies the old loop up to that sample,
+       leaving no silence before the press.  Set to 0 for stock.
+   * - ``RECORD_OVER_PLAY_FADE``
+     - ``plugin.hpp``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: Record pressed
+       while a loop is heard keeps the loop playing until the take
+       starts, then fades it out over ``fade_samples``, instead of
+       cutting it off at the press.  Set to 0 for stock.
    * - ``MULTIPLY_END_FIX``
      - ``plugin.cc``
      - ``1``

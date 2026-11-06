@@ -49,12 +49,14 @@ What they do not check (see also `Not covered`_):
   output, and trigger latency settings describe it.  Whether those
   settings match the hardware is for ``sllatency`` and measurements on
   the rig.
-- **How it sounds.**  The crossfade is one sample in almost every test,
-  so fade shapes, clicks at a loop's seam or a layer's edges, and level
-  changes there are mostly not checked.  The exception: a Record started
-  or stopped late on the beat, with a 64-sample fade, must play back
-  flat.  Levels are otherwise checked only as exact copies or as "not
-  silent".
+- **How it sounds.**  The crossfade is one sample in most tests, so fade
+  shapes and level changes are mostly not checked.  The exceptions, with
+  a 64-sample fade: a Record started or stopped late on the beat must
+  play back flat; every layer type's edges must be straight fades with
+  no click, with the trigger latency below, equal to, and above the
+  input latency; and a Record over a playing loop must fade the loop
+  out, not cut it.  Levels are otherwise checked only as exact copies or
+  as "not silent".
 - **The rest of the system.**  Several loops playing together, timing
   jitter from a real sync source (beats are injected exactly), MIDI
   through the remapper, slgui, saving and loading sessions, and
@@ -313,6 +315,22 @@ testdef_insert_placement.py
     insert's cycles holding the input to their end.  Run at IL = OL, IL >
     OL, and OL > IL.
 
+testdef_layer_fades.py
+    Tests for the fades at a layer's edges (TL_OVER_IL_LAYER_FIX's
+    fade-out, TL_UNDER_IL_LAYER_FIX) and at a Record over a playing loop
+    (RECORD_OVER_PLAY_FADE), with a 64-sample fade.  A constant take
+    under a constant layer, so a right loop holds only levels and
+    straight ramps between them: no two neighbouring samples may differ
+    by more than a ramp's step (a cut, a fade-out away from the layer's
+    end, a step at a Replace's start, or silence before a Multiply or
+    Insert all do).  Overdub, Replace, Substitute, a short Overdub,
+    Multiply and Insert rounded and not, at TL > IL (skipped when
+    TL_OVER_IL_LAYER_FIX is 0), TL = IL and TL < IL.  An Insert's start
+    is allowed one step (the old loop stops there with no fade, stock),
+    but no silence before the inserted input.  The Record cases read the
+    output back sample by sample (TestLooper.get_output_at): the loop
+    plays until the take starts, then fades out within the fade length.
+
 testdef_signed_sync_pos.py
     Tests for SIGNED_SYNC_POS_FIX: with Sync off, a Rel Sync loop whose
     sync position is negative (an early start pressed just after a pulse)
@@ -387,8 +405,8 @@ Besides what `What the tests check, from the performer's side`_ lists:
 the crossfade (``FadeSamples``) is left at 0, which plugin.cc treats as
 1 sample, in every test but testdef_late_hit.py's late-take cases (64
 and longer; a constant take must play back flat, so a misplaced fade
-dips or overlays) and testdef_multiply_end.py (64; checks for silence
-only).  Elsewhere a fade that is missing, misplaced, or the wrong length
+dips or overlays), testdef_layer_fades.py (64; no step larger than a
+ramp's), and testdef_multiply_end.py (64; checks for silence only).  Elsewhere a fade that is missing, misplaced, or the wrong length
 passes; only a fade level left at 0 or 1 shows, as lost or doubled
 content.
 

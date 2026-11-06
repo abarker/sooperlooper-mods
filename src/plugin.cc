@@ -684,6 +684,33 @@ unsigned long sl_input_history_samples(unsigned long sample_rate)
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
+// TL_UNDER_IL_LAYER_FIX: compile-time safety switch for a STOCK bug
+// (stock code; measured on this fork on a dummy server, ROADMAP entry
+// 49's probe).
+//
+// When trigger_latency is below input_latency (the rig: 685 and 743), a
+// layer started at a command waits c = IL - TL samples (lFramesUntilInput)
+// before it writes, so its first sample is the one played at the press.
+// Two things ran on through that wait as if it had written:
+//
+//   - Overdub, Replace, Substitute: the old loop's fade (fFeedFadeAtten)
+//     started at the command, the new input's at the first write, so a
+//     Replace or Substitute began with a step: the old loop down by c /
+//     fade_samples at once (29% on the rig, at a fade of 200).  Overdub
+//     keeps the old loop at full, so it was not affected.
+//   - Multiply, Insert: the front fill (the old loop copied into the new
+//     chunk) stopped where the wait began, so the c samples just before
+//     the press were never written: silence there, and a cut on each side.
+//
+// The fix: the old loop's fade waits too (as STATE_MULTIPLY's already
+// did), and the front fill runs c further, to the first write (Quantize
+// off; a quantized Multiply or Insert has counted c down before its
+// boundary, and was not affected).
+// Set to 0 to revert to the stock (buggy) behaviour.
+#define TL_UNDER_IL_LAYER_FIX 1
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
 // SYNCWDEBUG: master switch for ALL debug output in this file.
 // When defined:
 //   - a sentinel file is written at binary-load time.
@@ -2026,6 +2053,12 @@ activateSooperLooper(LADSPA_Handle Instance) {
 #if TL_OVER_IL_LAYER_FIX
   pLS->lLayerLag = 0;
 #endif
+#if RECORD_OVER_PLAY_FADE
+  pLS->bTrigStartPlays = false;
+  pLS->pRecFadeOutLoop = NULL;
+  pLS->dRecFadeOutPos = 0.0;
+  pLS->fRecFadeOutRate = 1.0f;
+#endif
   //------ albEnd ----------------------------------
   memset (pLS->pInputBuf, 0, pLS->lInputBufSize * sizeof(LADSPA_Data));
   //------ albBegin ----------------------------------
@@ -2478,6 +2511,15 @@ static LoopChunk* beginMultiply(SooperLooperI *pLS, LoopChunk *loop)
 #endif
 		  //------ albEnd ----------------------------------
 		  //cerr << "Low MARK H: " << markh << endl;
+		  //------ albBegin ----------------------------------
+#if TL_UNDER_IL_LAYER_FIX
+		  // Through the wait of IL - TL too, to the first write (Quantize
+		  // off: a quantized one waits out the count before its cycle).
+		  if (markh >= 0 && pLS->lFramesUntilInput > 0 && *pLS->pfQuantMode == QUANT_OFF)
+			  markh = (markh + pLS->lFramesUntilInput < (long) loop->lLoopLength)
+				  ? markh + pLS->lFramesUntilInput : (long) loop->lLoopLength - 1;
+#endif
+		  //------ albEnd ----------------------------------
 		  if (markh < 0) markh = 0;
 		  loop->lMarkH = markh;
 		  if (loop->lMarkH == 0) {
@@ -2565,15 +2607,17 @@ static LoopChunk * endMultiply(SooperLooperI *pLS, LoopChunk *loop, int nextstat
 	 //------ albBegin ----------------------------------
 #if TL_OVER_IL_LAYER_FIX
 	 // A lagged multiply wrote up to OL + IL + lLayerLag behind the play
-	 // position; the leftover fill above covers only the last OL + IL of
-	 // that (at the next state's unlagged record position).  Fill the
-	 // lLayerLag before it from the source now.
+	 // position.  Fill that whole stretch from the source now, in place
+	 // of the leftover fill above, which runs only OL + IL from wherever
+	 // the next state writes (lagged in STATE_PLAY, not elsewhere).
 	 if (pLS->lLayerLag > 0 && loop->lLoopLength > 0) {
 		 const long L = (long) loop->lLoopLength;
-		 const long w = (long) loop->dCurrPos - (lInputLatency + lOutputLatency);
-		 for (long j = 1; j <= pLS->lLayerLag; ++j) {
-			 fillLoops(pLS, loop, (unsigned long) ((((w - j) % L) + L) % L), true);
+		 const long p = (long) loop->dCurrPos;
+		 const long span = lInputLatency + lOutputLatency + pLS->lLayerLag;
+		 for (long j = 1; j <= span; ++j) {
+			 fillLoops(pLS, loop, (unsigned long) ((((p - j) % L) + L) % L), true);
 		 }
+		 pLS->lFramesUntilFilled = 0;
 	 }
 #endif
 	 //------ albEnd ----------------------------------
@@ -2755,6 +2799,14 @@ static LoopChunk * beginInsert(SooperLooperI *pLS, LoopChunk *loop)
 	      long markh = (long) fmod (rCurrPos - (lOutputLatency + lInputLatency + lLag), loop->lLoopLength) - 1;
 #else
 	      long markh = (long) fmod (rCurrPos - (lOutputLatency + lInputLatency), loop->lLoopLength) - 1;
+#endif
+	      //------ albEnd ----------------------------------
+	      //------ albBegin ----------------------------------
+#if TL_UNDER_IL_LAYER_FIX
+	      // Through the wait of IL - TL too, to the first write.
+	      if (markh >= 0 && pLS->lFramesUntilInput > 0 && *pLS->pfQuantMode == QUANT_OFF)
+		      markh = (markh + pLS->lFramesUntilInput < (long) loop->lLoopLength)
+				  ? markh + pLS->lFramesUntilInput : (long) loop->lLoopLength - 1;
 #endif
 	      //------ albEnd ----------------------------------
 	      if (markh < 0) markh = 0;
@@ -3068,6 +3120,25 @@ static LoopChunk * beginReplace(SooperLooperI *pLS, LoopChunk *loop)
 	return tloop;
 }
 
+
+//------ albBegin ----------------------------------
+#if RECORD_OVER_PLAY_FADE
+// A take starts in newLoop: fade oldLoop out from where it plays, if it
+// was heard at the press (RECORD_OVER_PLAY_FADE).  rate: oldLoop's.
+static void startRecFadeOut(SooperLooperI *pLS, LoopChunk *oldLoop, LoopChunk *newLoop, float rate)
+{
+	pLS->pRecFadeOutLoop = (pLS->bTrigStartPlays && oldLoop && oldLoop != newLoop
+				&& oldLoop->valid && oldLoop->lLoopLength > 0
+				&& pLS->fPlayFadeAtten > 0.0f) ? oldLoop : NULL;
+	if (pLS->pRecFadeOutLoop) {
+		pLS->dRecFadeOutPos = fmod (oldLoop->dCurrPos, (double) oldLoop->lLoopLength);
+		if (pLS->dRecFadeOutPos < 0) pLS->dRecFadeOutPos += oldLoop->lLoopLength;
+		pLS->fRecFadeOutRate = rate;
+	}
+	pLS->bTrigStartPlays = false;
+}
+#endif
+//------ albEnd ----------------------------------
 
 static LoopChunk * transitionToNext(SooperLooperI *pLS, LoopChunk *loop, int nextstate)
 {
@@ -4142,6 +4213,18 @@ runSooperLooper(LADSPA_Handle Instance,
 	   pLS->bRecordEnteredFromActivePlay =
 	       (pLS->state == STATE_PLAY || pLS->state == STATE_ONESHOT);
 	   //------ albEnd ----------------------------------
+	   //------ albBegin ----------------------------------
+#if RECORD_OVER_PLAY_FADE
+	   // The loop is heard now: it plays on through STATE_TRIG_START and
+	   // the take fades it out (RECORD_OVER_PLAY_FADE).  A layer this
+	   // press ends counts: it is heard too.  Pressed again while
+	   // waiting: as it was.
+	   if (pLS->state != STATE_TRIG_START)
+		   pLS->bTrigStartPlays = (pLS->state == STATE_PLAY || pLS->state == STATE_ONESHOT
+					   || pLS->state == STATE_OVERDUB || pLS->state == STATE_REPLACE
+					   || pLS->state == STATE_SUBSTITUTE);
+#endif
+	   //------ albEnd ----------------------------------
 
 	   switch(pLS->state) {
 	      case STATE_RECORD:
@@ -4491,6 +4574,12 @@ runSooperLooper(LADSPA_Handle Instance,
 		     shiftSamples * 1000.0f / pLS->fSampleRate));
 
 		 if (withinWindow) {
+			 //------ albBegin ----------------------------------
+#if RECORD_OVER_PLAY_FADE
+			 LoopChunk * const oldLoop = loop;
+			 const float fOldRate = pLS->fCurrRate;
+#endif
+			 //------ albEnd ----------------------------------
 			 loop = pushNewLoopChunk(pLS, 0, NULL);
 			 if (loop) {
 				 SYNCWDBG(SL_LOG_RT(
@@ -4617,6 +4706,11 @@ runSooperLooper(LADSPA_Handle Instance,
 				 pLS->fPlayFadeDelta = -1.0f / xfadeSamples;
 				 pLS->fLoopSrcFadeDelta = 1.0f / xfadeSamples;
 				 pLS->fFeedSrcFadeDelta = -1.0f / xfadeSamples;
+				 //------ albBegin ----------------------------------
+#if RECORD_OVER_PLAY_FADE
+				 startRecFadeOut(pLS, oldLoop, loop, fOldRate);
+#endif
+				 //------ albEnd ----------------------------------
 			 } else {
 				 // Bug fix (albBegin): entering STATE_PLAY with loop==NULL crashes the DSP
 				 // loop dispatcher (srcloop = loop->srcloop is the first dereference).
@@ -4630,6 +4724,19 @@ runSooperLooper(LADSPA_Handle Instance,
 			 }
 		 } else {
 			 pLS->state = STATE_TRIG_START;
+			 //------ albBegin ----------------------------------
+#if RECORD_OVER_PLAY_FADE
+			 // It plays on: a layer the press ends fades out as
+			 // transitionToNext() fades one into STATE_PLAY.
+			 if (pLS->bTrigStartPlays) {
+				 pLS->fLoopFadeDelta = -1.0f / xfadeSamples;
+				 pLS->fLoopSrcFadeDelta = -1.0f / xfadeSamples;
+				 pLS->fPlayFadeDelta = 1.0f / xfadeSamples;
+				 pLS->fFeedFadeDelta = 1.0f / xfadeSamples;
+				 pLS->fFeedSrcFadeDelta = 1.0f / xfadeSamples;
+			 }
+#endif
+			 //------ albEnd ----------------------------------
 			 //------ albBegin ----------------------------------
 #if TRIGGER_LATENCY_ALL_EDGES
 			 // An unsynced take with no threshold starts on
@@ -6393,6 +6500,28 @@ runSooperLooper(LADSPA_Handle Instance,
   {
      loop = pLS->headLoopChunk;
 
+     //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+     // A lagged layer's tail runs on only through the layer states (each
+     // sets its own lag) and the states that play the loop in
+     // STATE_PLAY's block.  Anything else (a take, the wait for one, ...)
+     // ends it, so a later STATE_PLAY writes at the usual place.
+     switch (pLS->state) {
+     case STATE_OVERDUB: case STATE_REPLACE: case STATE_SUBSTITUTE:
+     case STATE_MULTIPLY: case STATE_INSERT:
+     case STATE_PLAY: case STATE_ONESHOT: case STATE_SCRATCH: case STATE_MUTE:
+     case STATE_PAUSED: case STATE_UNDO: case STATE_UNDO_ALL: case STATE_REDO:
+     case STATE_REDO_ALL:
+#if RECORD_OVER_PLAY_FADE
+     case STATE_TRIG_START:   // it plays on (RECORD_OVER_PLAY_FADE)
+#endif
+	     break;
+     default:
+	     pLS->lLayerLag = 0;
+     }
+#endif
+     //------ albEnd ----------------------------------
+
      switch(pLS->state)
      {
 			 
@@ -6440,6 +6569,12 @@ runSooperLooper(LADSPA_Handle Instance,
 	      //------ albEnd ----------------------------------
 	      {
 			  
+			  //------ albBegin ----------------------------------
+#if RECORD_OVER_PLAY_FADE
+			  LoopChunk * const oldLoop = loop;
+			  const float fOldRate = pLS->fCurrRate;
+#endif
+			  //------ albEnd ----------------------------------
 			  loop = pushNewLoopChunk(pLS, 0, NULL);
 			  if (loop) {
 				  DBG(fprintf(stderr,"%u:%u  Entering RECORD state: syncmode=%g\n", pLS->lLoopIndex, pLS->lChannelIndex, fSyncMode));
@@ -6507,6 +6642,11 @@ runSooperLooper(LADSPA_Handle Instance,
 				  pLS->fLoopSrcFadeDelta = 1.0f / xfadeSamples;
 				  // and this goes down
 				  pLS->fFeedSrcFadeDelta = -1.0f / xfadeSamples;
+				  //------ albBegin ----------------------------------
+#if RECORD_OVER_PLAY_FADE
+				  startRecFadeOut(pLS, oldLoop, loop, fOldRate);
+#endif
+				  //------ albEnd ----------------------------------
 
 				  //------ albBegin ----------------------------------
 #if REL_SYNC_LATE_HIT
@@ -6564,7 +6704,53 @@ runSooperLooper(LADSPA_Handle Instance,
 			  break;
 	      }
 
+	      //------ albBegin ----------------------------------
+#if RECORD_OVER_PLAY_FADE
+	      // The loop plays on while the take waits, as in STATE_PLAY
+	      // (its fills, and the tail of a layer the press ended), so the
+	      // take can fade it out.
+	      if (pLS->bTrigStartPlays && loop && loop->lLoopLength > 0) {
+		      const double L = (double) loop->lLoopLength;
+#if TL_OVER_IL_LAYER_FIX
+		      const long lLag = pLS->lLayerLag;
+#else
+		      const long lLag = 0;
+#endif
+		      pLS->fLoopFadeAtten = LIMIT_BETWEEN_0_AND_1 (pLS->fLoopFadeAtten + pLS->fLoopFadeDelta);
+		      pLS->fFeedFadeAtten = LIMIT_BETWEEN_0_AND_1 (pLS->fFeedFadeAtten + pLS->fFeedFadeDelta);
+		      pLS->fPlayFadeAtten = LIMIT_BETWEEN_0_AND_1 (pLS->fPlayFadeAtten + pLS->fPlayFadeDelta);
+		      const unsigned long lPlayPos = (unsigned long) fmod (loop->dCurrPos, L);
+		      double rPos = fmod (loop->dCurrPos - fRate * (lOutputLatency + lInputLatency + lLag), L);
+		      if (rPos < 0) rPos += L;
+		      if (pLS->lFramesUntilFilled > 0) {
+			      fillLoops(pLS, loop, (unsigned long) rPos, true);
+			      pLS->lFramesUntilFilled--;
+		      }
+		      fillLoops(pLS, loop, lPlayPos, false);
+		      LADSPA_Data * pPlay = & pLS->pSampleBuf[(loop->lLoopStart + lPlayPos) & pLS->lBufferSizeMask];
+		      LADSPA_Data * pRec = & pLS->pSampleBuf[(loop->lLoopStart + (unsigned long) rPos) & pLS->lBufferSizeMask];
+		      // The input lLag back (the mask wraps it).
+		      const LADSPA_Data fIn = pfInputLatencyBuf[(pLS->lInputBufWritePos + lSampleIndex
+								 - (unsigned long) lLag) & pLS->lInputBufMask];
+		      *pRec = (*pRec) * pLS->fFeedFadeAtten + pLS->fLoopFadeAtten * fIn;
+		      pfOutput[lSampleIndex] = fWet * pLS->fPlayFadeAtten * (*pPlay) + fDry * fInputSample;
+		      loop->dCurrPos += fRate;
+		      if (loop->dCurrPos >= L) loop->dCurrPos -= L;
+		      else if (loop->dCurrPos < 0) loop->dCurrPos += L;
+#if TL_OVER_IL_LAYER_FIX
+		      // As STATE_PLAY: the tail is through.
+		      if (pLS->lLayerLag > 0 && pLS->fLoopFadeAtten == 0.0f
+			  && pLS->fFeedFadeAtten == 1.0f && pLS->lFramesUntilFilled <= 0)
+			      pLS->lLayerLag = 0;
+#endif
+	      }
+	      else {
+		      pfOutput[lSampleIndex] = fDry * fInputSample;
+	      }
+#else
 	      pfOutput[lSampleIndex] = fDry * fInputSample;
+#endif
+	      //------ albEnd ----------------------------------
 
 	      //------ albBegin ----------------------------------
 #if TRIGGER_LATENCY_ALL_EDGES
@@ -6687,7 +6873,34 @@ runSooperLooper(LADSPA_Handle Instance,
 	      loop->dCurrPos = loop->dCurrPos + fRate;
 	      
 	      
+	      //------ albBegin ----------------------------------
+#if RECORD_OVER_PLAY_FADE
+	      // The old loop, faded out from the take's start (fPlayFadeAtten
+	      // falls to 0 over fade_samples); stop if the take has reached
+	      // its chunk (invalidated ahead of this block's writes).
+	      if (pLS->pRecFadeOutLoop
+		  && (pLS->fPlayFadeAtten <= 0.0f || !pLS->pRecFadeOutLoop->valid)) {
+		      pLS->pRecFadeOutLoop = NULL;
+	      }
+	      if (pLS->pRecFadeOutLoop) {
+		      LoopChunk * const old = pLS->pRecFadeOutLoop;
+		      const double L = (double) old->lLoopLength;
+		      const unsigned long lOldPos = (unsigned long) fmod (pLS->dRecFadeOutPos, L);
+		      fillLoops(pLS, old, lOldPos, false);
+		      pfOutput[lSampleIndex] = fWet * pLS->fPlayFadeAtten
+			      * pLS->pSampleBuf[(old->lLoopStart + lOldPos) & pLS->lBufferSizeMask]
+			      + fDry * fInputSample;
+		      pLS->dRecFadeOutPos += pLS->fRecFadeOutRate;
+		      if (pLS->dRecFadeOutPos >= L) pLS->dRecFadeOutPos -= L;
+		      else if (pLS->dRecFadeOutPos < 0) pLS->dRecFadeOutPos += L;
+	      }
+	      else {
+		      pfOutput[lSampleIndex] = fDry * fInputSample;
+	      }
+#else
 	      pfOutput[lSampleIndex] = fDry * fInputSample;
+#endif
+	      //------ albEnd ----------------------------------
 	   }
 
 	   // update loop values (in case we get stopped by an event)
@@ -7190,7 +7403,11 @@ runSooperLooper(LADSPA_Handle Instance,
 	         fScratchPos += scratchDelta;
 
 		 pLS->fPlayFadeAtten = LIMIT_BETWEEN_0_AND_1 (pLS->fPlayFadeAtten + pLS->fPlayFadeDelta);
+		 //------ albBegin ----------------------------------
+#if !TL_UNDER_IL_LAYER_FIX
 		 pLS->fFeedFadeAtten = LIMIT_BETWEEN_0_AND_1 (pLS->fFeedFadeAtten + pLS->fFeedFadeDelta);
+#endif
+		 //------ albEnd ----------------------------------
 		 
 
 		 lCurrPos =(unsigned int) fmod(loop->dCurrPos, loop->lLoopLength);
@@ -7224,6 +7441,12 @@ runSooperLooper(LADSPA_Handle Instance,
 			 rLoopSample = & pLS->pSampleBuf[(loop->lLoopStart + (unsigned int) rCurrPos) & pLS->lBufferSizeMask];
 			 rpLoopSample = & pLS->pSampleBuf[(srcloop->lLoopStart + (unsigned int) rpCurrPos) & pLS->lBufferSizeMask];
 			 pLS->fLoopFadeAtten = LIMIT_BETWEEN_0_AND_1 (pLS->fLoopFadeAtten + pLS->fLoopFadeDelta);
+			 //------ albBegin ----------------------------------
+#if TL_UNDER_IL_LAYER_FIX
+			 // With the input's fade, from the first write.
+			 pLS->fFeedFadeAtten = LIMIT_BETWEEN_0_AND_1 (pLS->fFeedFadeAtten + pLS->fFeedFadeDelta);
+#endif
+			 //------ albEnd ----------------------------------
 			 pLS->fLoopSrcFadeAtten = LIMIT_BETWEEN_0_AND_1 (pLS->fLoopSrcFadeAtten + pLS->fLoopSrcFadeDelta);
 			 pLS->fFeedSrcFadeAtten = LIMIT_BETWEEN_0_AND_1 (pLS->fFeedSrcFadeAtten + pLS->fFeedSrcFadeDelta);
 			 lInputReadPos = - pLS->lFramesUntilInput; // negate it
@@ -8085,13 +8308,32 @@ runSooperLooper(LADSPA_Handle Instance,
                                   }
 			  }
 
+		 //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+		 // A lagged layer's tail (its fade-out, and the fill behind
+		 // it) stays lLayerLag further back, from the input lLayerLag
+		 // back, as the layer wrote (TL_OVER_IL_LAYER_FIX).
+		 rCurrPos = fmod (loop->dCurrPos - (fRate * (lOutputLatency + lInputLatency + pLS->lLayerLag)), loop->lLoopLength);
+#else
 		 rCurrPos = fmod (loop->dCurrPos - (fRate * (lOutputLatency + lInputLatency)), loop->lLoopLength);
+#endif
+		 //------ albEnd ----------------------------------
 		 if (rCurrPos < 0) {
 			 rCurrPos += loop->lLoopLength;
 		 }
 
 		 rLoopSample = & pLS->pSampleBuf[(loop->lLoopStart + (unsigned int) rCurrPos) & pLS->lBufferSizeMask];
 		 lInputReadPos = pLS->lInputBufWritePos;
+		 //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+		 if (pLS->lLayerLag > 0) {
+			 const unsigned long lag = (unsigned long) pLS->lLayerLag;
+			 lInputReadPos = (lag <= pLS->lInputBufWritePos)
+				 ? (pLS->lInputBufWritePos - lag)
+				 : (pLS->lInputBufSize - (lag - pLS->lInputBufWritePos));
+		 }
+#endif
+		 //------ albEnd ----------------------------------
 
 		 if (rCurrPos == loop->lLoopLength-1) {
 			 //DBG(cerr << "In play rcurrpos == : " << rCurrPos << "  val: " << *pLoopSample << endl;);
@@ -8235,6 +8477,17 @@ runSooperLooper(LADSPA_Handle Instance,
 		 // jlc play
 		 // we might add a bit from the input still during xfadeout
 		 *(rLoopSample) = ((*rLoopSample) * pLS->fFeedFadeAtten) +  pLS->fLoopFadeAtten * fInputSample;
+		 //------ albBegin ----------------------------------
+#if TL_OVER_IL_LAYER_FIX
+		 // The tail is through (no input in it, the old loop back at
+		 // full, nothing left to fill): from here this write changes
+		 // nothing wherever it lands, so the lag can go.
+		 if (pLS->lLayerLag > 0 && pLS->fLoopFadeAtten == 0.0f
+		     && pLS->fFeedFadeAtten == 1.0f && pLS->lFramesUntilFilled <= 0) {
+			 pLS->lLayerLag = 0;
+		 }
+#endif
+		 //------ albEnd ----------------------------------
 		 // if (pLS->fLoopFadeAtten > 0.9 && pLS->fLoopFadeAtten < 1) fprintf(stderr, "fLoopFadeAtten: %g, SampleIndex: %d\n", pLS->fLoopFadeAtten, lCurrPos);
 
 		 // optionally support feedback during playback (use rLoopSample??)

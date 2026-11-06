@@ -175,11 +175,19 @@ class TestLooper
 	long long output_nonzero_last;
 
 	void reset_output_stats();
+
+	/* Channel 0's output, the last OUT_RING frames: get_output_at(f) is
+	 * the sample at input_clock frame f, while f is that recent. */
+	enum { OUT_RING = 1 << 18 };
+	float get_output_at (unsigned long long frame) const { return _out_ring[frame & (OUT_RING - 1)]; }
 	//------ albEnd ----------------------------------
 
 	int get_buffer_size() const { return (int)_buffersize; }
 
   protected:
+	//------ albBegin ----------------------------------
+	float _out_ring[OUT_RING];   /* see get_output_at() */
+	//------ albEnd ----------------------------------
 	
 	jack_client_t*     _jack;
 	jack_port_t**       _input_ports;

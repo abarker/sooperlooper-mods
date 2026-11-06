@@ -129,8 +129,15 @@
 // of a take, reads the current input and keeps the stock timing.
 // Multiply and Insert the same (beginMultiply(), beginInsert(); a
 // lagged Multiply's rounded end waits lLayerLag longer, and its
-// unrounded end fills the lLayerLag its leftover fill does not).  Here,
-// not in plugin.cc, for the SooperLooperI field below.
+// unrounded end fills the whole OL + IL + lLayerLag stretch at once).
+// The layer's tail keeps the lag too (ROADMAP entry 49): STATE_PLAY
+// (and the states sharing its block) writes the fade-out lLayerLag
+// further back, from the input lLayerLag back, so it follows the layer's
+// last sample; the lag goes once the fades are through, and any state
+// that does not play the loop on drops it.  Without that the fade-out
+// came k after the layer's end, with the old loop between: a hard cut,
+// then a separate bump.  Here, not in plugin.cc, for the SooperLooperI
+// field below.
 // Set to 0 to revert to the stock (buggy) behaviour.
 #define TL_OVER_IL_LAYER_FIX 1
 //------ albEnd ----------------------------------
@@ -155,6 +162,30 @@
 #if FREE_PREROLL && !TRIGGER_LATENCY_ALL_EDGES
 #error "FREE_PREROLL needs TRIGGER_LATENCY_ALL_EDGES"
 #endif
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
+// RECORD_OVER_PLAY_FADE: compile-time safety switch for a STOCK bug
+// (stock 1.7.9 behaves the same; measured on a dummy server, ROADMAP
+// entry 48).
+//
+// The bug: Record pressed while a loop plays (or records a layer) cut the
+// loop off within a sample, with no fade: STATE_TRIG_START, the wait for
+// the take to start (the beat with Sync on, a threshold, or
+// TRIGGER_LATENCY_ALL_EDGES's countdown), and STATE_RECORD play only the
+// dry input.  A click whenever the loop was not near a zero crossing, and
+// with Sync on, silence until the beat.
+//
+// The fix: the loop plays on through the wait, as in STATE_PLAY (its
+// fills, and the fade-out of a layer the press ended), and the take fades
+// it out over fade_samples from its first sample, from its old chunk,
+// which the new take does not touch (it is written after it in the
+// buffer; if it would be, the fade stops there).  Only when the loop was
+// heard at the press (Play, Oneshot, Overdub, Replace, Substitute); a
+// muted loop stays silent.  Also with a threshold: the loop plays until
+// the input crosses it.  Here, not in plugin.cc, for the fields below.
+// Set to 0 to revert to the stock (buggy) behaviour.
+#define RECORD_OVER_PLAY_FADE 1
 //------ albEnd ----------------------------------
 
 // TODO, move the whole looping core into a class
@@ -402,9 +433,23 @@ typedef struct {
 
 	//------ albBegin ----------------------------------
 #if TL_OVER_IL_LAYER_FIX
-	// How much further back than OL + IL the current Overdub, Replace or
-	// Substitute writes (TL - IL, or 0); set by beginOverdub().
+	// How much further back than OL + IL the current layer writes (TL -
+	// IL, or 0), and its tail after it; set by beginOverdub(),
+	// beginMultiply(), and beginInsert(), 0 once the tail is through.
 	long lLayerLag;
+#endif
+	//------ albEnd ----------------------------------
+
+	//------ albBegin ----------------------------------
+#if RECORD_OVER_PLAY_FADE
+	// Set by a Record press over a loop that is heard: STATE_TRIG_START
+	// plays it on.  The take's start clears it.
+	bool bTrigStartPlays;
+	// The old loop the take fades out (NULL: none), where it plays, and
+	// its rate.
+	LoopChunk * pRecFadeOutLoop;
+	double dRecFadeOutPos;
+	float fRecFadeOutRate;
 #endif
 	//------ albEnd ----------------------------------
 	

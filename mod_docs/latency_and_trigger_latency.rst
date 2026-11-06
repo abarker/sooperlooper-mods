@@ -399,7 +399,10 @@ the same way: a take that starts ``sync_preroll_ms`` or
 Multiply, and Insert need nothing more for this: with
 ``trigger_latency`` larger, they already read the input from the press,
 and this fork writes it where it was heard (stock wrote it the
-difference late).
+difference late).  Its fade-out follows its last sample, and a layer
+that waits (``input_latency`` larger) fades the old loop from its first
+recorded sample: every value fades the same way, and only where the
+edges land changes.
 
 A restart that ends nothing (Trigger, a oneshot, or ``mute_trigger``
 from Mute, with sync off) starts ``trigger_latency`` + OL into the loop

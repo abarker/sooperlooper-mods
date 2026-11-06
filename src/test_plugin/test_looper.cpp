@@ -434,6 +434,7 @@ TestLooper::run (jack_nframes_t offset, jack_nframes_t nframes)
 		if (i == 0) {
 			for (jack_nframes_t n = 0; n < nframes; ++n) {
 				const float s = out_buf[n];
+				_out_ring[(input_clock + n) & (OUT_RING - 1)] = s;
 				if (s < output_min) output_min = s;
 				if (s > output_max) output_max = s;
 				if (s != 0.0f) {
