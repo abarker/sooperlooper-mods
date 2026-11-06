@@ -1032,11 +1032,32 @@ static inline float startTakeEarly(SooperLooperI *pLS, LoopChunk *loop,
 // a command its edge falls so that the edge lands on the press.  The sound
 // played at the press reaches the input input_latency after it, the command
 // trigger_latency (the command latency) after it.  Negative
-// (trigger_latency > input_latency) is left as 0, the stock timing, for now.
+// (trigger_latency > input_latency) is 0 here: see edgeAdvanceSamples().
 static inline long edgeDelaySamples(const SooperLooperI *pLS)
 {
 	const long s = (long) *pLS->pfInputLatency - (long) *pLS->pfTriggerLatency;
 	return s > 0 ? s : 0;
+}
+
+// edgeAdvanceSamples() (increment (c)): the other way, trigger_latency -
+// input_latency when positive: the sound played at the press reached the
+// input that long before the command, so a take starts that much early,
+// from the input history, and ends that much early, trimmed.  0 otherwise.
+static inline long edgeAdvanceSamples(const SooperLooperI *pLS)
+{
+	const long k = (long) *pLS->pfTriggerLatency - (long) *pLS->pfInputLatency;
+	return k > 0 ? k : 0;
+}
+#if !(REL_SYNC_LATE_HIT || SYNC_PREROLL)
+#error "TRIGGER_LATENCY_ALL_EDGES needs startTakeEarly() and endTakeTrimmed() (REL_SYNC_LATE_HIT or SYNC_PREROLL)"
+#endif
+
+// takeTrimWanted() (increment (c)): a take ended now should end
+// edgeAdvanceSamples() back, and it is longer than that.
+static inline bool takeTrimWanted(const SooperLooperI *pLS, const LoopChunk *loop)
+{
+	return loop && edgeAdvanceSamples(pLS) > 0
+		&& loop->dCurrPos > (double) edgeAdvanceSamples(pLS);
 }
 
 // A take ended by another command, Sync off: end it edgeDelaySamples()
@@ -1047,11 +1068,13 @@ static inline bool deferTakeEnd(SooperLooperI *pLS, LoopChunk *loop,
 				int next, float pulse)
 {
 	if (pLS->state != STATE_RECORD || fSyncMode != 0.0f || bRoundIntegerTempo
-	    || !loop || edgeDelaySamples(pLS) <= 0)
+	    || !loop || (edgeDelaySamples(pLS) <= 0 && !takeTrimWanted(pLS, loop)))
 		return false;
 	pLS->state = STATE_TRIG_STOP;
 	pLS->nextState = next;
 	pLS->lEdgeDelay = edgeDelaySamples(pLS);
+	// The other way (increment (c)): at once, trimmed back to the press.
+	pLS->lEdgeTrim = (pLS->lEdgeDelay > 0) ? 0 : (unsigned long) edgeAdvanceSamples(pLS);
 	pLS->bEdgeStopDeferred = true;
 	pLS->fEdgeStopPulse = pulse;
 	return true;
@@ -1081,11 +1104,14 @@ static inline bool deferLayerEnd(SooperLooperI *pLS, LoopChunk *loop, int next,
 static inline bool deferTakeEndNow(SooperLooperI *pLS, LoopChunk *loop,
 				   int next, float pulse)
 {
-	if (pLS->state != STATE_RECORD || !loop || edgeDelaySamples(pLS) <= 0)
+	if (pLS->state != STATE_RECORD || !loop
+	    || (edgeDelaySamples(pLS) <= 0 && !takeTrimWanted(pLS, loop)))
 		return false;
 	pLS->state = STATE_TRIG_STOP;
 	pLS->nextState = next;
 	pLS->lEdgeDelay = edgeDelaySamples(pLS);
+	// The other way (increment (c)): at once, trimmed back to the press.
+	pLS->lEdgeTrim = (pLS->lEdgeDelay > 0) ? 0 : (unsigned long) edgeAdvanceSamples(pLS);
 	pLS->bEdgeStopDeferred = true;
 	pLS->fEdgeStopPulse = pulse;
 	return true;
@@ -1835,6 +1861,8 @@ activateSooperLooper(LADSPA_Handle Instance) {
   //------ albBegin ----------------------------------
 #if TRIGGER_LATENCY_ALL_EDGES
   pLS->lEdgeDelay = 0;
+  pLS->lEdgeEarly = 0;
+  pLS->lEdgeTrim = 0;
   pLS->bEdgeStopDeferred = false;
   pLS->fEdgeStopPulse = 0.0f;
   pLS->bEdgeEndDeferred = false;
@@ -3883,6 +3911,8 @@ runSooperLooper(LADSPA_Handle Instance,
 	  // A new command clears a pending deferred edge; the site that wants
 	  // one sets it again below.
 	  pLS->lEdgeDelay = 0;
+	  pLS->lEdgeEarly = 0;
+	  pLS->lEdgeTrim = 0;
 	  pLS->bEdgeStopDeferred = false;
 	  pLS->fEdgeStopPulse = 0.0f;
 	  pLS->bEdgeEndDeferred = false;
@@ -3935,6 +3965,19 @@ runSooperLooper(LADSPA_Handle Instance,
 			      pLS->fEdgeStopPulse = 2.0f;
 			      DBG(fprintf(stderr,"%u:%u  Record stop deferred %ld samples\n", pLS->lLoopIndex, pLS->lChannelIndex, pLS->lEdgeDelay));
 			      break;
+		      }
+		      // The other way (trigger_latency > input_latency, increment
+		      // (c)): the press was edgeAdvanceSamples() ago in the input,
+		      // so end the take that much back (the samples past it fade
+		      // into the loop's start), then stop as below: the position
+		      // carries on that much past the new end, so playback stays
+		      // in phase.
+		      if (fSyncMode == 0.0f && (fTrigThresh==0.0f) && !bRoundIntegerTempo
+		          && loop && edgeAdvanceSamples(pLS) > 0
+		          && loop->dCurrPos > (double) edgeAdvanceSamples(pLS)) {
+			      loop->lLoopLength = (unsigned long) loop->dCurrPos;
+			      pLS->fLoopFadeAtten = endTakeTrimmed(pLS, loop,
+				      (unsigned long) edgeAdvanceSamples(pLS), xfadeSamples);
 		      }
 #endif
 		      //------ albEnd ----------------------------------
@@ -4396,6 +4439,16 @@ runSooperLooper(LADSPA_Handle Instance,
 			 // there).
 			 if (fSyncMode == 0.0f && fTrigThresh == 0.0f)
 				 pLS->lEdgeDelay = edgeDelaySamples(pLS);
+			 // The other way (trigger_latency > input_latency): start
+			 // it that much early instead, from the input history, if
+			 // the history holds it as well as this block.
+			 if (fSyncMode == 0.0f && fTrigThresh == 0.0f && edgeAdvanceSamples(pLS) > 0) {
+				 const unsigned long early = (unsigned long) edgeAdvanceSamples(pLS);
+				 if (early + SampleCount <= pLS->lInputBufSize)
+					 pLS->lEdgeEarly = early;
+				 else
+					 noteHistoryShort (pLS, early + SampleCount);
+			 }
 #endif
 			 //------ albEnd ----------------------------------
 #if REL_SYNC_LATE_HIT
@@ -4485,10 +4538,15 @@ runSooperLooper(LADSPA_Handle Instance,
 			   // command, on the press: through STATE_TRIG_STOP, which with
 			   // Sync off ends when the countdown runs out and goes into the
 			   // overdub as below (the stock synced record-into-overdub path).
-			   if (pLS->state == STATE_RECORD && loop && edgeDelaySamples(pLS) > 0) {
+			   if (pLS->state == STATE_RECORD && loop
+			       && (edgeDelaySamples(pLS) > 0 || takeTrimWanted(pLS, loop))) {
 				   pLS->state = STATE_TRIG_STOP;
 				   pLS->nextState = STATE_OVERDUB;
 				   pLS->lEdgeDelay = edgeDelaySamples(pLS);
+				   // The other way (increment (c)): at once, trimmed back
+				   // to the press.
+				   pLS->lEdgeTrim = (pLS->lEdgeDelay > 0) ? 0
+					   : (unsigned long) edgeAdvanceSamples(pLS);
 				   break;
 			   }
 #endif
@@ -6155,6 +6213,19 @@ runSooperLooper(LADSPA_Handle Instance,
 				  }
 				  pLS->lRelSyncPressEarly = 0;
 #endif
+#if TRIGGER_LATENCY_ALL_EDGES
+				  // Increment (c): an unsynced take starts lEdgeEarly early
+				  // (the press), from the input history.  With Sync off the
+				  // press is the loop's start, so the sync position stays 0.
+				  if (fSyncMode == 0.0f && pLS->lEdgeEarly > 0) {
+					  pLS->fLoopFadeAtten = startTakeEarly(pLS, loop, pfInputLatencyBuf,
+						  pLS->lInputBufWritePos + lSampleIndex,
+						  pLS->lEdgeEarly, xfadeSamples);
+					  loop->lSyncPos = loop->lOrigSyncPos = 0;
+					  loop->lStartEarly = 0;
+				  }
+				  pLS->lEdgeEarly = 0;
+#endif
 #if SYNC_PREROLL
 				  // Plain Sync pre-roll: starting on a boundary pulse.
 				  if (fSyncMode == 1.0f && pfSyncInput[lSampleIndex] > 1.5f) {
@@ -6488,6 +6559,19 @@ runSooperLooper(LADSPA_Handle Instance,
 		      loop->lCycleLength = loop->lLoopLength;
 		      loop->lCycles = 1;
 		      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+		      // Increment (c): a take ended at once with trigger_latency >
+		      // input_latency ends lEdgeTrim back, at the press; the samples
+		      // past it fade into the loop's start, and the position stays
+		      // here, lEdgeTrim past the new end (see the restarts and
+		      // Reverse below).
+		      if (pLS->lEdgeTrim > 0 && (unsigned long) lCurrPos > pLS->lEdgeTrim) {
+			      pLS->fLoopFadeAtten = endTakeTrimmed(pLS, loop, pLS->lEdgeTrim, xfadeSamples);
+		      }
+		      else {
+			      pLS->lEdgeTrim = 0;
+		      }
+#endif
 #if REL_SYNC_LATE_HIT
 		      // The take ends at its end point less the early start: drop
 		      // the samples past that (the early start, plus the overrun
@@ -6565,7 +6649,25 @@ runSooperLooper(LADSPA_Handle Instance,
 		      if (pLS->bEdgeStopDeferred && pLS->bEdgeStopReverse) {
 			      pLS->bEdgeStopReverse = false;
 			      fRate = pLS->fCurrRate *= -1.0f;
+			      // Trimmed (increment (c)): the loop has run backwards from
+			      // the new end since the press, lEdgeTrim ago: there, not
+			      // lEdgeTrim past the end.
+			      if (pLS->lEdgeTrim > 0 && loop)
+				      loop->dCurrPos -= 2.0 * (double) pLS->lEdgeTrim;
 		      }
+		      // Trimmed (increment (c)): a restart (Trigger, Oneshot, the
+		      // reversed oneshot of Scratch) happened at the press, lEdgeTrim
+		      // ago: that much further in, in its direction; a oneshot's pass
+		      // that much shorter.
+		      if (pLS->lEdgeTrim > 0 && edgeDeferred && loop
+			  && (edgeNext == STATE_TRIGGER_PLAY || edgeNext == STATE_ONESHOT)) {
+			      loop->dCurrPos += (double) pLS->lEdgeTrim * fRate;
+#if ONESHOT_ONE_PASS_FIX
+			      if (edgeNext == STATE_ONESHOT)
+				      pLS->dOneshotLeft -= (double) pLS->lEdgeTrim;
+#endif
+		      }
+		      pLS->lEdgeTrim = 0;
 #endif
 		      //------ albEnd ----------------------------------
 		      //------ albBegin ----------------------------------

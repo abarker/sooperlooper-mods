@@ -323,6 +323,13 @@ typedef struct {
 	// trigger_latency at the command, counted down once per sample in
 	// STATE_TRIG_START (record start) and STATE_TRIG_STOP (record stop).
 	long lEdgeDelay;
+	// The other way (trigger_latency > input_latency, increment (c)):
+	// samples of input history an unsynced take starts with, set by
+	// MULTI_RECORD for STATE_TRIG_START's first sample; 0 for none.
+	unsigned long lEdgeEarly;
+	// And at a take's end by another command: samples STATE_TRIG_STOP
+	// trims off the take when it fires (at once); 0 for none.
+	unsigned long lEdgeTrim;
 	// A deferred take end (Record, or another command pressed while
 	// recording): when it fires, send fEdgeStopPulse and redo what the
 	// immediate branch does that STATE_TRIG_STOP does not.

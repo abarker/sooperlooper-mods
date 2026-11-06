@@ -102,10 +102,12 @@ class LayerEndsMixin:
     """Increment 2a: Record -> Overdub, and a Replace or Substitute ended
     by the same command.  Replace and Substitute write the input itself
     (no sum), so the newest input frame anywhere in the loop is the last
-    sample the layer took: s - 1 after the ending press (-1 at s = 0)."""
+    sample the layer took: s - 1 after the ending press (-1 at s = 0).
+    s is signed: at s < 0 (increment (c), entry 42) the take starts -s
+    early and the layer ends -s before its command."""
 
     def s(self):
-        return max(0, self.IL - self.TL)
+        return self.IL - self.TL
 
     def newest_offset(self, ref, span):
         """The newest input frame in the loop, as a signed offset from
@@ -150,10 +152,12 @@ class LayerEndsMixin:
 class TakeEndsMixin:
     """Increment 2b-i: a take ended by another command, Sync off, ends on
     the press, so it is the press interval long.  Read on the CycleLength
-    port: Insert's new chunk is two takes long, its cycle one."""
+    port: Insert's new chunk is two takes long, its cycle one.  s is
+    signed: at s < 0 (increment (c)) the take ends -s before the command,
+    trimmed, and the loop runs on from the press."""
 
     def s(self):
-        return max(0, self.IL - self.TL)
+        return self.IL - self.TL
 
     def cycle_length(self):
         return int(round(self.looper.get_control_value(test_engine.CycleLength)
@@ -241,7 +245,8 @@ class TakeEndsMixin:
             val = self.looper.out_first
             if self.looper.out_first_frame != fr:
                 continue                  # raced the callback
-            pos = (fr - r + self.IL + self.OL) % L
+            # At s < 0 the pause came -s after the take's end (the press).
+            pos = (fr - r + self.IL + self.OL + max(0, -self.s())) % L
             if fr - r < 128 or pos < 64 or pos > L - 64:
                 continue                  # the fade-in, and the seam
             self.assertEqual(frame_of(val), self.loop_frame(pos),
@@ -451,6 +456,17 @@ class TestTriggerLatencyTakeEndsEqual(TakeEndsMixin, TriggerLatencyAllEdgesTestC
     TL = 600            # s = 0: stock timing
 
 
+class TestTriggerLatencyTakeEndsAbove(TakeEndsMixin, TriggerLatencyAllEdgesTestCase):
+
+    TL = 900            # s = -300 (increment (c)): trimmed at once
+
+
+class TestTriggerLatencyLayerEndsAbove(LayerEndsMixin, TriggerLatencyAllEdgesTestCase):
+
+    TL = 900            # s = -300: the take (increment (c)) and the layers
+                        # (entry 42's TL_OVER_IL_LAYER_FIX)
+
+
 class TestTriggerLatencyLayerEndsEqual(LayerEndsMixin, TriggerLatencyAllEdgesTestCase):
 
     TL = 600            # s = 0: stock timing
@@ -466,14 +482,11 @@ class TestTriggerLatencyEqualToInput(TriggerLatencyAllEdgesTestCase):
         self.assertEqual(self.length(), s1 - s0)
 
 
-class TestTriggerLatencyAboveInput(TriggerLatencyAllEdgesTestCase):
+class TestTriggerLatencyAboveInput(TestTriggerLatencyAllEdges):
 
-    TL = 900            # s < 0: left at the stock timing for now
-
-    def testStartsAtThePress(self):
-        s0, s1 = self.take(int(0.6 * self.cycle))
-        self.assertStartsAt(s0, 0)
-        self.assertEqual(self.length(), s1 - s0)
+    TL = 900            # s = -300 (increment (c)): the take starts 300
+                        # samples before the command, from the input
+                        # history, and ends as much before the second
 
 
 from testdef_rel_sync_pos import RelSyncPosTestCase, CYCLE, QUARTERS

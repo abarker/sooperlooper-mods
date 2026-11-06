@@ -80,10 +80,10 @@ class LayerPlacementTestCase(RelSyncLateHitTestCase):
         self.assertEqual(self.length(), s1 - s0)
         self.wait_buffers(4)
         self.looper.input_ramp = True
-        # With TRIGGER_LATENCY_ALL_EDGES and s = IL - TL > 0 the take
-        # starts and ends s after each press (same length): use the
-        # frames where it really did.
-        shift = max(0, self.IL - self.TL) if ALL_EDGES else 0
+        # With TRIGGER_LATENCY_ALL_EDGES the take starts and ends s =
+        # IL - TL after each press (before, from the history and trimmed,
+        # when s < 0; same length): use the frames where it really did.
+        shift = (self.IL - self.TL) if ALL_EDGES else 0
         return s0 + shift, s1 + shift
 
     def reachable(self, s1, desired, below=False):
