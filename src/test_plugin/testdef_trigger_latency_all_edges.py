@@ -255,6 +255,52 @@ class TakeEndsMixin:
         self.assertGreater(checked, 4)
 
 
+class RestartsMixin:
+    """Increment (d): an unsynced restart that ends no take (Trigger,
+    Oneshot, mute_trigger from Mute) happened at the press,
+    trigger_latency before its command, so it starts trigger_latency + OL
+    into the loop (input_latency + OL before, RESTART_POSITION_FIX's; the
+    same at TL = IL)."""
+
+    def restart(self, command, state, from_mute=False):
+        # Long enough that a oneshot's pass outlasts the checks.
+        s0, s1 = self.take(int(1.6 * self.cycle))
+        L = s1 - s0
+        self.wait_buffers(4)
+        if from_mute:
+            self.engine.request("MUTE")
+            self.wait_state("Muted")
+            self.wait_buffers(2)
+        r = self.press_at(command, self.looper.sync_clock + 2 * self.buf)
+        self.assertEqual(self.state(), state)
+        checked = 0
+        for _ in range(10):
+            self.wait_buffers(1)
+            fr = self.looper.out_first_frame
+            val = self.looper.out_first
+            if self.looper.out_first_frame != fr:
+                continue                  # raced the callback
+            pos = (fr - r + self.TL + self.OL) % L
+            if fr - r < 128 or pos < 64 or pos > L - 64:
+                continue                  # the fade-in, and the seam
+            self.assertEqual(frame_of(val), self.loop_frame(pos),
+                             f"{command}: {fr - r} samples after it, not loop position {pos}")
+            checked += 1
+        self.assertGreater(checked, 3)
+
+    def testTrigger_FromPlay(self):
+        self.restart("TRIGGER", "Playing")
+
+    def testTrigger_FromMute(self):
+        self.restart("TRIGGER", "Playing", from_mute=True)
+
+    def testMuteTrigger_FromMute(self):
+        self.restart("MUTE_TRIGGER", "Playing", from_mute=True)
+
+    def testOneshot_FromPlay(self):
+        self.restart("ONESHOT", "OneShot")
+
+
 class LayerEndsByOtherMixin:
     """Increment 2b-ii: a Replace layer ended by a different command ends
     on the press: the newest input frame in the loop is s - 1 after it
@@ -465,6 +511,20 @@ class TestTriggerLatencyLayerEndsAbove(LayerEndsMixin, TriggerLatencyAllEdgesTes
 
     TL = 900            # s = -300: the take (increment (c)) and the layers
                         # (entry 42's TL_OVER_IL_LAYER_FIX)
+
+
+class TestTriggerLatencyRestarts(RestartsMixin, TriggerLatencyAllEdgesTestCase):
+    pass                # s = 400
+
+
+class TestTriggerLatencyRestartsEqual(RestartsMixin, TriggerLatencyAllEdgesTestCase):
+
+    TL = 600            # s = 0: stock (IL + OL)
+
+
+class TestTriggerLatencyRestartsAbove(RestartsMixin, TriggerLatencyAllEdgesTestCase):
+
+    TL = 900            # s = -300
 
 
 class TestTriggerLatencyLayerEndsEqual(LayerEndsMixin, TriggerLatencyAllEdgesTestCase):

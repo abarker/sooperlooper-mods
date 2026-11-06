@@ -28,6 +28,7 @@ import test_engine
 import engine_wrapper
 
 IL, OL = 3000, 4000      # unequal, and far larger than a few buffers
+ALL_EDGES = bool(getattr(test_engine, "TRIGGER_LATENCY_ALL_EDGES", 0))
 
 
 class TriggerLatencyTestCase(unittest.TestCase):
@@ -74,6 +75,14 @@ class TriggerLatencyTestCase(unittest.TestCase):
         self.assertEqual(actual, engine_wrapper.states[state],
                          (engine_wrapper.states[actual] + " != " + state)
                          if msg is None else msg)
+
+    def unsynced_start(self):
+        """Where an unsynced restart that ends no take starts: IL + OL;
+        trigger_latency + OL with TRIGGER_LATENCY_ALL_EDGES (increment (d):
+        it happened at the press)."""
+        if ALL_EDGES:
+            return int(self.looper.get_control_value(test_engine.TriggerLatency)) + OL
+        return IL + OL
 
     def position(self):
         """Loop position in samples."""
@@ -131,7 +140,7 @@ class TestTriggerLatency(TriggerLatencyTestCase):
         self.engine.request("TRIGGER")
         self.wait_buffers(1)
         self.assertState("Playing")
-        self.assertStartsAt(IL + OL, 3, "trigger from Mute")
+        self.assertStartsAt(self.unsynced_start(), 3, "trigger from Mute")
 
     def testMuteTriggerFromMute_StartsAtLatency(self):
         """mute_trigger from Mute (the rig's restart) starts at IL + OL."""
@@ -139,7 +148,7 @@ class TestTriggerLatency(TriggerLatencyTestCase):
         self.engine.request("MUTE_TRIGGER")
         self.wait_buffers(1)
         self.assertState("Playing")
-        self.assertStartsAt(IL + OL, 3, "mute_trigger from Mute")
+        self.assertStartsAt(self.unsynced_start(), 3, "mute_trigger from Mute")
 
     def testTriggerWhilePlaying_StartsAtLatency(self):
         """A restart while playing starts at IL + OL too."""
@@ -147,7 +156,7 @@ class TestTriggerLatency(TriggerLatencyTestCase):
         self.wait_buffers(self.record_bufs() // 2)
         self.engine.request("TRIGGER")
         self.wait_buffers(1)
-        self.assertStartsAt(IL + OL, 3, "trigger while playing")
+        self.assertStartsAt(self.unsynced_start(), 3, "trigger while playing")
 
     def testSyncedTrigger_StartsAtLatencyOnPulse(self):
         """With sync on (tempo 0, so no slack window), a trigger waits for
@@ -191,7 +200,7 @@ class TestTriggerLatency(TriggerLatencyTestCase):
         self.engine.request("ONESHOT")
         self.wait_buffers(1)
         self.assertState("OneShot")
-        self.assertStartsAt(IL + OL, 3, "oneshot from Mute")
+        self.assertStartsAt(self.unsynced_start(), 3, "oneshot from Mute")
 
     def testSyncedOneShot_StartsAtLatencyOnPulse(self):
         """A synced oneshot waits for the pulse, then starts at IL + OL."""

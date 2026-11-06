@@ -5922,6 +5922,20 @@ runSooperLooper(LADSPA_Handle Instance,
 					      startOneshotPass(pLS, loop, skipped);
 				      }
 #endif
+#if TRIGGER_LATENCY_ALL_EDGES
+				      // Increment (d): as Trigger's -- an unsynced oneshot that
+				      // ends no take is trigger_latency + OL in, and its pass
+				      // that much shorter (it began at the press).
+				      if (fSyncMode == 0.0f && prevstate != STATE_RECORD
+					  && prevstate != STATE_TRIG_STOP) {
+					      const double adv = (double) *pLS->pfTriggerLatency
+						      - (double) *pLS->pfInputLatency;
+					      loop->dCurrPos += adv * fRate;
+#if ONESHOT_ONE_PASS_FIX
+					      pLS->dOneshotLeft -= adv;
+#endif
+				      }
+#endif
 				      //------ albEnd ----------------------------------
 				      
 				      // then send out a sync here for any slaves
@@ -5992,6 +6006,19 @@ runSooperLooper(LADSPA_Handle Instance,
 					// sample, is one less than its distance from the pulse.
 					if (fSyncMode >= 1.0f && pLS->lSamplesSinceSync < eighthSamples) {
 						loop->dCurrPos += (pLS->fCurrRate > 0) ? 1.0 : -1.0;
+					}
+#endif
+#if TRIGGER_LATENCY_ALL_EDGES
+					// Increment (d): an unsynced restart that ends no take
+					// happened at the press, trigger_latency before this
+					// command: trigger_latency + OL into the loop, not
+					// input_latency + OL (RESTART_POSITION_FIX's), so it is
+					// heard in time.  A synced restart (slack window) is
+					// placed by the grid, not the press.
+					if (fSyncMode == 0.0f && prevstate != STATE_RECORD
+					    && prevstate != STATE_TRIG_STOP) {
+						loop->dCurrPos += ((double) *pLS->pfTriggerLatency
+								   - (double) *pLS->pfInputLatency) * pLS->fCurrRate;
 					}
 #endif
 					//------ albEnd ----------------------------------
