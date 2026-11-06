@@ -45,7 +45,12 @@ class RelSyncPosTestCase(RelSyncLateHitTestCase):
             f += self.buf
         s0 = self.press_at("RECORD", f)
         self.assertEqual(self.state(), "Recording")
-        self.press_at("RECORD", s0 + cycles * CYCLE - 6 * self.buf)
+        # Well clear of both end points (3/8 cycle before the last), so
+        # it waits for the last whatever the latencies: 6 blocks before
+        # it was only 1864 past the one before at 1024-sample blocks, and
+        # with a trigger_latency and TRIGGER_LATENCY_ALL_EDGES (windows
+        # from the press) that could count as a late stop there.
+        self.press_at("RECORD", s0 + cycles * CYCLE - 3 * CYCLE // 8)
         self.wait_state("Playing")
         self.assertEqual(self.length(), cycles * CYCLE)
         return s0 % CYCLE

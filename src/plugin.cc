@@ -806,6 +806,30 @@ static void sl_dbg_open() {
 //
 // The eighthPerCycle parameter is retained in the signature for call-site
 // compatibility but is no longer used in the formula.
+#if TRIGGER_LATENCY_ALL_EDGES
+// commandWindowExtra() (increment (e), TRIGGER_LATENCY_ALL_EDGES): how
+// much later than its press a command arrives, trigger_latency.  Whether a
+// press is on time, late within a window, or waits for the next boundary
+// is decided from the press: every window, counted from the boundary to
+// the command's arrival, is this much longer.  Placement still counts to
+// the arrival: that is where the loop must be now.
+static inline unsigned long commandWindowExtra(const SooperLooperI *pLS)
+{
+	const float tl = *pLS->pfTriggerLatency;
+	return tl > 0.0f ? (unsigned long) tl : 0;
+}
+
+// inSlackWindow() (increment (e)): the slack window of a Trigger or
+// Oneshot with Sync on (less than an eighth after a pulse, it acts at
+// once), from the press.  At least 1, as run()'s eighthSamples is when no
+// tempo is set (transitionToNext()'s is 0), so the two agree.
+static inline bool inSlackWindow(const SooperLooperI *pLS, unsigned long eighthSamples)
+{
+	return (unsigned long) pLS->lSamplesSinceSync
+		< (eighthSamples > 0 ? eighthSamples : 1) + commandWindowExtra(pLS);
+}
+#endif
+
 // lateHitWindowWanted(): the window the settings ask for, before the
 // input-history limit below; effectiveLateHitWindow() is what applies.  A
 // press between the two is one a longer history would have corrected
@@ -818,10 +842,17 @@ static inline unsigned long lateHitWindowWanted(const SooperLooperI *pLS) {
     // late for the one before it.
     const double fraction = std::min ((double) g_late_hit_max_quant_unit_fraction, 0.5);
     double fractionLimit = fraction * (double) pLS->lLastSyncPeriodSamples;
+#if TRIGGER_LATENCY_ALL_EDGES
+    // Increment (e): the window, and the half-unit cap, are the press's;
+    // the command arrives trigger_latency later.
+    const unsigned long extra = commandWindowExtra (pLS);
+#else
+    const unsigned long extra = 0;
+#endif
     // If fractionLimit >= msLimit the ms term wins; cast is safe because
     // fractionLimit < msLimit guarantees it fits in unsigned long.
-    if (fractionLimit >= (double)msLimit) return msLimit;
-    return (unsigned long)fractionLimit;
+    if (fractionLimit >= (double)msLimit) return msLimit + extra;
+    return (unsigned long)fractionLimit + extra;
 }
 
 static inline unsigned long effectiveLateHitWindow(const SooperLooperI *pLS,
@@ -3034,7 +3065,14 @@ static LoopChunk * transitionToNext(SooperLooperI *pLS, LoopChunk *loop, int nex
 
 			      //loop->dCurrPos = fmod(loop->dCurrPos, loop->lLoopLength); // wrapx
 
+			      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+			      // Increment (e): the slack window, from the press.
+			      if (*pLS->pfSyncMode >= 1.0f && inSlackWindow(pLS, eighthSamples)) {
+#else
 			      if (*pLS->pfSyncMode >= 1.0f && pLS->lSamplesSinceSync < eighthSamples) {
+#endif
+			      //------ albEnd ----------------------------------
 				      // if rel sync is on, shift it forward to account for not being quantized
 				      loop->dCurrPos += pLS->lSamplesSinceSync; // jlc
 				      DBG(fprintf(stderr, "%u:%u  after adding %u  pos = %g\n", pLS->lLoopIndex, pLS->lChannelIndex, pLS->lSamplesSinceSync, loop->dCurrPos));
@@ -3042,7 +3080,14 @@ static LoopChunk * transitionToNext(SooperLooperI *pLS, LoopChunk *loop, int nex
 		      }
 		      else {
 			      loop->dCurrPos = (loop->lLoopLength - loop->lSyncPos) - 1;
+			      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+			      // Increment (e): the slack window, from the press.
+			      if (*pLS->pfSyncMode >= 1.0f && inSlackWindow(pLS, eighthSamples)) {
+#else
 			      if (*pLS->pfSyncMode >= 1.0f && pLS->lSamplesSinceSync < eighthSamples) {
+#endif
+			      //------ albEnd ----------------------------------
 				      // if rel sync is on, shift it forward to account for not being quantized
 				      loop->dCurrPos -= pLS->lSamplesSinceSync; // jlc
 				      DBG(fprintf(stderr, "%u:%u  after sub %u  pos = %g\n", pLS->lLoopIndex, pLS->lChannelIndex, pLS->lSamplesSinceSync, loop->dCurrPos));
@@ -3090,7 +3135,14 @@ static LoopChunk * transitionToNext(SooperLooperI *pLS, LoopChunk *loop, int nex
 		      if (pLS->fCurrRate > 0) {
 			      loop->dCurrPos = (loop->lLoopLength - loop->lSyncPos) + *pLS->pfSyncOffsetSamples;
 
+			      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+			      // Increment (e): the slack window, from the press.
+			      if (*pLS->pfSyncMode == 2.0f && inSlackWindow(pLS, eighthSamples)) {
+#else
 			      if (*pLS->pfSyncMode == 2.0f && pLS->lSamplesSinceSync < eighthSamples) {
+#endif
+			      //------ albEnd ----------------------------------
 				      // if rel sync is on, shift it forward to account for not being quantized
 				      loop->dCurrPos += pLS->lSamplesSinceSync; // jlc
 				      DBG(fprintf(stderr, "%u:%u  after adding %u  pos = %g\n", pLS->lLoopIndex, pLS->lChannelIndex, pLS->lSamplesSinceSync, loop->dCurrPos));
@@ -3098,7 +3150,14 @@ static LoopChunk * transitionToNext(SooperLooperI *pLS, LoopChunk *loop, int nex
 		      }
 		      else {
 			      loop->dCurrPos = (loop->lLoopLength - loop->lSyncPos) - 1;
+			      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+			      // Increment (e): the slack window, from the press.
+			      if (*pLS->pfSyncMode == 2.0f && inSlackWindow(pLS, eighthSamples)) {
+#else
 			      if (*pLS->pfSyncMode == 2.0f && pLS->lSamplesSinceSync < eighthSamples) {
+#endif
+			      //------ albEnd ----------------------------------
 				      // if rel sync is on, shift it forward to account for not being quantized
 				      loop->dCurrPos -= pLS->lSamplesSinceSync; // jlc
 				      DBG(fprintf(stderr, "%u:%u  after sub %u  pos = %g\n", pLS->lLoopIndex, pLS->lChannelIndex, pLS->lSamplesSinceSync, loop->dCurrPos));
@@ -3112,7 +3171,14 @@ static LoopChunk * transitionToNext(SooperLooperI *pLS, LoopChunk *loop, int nex
 #if ONESHOT_ONE_PASS_FIX
 		      // One loop length, less the count added above (Rel Sync).
 		      startOneshotPass(pLS, loop,
+			      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+			      // Increment (e): the slack window, from the press.
+			      (*pLS->pfSyncMode == 2.0f && inSlackWindow(pLS, eighthSamples))
+#else
 			      (*pLS->pfSyncMode == 2.0f && pLS->lSamplesSinceSync < eighthSamples)
+#endif
+			      //------ albEnd ----------------------------------
 			      ? (double) pLS->lSamplesSinceSync : 0.0);
 #endif
 		      //------ albEnd ----------------------------------
@@ -5203,6 +5269,11 @@ runSooperLooper(LADSPA_Handle Instance,
 	   if (pLS->lLastSyncPeriodSamples != ULONG_MAX
 	       && muteShiftSamples > pLS->lLastSyncPeriodSamples / 2)
 		   muteShiftSamples = pLS->lLastSyncPeriodSamples / 2;
+#if TRIGGER_LATENCY_ALL_EDGES
+	   // Increment (e): the window (and its cap) are the press's; the
+	   // command arrives trigger_latency later.
+	   muteShiftSamples += commandWindowExtra (pLS);
+#endif
 	   unsigned long muteT = lGlobalSyncAtButtonPress;
 	   bool withinMuteWindow = (muteT > 0
 	                            && muteT <= muteShiftSamples
@@ -5848,7 +5919,14 @@ runSooperLooper(LADSPA_Handle Instance,
 				// Ending a layer when this acts at once (Sync off, or the
 				// slack window): end it on the press (2b-ii, 2b-iii).
 				const bool restartNow = (fSyncMode == 0.0f
+					//------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+					// Increment (e): the slack window, from the press.
+					|| (fSyncMode >= 1.0f && inSlackWindow(pLS, eighthSamples)));
+#else
 					|| (fSyncMode >= 1.0f && pLS->lSamplesSinceSync < eighthSamples));
+#endif
+					//------ albEnd ----------------------------------
 				if (restartNow && deferLayerEnd(pLS, loop, STATE_ONESHOT, 2.0f))
 					break;
 				// Ending a take in the slack window, Sync on (2b-iii).
@@ -5858,7 +5936,14 @@ runSooperLooper(LADSPA_Handle Instance,
 					break;
 #endif
 				//------ albEnd ----------------------------------
+				//------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+				// Increment (e): the slack window, from the press.
+				if (((fSyncMode == 0.0f) || (fSyncMode >= 1.0f && inSlackWindow(pLS, eighthSamples))) // give it some slack on relsync
+#else
 				if (((fSyncMode == 0.0f) || (fSyncMode >= 1.0f && pLS->lSamplesSinceSync < eighthSamples)) // give it some slack on relsync
+#endif
+				//------ albEnd ----------------------------------
 				    && !(pLS->state == STATE_RECORD && bRoundIntegerTempo)) {
 					DBG(fprintf(stderr,"Starting ONESHOT state\n"));
 					pLS->fPlayFadeDelta = 1.0f / xfadeSamples;
@@ -5880,7 +5965,14 @@ runSooperLooper(LADSPA_Handle Instance,
 				      // start as far in as the press is past the pulse (the
 				      // count + 1, read before this block's first sample), as
 				      // Trigger does, so the pass is in time with the beat.
+				      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+				      // Increment (e): the slack window, from the press.
+				      if (fSyncMode >= 1.0f && inSlackWindow(pLS, eighthSamples)) {
+#else
 				      if (fSyncMode >= 1.0f && pLS->lSamplesSinceSync < eighthSamples) {
+#endif
+				      //------ albEnd ----------------------------------
 					      if (pLS->fCurrRate > 0)
 						      loop->dCurrPos += pLS->lSamplesSinceSync + 1;
 					      else
@@ -5916,7 +6008,14 @@ runSooperLooper(LADSPA_Handle Instance,
 				      {
 					      double skipped = 0.0;
 #if ONESHOT_SLACK_FIX
+					      //------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+					      // Increment (e): the slack window, from the press.
+					      if (fSyncMode >= 1.0f && inSlackWindow(pLS, eighthSamples))
+#else
 					      if (fSyncMode >= 1.0f && pLS->lSamplesSinceSync < eighthSamples)
+#endif
+					      //------ albEnd ----------------------------------
 						      skipped = (double) pLS->lSamplesSinceSync + 1.0;
 #endif
 					      startOneshotPass(pLS, loop, skipped);
@@ -5982,7 +6081,14 @@ runSooperLooper(LADSPA_Handle Instance,
 				// Ending a layer when this acts at once (Sync off, or the
 				// slack window): end it on the press (2b-ii, 2b-iii).
 				const bool restartNow = (fSyncMode == 0.0f
+					//------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+					// Increment (e): the slack window, from the press.
+					|| (fSyncMode >= 1.0f && inSlackWindow(pLS, eighthSamples)));
+#else
 					|| (fSyncMode >= 1.0f && pLS->lSamplesSinceSync < eighthSamples));
+#endif
+					//------ albEnd ----------------------------------
 				if (restartNow && deferLayerEnd(pLS, loop, STATE_TRIGGER_PLAY, 2.0f))
 					break;
 				// Ending a take in the slack window, Sync on (2b-iii).
@@ -5992,7 +6098,14 @@ runSooperLooper(LADSPA_Handle Instance,
 					break;
 #endif
 				//------ albEnd ----------------------------------
+				//------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+				// Increment (e): the slack window, from the press.
+				if ((fSyncMode == 0.0f || (fSyncMode >= 1.0f && inSlackWindow(pLS, eighthSamples))) // give it some slack 
+#else
 				if ((fSyncMode == 0.0f || (fSyncMode >= 1.0f && pLS->lSamplesSinceSync < eighthSamples)) // give it some slack 
+#endif
+				//------ albEnd ----------------------------------
 				    && !(pLS->state == STATE_RECORD && bRoundIntegerTempo)) 
 				{
 
@@ -6004,7 +6117,14 @@ runSooperLooper(LADSPA_Handle Instance,
 					// Acting at once in the slack window: transitionToNext
 					// added the count, which here, before this block's first
 					// sample, is one less than its distance from the pulse.
+					//------ albBegin ----------------------------------
+#if TRIGGER_LATENCY_ALL_EDGES
+					// Increment (e): the slack window, from the press.
+					if (fSyncMode >= 1.0f && inSlackWindow(pLS, eighthSamples)) {
+#else
 					if (fSyncMode >= 1.0f && pLS->lSamplesSinceSync < eighthSamples) {
+#endif
+					//------ albEnd ----------------------------------
 						loop->dCurrPos += (pLS->fCurrRate > 0) ? 1.0 : -1.0;
 					}
 #endif

@@ -388,10 +388,13 @@ default; the rest are not built.  Everything above describes the default.
   Substitute, Multiply, and Insert need no option for this: with
   ``trigger_latency`` larger, they already read the input from the
   press, and this fork writes it where it was heard (stock wrote it the
-  difference late).  Not covered yet: restarts that end nothing.
+  difference late).  With the option on, a restart that ends nothing
+  (Trigger, a oneshot, or ``mute_trigger`` from Mute, with sync off)
+  starts ``trigger_latency`` + OL into the loop instead of IL + OL, as it
+  happened at the press; and every window (the late-hit windows, the
+  mute window, and the slack window in which a Trigger or oneshot with
+  sync on acts at once) is decided from the press: it is
+  ``trigger_latency`` longer, counted to the command's arrival.  Where the
+  loop is placed still counts to the arrival.
 * **A measuring mode in** ``sllatency``: presses beside a mic, reporting
   CL - IL and offering to set ``trigger_latency``.
-* **The late-hit window** measures lateness from the command's arrival,
-  so CL uses up part of the window; measuring from arrival minus
-  ``trigger_latency`` would be consistent (minor with a window of a few
-  hundred milliseconds).
