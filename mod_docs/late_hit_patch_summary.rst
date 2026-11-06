@@ -1521,8 +1521,42 @@ own playing without delay (zero-latency monitoring); with software
 monitoring, see section 2.6 of the setup guide.  The click
 must come back on the same audio interface it was played from; two
 separately clocked devices drift against each other.  It tests a
-quantized recording, not the timing of a live pedal press (trigger
-latency).
+quantized recording; the timing of a live pedal press is ``--trigger``'s
+job (below).
+
+**Trigger latency (``--trigger``).**  Measures how late a pedal's command
+reaches SooperLooper after the press: the right ``trigger_latency``.  Set
+the input and output latency first (the run above): the result goes with
+the ``input_latency`` setting, and must be measured again after it
+changes.  Put a mic right against the pedal, on the same interface as the
+performance, and run ``sllatency --trigger --in PORT`` (the mic's
+capture port; without ``--in`` it asks).  Then press one button firmly,
+about once a second, 20 times (``--presses``).
+
+The tool sends nothing.  It listens, beside SooperLooper, to every MIDI
+port connected to SooperLooper's ``midi_in`` (or ``--midi PORT``), so it
+sees each command at the frame SooperLooper acts on, through whatever is
+in between, such as a remapper.  For each press it finds the switch's
+click in the mic, the strongest sound before the command, timed where it
+last rises through half its peak (so the foot's softer sound before it is
+not taken for it), and reports
+
+    trigger_latency = input_latency + (command frame - click frame)
+
+per press, then the median and spread.  With that value SooperLooper
+starts and ends a recording where the click arrived, for the current
+``input_latency`` setting, even if that setting is a little off.  It
+offers to apply the value to every loop (autoset off) and to save it in
+the session file, as the round-trip run does.
+
+The presses really act: what they do depends on SooperLooper's bindings
+and a remapper's current bank, so choose a harmless command (Mute on an
+empty loop).  Choose a button whose command goes out on the press: a press
+whose command comes more than 40 ms after its click (one waiting for a
+double press or long press) is flagged and left out.  If the click is too
+faint, it says so and suggests moving the mic closer, or clapping by the
+mic at the moment of pressing (less exact).  ``--il N`` gives the mic's
+input latency when the mic is on another interface.
 
 **Platforms.**  Tested on Linux with jackd (started by QJackctl).  It is
 written to run anywhere JACK, Python 3 and the ``jack`` module do, but is

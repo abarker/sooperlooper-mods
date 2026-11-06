@@ -189,6 +189,7 @@ def sl_tests(engine, session):
             print(report)
         fails += stereo_input_test(port, client, il, ol)
         fails += apply_save_tests(sl, port, client, tmp, session, il, ol)
+        fails += trigger_tool_tests(sl, port, client, tmp, session, il)
         n = sl.ping()
         after = {g: sl.get(g) for g in ("sync_source", "tempo", "eighth_per_cycle")}
         after["loop0 quantize"] = sl.get("quantize", loop=0)
@@ -754,6 +755,205 @@ def suggest_tests():
     return fails
 
 
+# ------------------------------------------------------------ --trigger
+
+def synth_presses(n, il, late, sr=SR, spacing=0.9, level=0.5, noise=0.002,
+                  foot=0.1, scatter=0, gesture=(), seed=5):
+    """Synthetic mic audio and command frames for n presses: each press's
+    click (a sharp broadband burst) at press + il, after a softer foot
+    sound (foot x level, broadband, 12 to 3 ms before it) and a low thump;
+    its command at press + late (+ up to +/-scatter, + 300 ms for the
+    presses in `gesture`).  Returns (audio, [(frame, 0, bytes)], clicks)."""
+    rng = np.random.default_rng(seed)
+    total = int((n * spacing + 2.0) * sr)
+    audio = (noise * rng.standard_normal(total)).astype(np.float64)
+    k = np.arange(int(0.003 * sr))
+    t = np.arange(int(0.02 * sr))
+    events, clicks = [], []
+    for i in range(n):
+        press = int((1.0 + i * spacing) * sr) + int(rng.integers(0, 256))
+        click = press + il
+        clicks.append(click)
+        a = click - int(0.012 * sr)
+        audio[a:a + int(0.009 * sr)] += foot * level * rng.standard_normal(int(0.009 * sr))
+        th = click - int(0.006 * sr)
+        audio[th:th + len(t)] += 2 * level * np.sin(2 * np.pi * 80 * t / sr) * np.exp(-t / (0.005 * sr))
+        audio[click:click + len(k)] += level * rng.standard_normal(len(k)) * np.exp(-k / (0.0008 * sr))
+        cmd = press + late + (int(rng.integers(-scatter, scatter + 1)) if scatter else 0)
+        if i in gesture:
+            cmd += int(0.3 * sr)
+        events.append((cmd, 0, bytes([0xB0, 22, 127])))
+        events.append((cmd + int(0.15 * sr), 0, bytes([0xB0, 22, 0])))   # release
+    return audio.astype(np.float32), events, clicks
+
+
+class FakePedal:
+    """A pedal with a mic against it: plays synth_presses' audio on "mic"
+    and sends their commands on "cmd", frame-exact, from its first cycle."""
+
+    def __init__(self, il, late, n=12, spacing=0.5, start=3.0, name="fakepedal"):
+        self.c = jack.Client(name, no_start_server=True)
+        self.ao = self.c.outports.register("mic")
+        self.mo = self.c.midi_outports.register("cmd")
+        audio, events, _ = synth_presses(n, il, late, spacing=spacing)
+        lead = int((start - 1.0) * SR)          # synth_presses starts at 1 s
+        self.audio = np.concatenate([np.zeros(lead, dtype=np.float32), audio])
+        self.events = sorted((f + lead, d) for f, _, d in events)
+        self.f0 = None
+        self.c.set_process_callback(self.process)
+
+    def process(self, frames):
+        f = self.c.last_frame_time
+        if self.f0 is None:
+            self.f0 = f
+        p = f - self.f0
+        buf = self.ao.get_array()
+        seg = self.audio[p:p + frames]
+        buf[:len(seg)] = seg
+        buf[len(seg):] = 0.0
+        self.mo.clear_buffer()
+        for fr, d in self.events:
+            if p <= fr < p + frames:
+                self.mo.write_midi_event(fr - p, d)
+
+
+def run_trigger_tool(sl_port, client, late, il, extra=(), answers=None):
+    """--trigger through a FakePedal wired to SooperLooper's midi_in;
+    returns (measured trigger latency or None, report)."""
+    import tempfile
+    pedal = FakePedal(il, late)
+    pedal.c.activate()
+    pedal.c.connect("fakepedal:cmd", "%s:midi_in" % client)
+    cmd = [sys.executable, os.path.join(HERE, "sllatency.py"), "--trigger",
+           "--in", "fakepedal:mic", "--presses", "8", "--seconds", "20",
+           "--sl-port", str(sl_port), "--sl-client", client] + list(extra)
+    if answers is None:
+        cmd.append("--yes")
+    try:
+        out = subprocess.run(cmd, input=answers, capture_output=True, text=True, timeout=60,
+                             env=dict(os.environ, HOME=tempfile.mkdtemp(prefix="sllat_home_"))
+                             ).stdout
+    finally:
+        pedal.c.deactivate()
+        pedal.c.close()
+    tl = None
+    for line in out.splitlines():
+        if "Trigger latency:" in line:
+            tl = int(line.split("Trigger latency:")[1].split()[0])
+    return tl, out
+
+
+def trigger_tool_tests(sl, port, client, tmp, session, il):
+    """The whole --trigger run on the dummy server: it must find the
+    pedal's port on SooperLooper's midi_in, read input_latency from
+    SooperLooper, measure the known lateness, and apply and save it (the
+    file changed only in trigger_latency and auto_latency)."""
+    import glob
+    fails = 0
+    before = sl.get("trigger_latency", loop=0)
+    late = 685
+    import re
+    tl, report = run_trigger_tool(port, client, late, int(il))
+    rows = len(re.findall(r"(?m)^\s+\d+\s+-?\d+\s+-?[\d.]+ ms", report))
+    ok = (tl is not None and abs(tl - late) <= 4 and "fakepedal:cmd" in report
+          and rows == 8 and sl.get("trigger_latency", loop=0) == before)
+    fails += not ok
+    print("%s --trigger, lateness %d, IL %d: measured %s from %d presses (asked 8; the "
+          "pedal sends 12), report only (trigger_latency still %s)"
+          % ("PASS" if ok else "FAIL", late, il, tl, rows, sl.get("trigger_latency", loop=0)))
+    if not ok:
+        print(report)
+
+    path = _session_file(sl, tmp, session, "trigger.slsess")
+    orig = open(path).read()
+    tl, report = run_trigger_tool(port, client, 900, int(il),
+                                  ["--apply", "--save", "--session-file", path])
+    now = open(path).read()
+    changed = [(a, b) for a, b in zip(orig.splitlines(), now.splitlines()) if a != b]
+    live = sl.get("trigger_latency", loop=0)
+    ok = (tl is not None and abs(tl - 900) <= 4 and live == float(tl)
+          and sl.get("autoset_latency", loop=0) == 0.0
+          and ('name="trigger_latency" value="%d"' % tl) in now
+          and all("trigger_latency" in a or "auto_latency" in a for a, _ in changed)
+          and bool(glob.glob(path + ".bak-*")))
+    fails += not ok
+    print("%s --trigger --apply --save, lateness 900: measured %s, live %s, file changed "
+          "only in %d trigger/auto line(s), backup kept"
+          % ("PASS" if ok else "FAIL", tl, live, len(changed)))
+    if not ok:
+        print(report)
+
+    # Interactive: Enter to start, y to apply, y to save, the file path.
+    path2 = _session_file(sl, tmp, session, "trigger_i.slsess")
+    tl, report = run_trigger_tool(port, client, 500, int(il), answers="\ny\ny\n%s\n" % path2)
+    ok = (tl is not None and abs(tl - 500) <= 4 and sl.get("trigger_latency", loop=0) == float(tl)
+          and ('name="trigger_latency" value="%d"' % tl) in open(path2).read()
+          and "Apply trigger_latency" in report)
+    fails += not ok
+    print("%s --trigger interactive apply and save, lateness 500: measured %s"
+          % ("PASS" if ok else "FAIL", tl))
+    if not ok:
+        print(report)
+    sl.set("trigger_latency", before, loop=0)
+    return fails
+
+
+def trigger_analysis_tests():
+    """Offline: the --trigger analysis on synthetic presses."""
+    fails = 0
+
+    def check(ok, msg):
+        nonlocal fails
+        fails += not ok
+        print("%s %s" % ("PASS" if ok else "FAIL", msg))
+
+    # Which messages are presses, and one press per cluster.
+    ev = [(100, 0, bytes([0x90, 60, 100])), (120, 1, bytes([0xB0, 1, 127])),   # same press
+          (5000, 0, bytes([0x80, 60, 0])), (6000, 0, bytes([0x90, 60, 0])),     # releases
+          (9000, 0, bytes([0xB0, 1, 0])), (20000, 1, bytes([0xC0, 3])),
+          (20100, 0, bytes([0xB0, 1, 127]))]
+    got = sllatency.press_commands(ev, SR)
+    check(got == [(100, 0), (20000, 1)],
+          "press grouping: %s (expected [(100, 0), (20000, 1)])" % got)
+
+    for il, late, scatter in ((743, 685, 0), (743, 685, 40), (256, 300, 0), (1200, 1500, 20)):
+        audio, ev, _ = synth_presses(20, il, late, scatter=scatter)
+        rows = sllatency.analyse_presses(audio, SR, sllatency.press_commands(ev, SR), il)
+        med, kept, out = sllatency.trigger_estimate(rows, SR)
+        # The onset is where a 0.25 ms (centred) envelope rises through half
+        # its peak: within a few samples of the burst's start.  With
+        # scatter, the median of 20 draws moves too.
+        ok = med is not None and abs(med - late) <= 4 + scatter / 3.0 and len(kept) >= 18
+        check(ok, "IL %d, lateness %d, scatter +/-%d: median %s, %d kept, statuses %s"
+              % (il, late, scatter, med, len(kept),
+                 sorted(set(r["status"] for r in rows))))
+
+    audio, ev, _ = synth_presses(20, 743, 685, gesture=(3, 11))
+    rows = sllatency.analyse_presses(audio, SR, sllatency.press_commands(ev, SR), 743)
+    med, kept, out = sllatency.trigger_estimate(rows, SR)
+    flagged = [i for i, r in enumerate(rows) if r["status"] != "ok"]
+    check(med is not None and abs(med - 685) <= 4 and flagged == [3, 11]
+          and all(rows[i]["status"] in ("late", "weak") for i in flagged),
+          "gesture-delayed presses 3 and 11: flagged %s (%s), median %s"
+          % (flagged, [rows[i]["status"] for i in flagged], med))
+
+    # Without the half-peak rule the foot sound (0.1 of the click) would be
+    # taken; with a foot sound at 0.4 the onset must still be the click.
+    audio, ev, _ = synth_presses(20, 743, 685, foot=0.4)
+    rows = sllatency.analyse_presses(audio, SR, sllatency.press_commands(ev, SR), 743)
+    med, kept, out = sllatency.trigger_estimate(rows, SR)
+    check(med is not None and abs(med - 685) <= 4,
+          "louder foot sound (0.4 of the click): median %s (expected about 685)" % med)
+
+    audio, ev, _ = synth_presses(20, 743, 685, level=0.006)
+    rows = sllatency.analyse_presses(audio, SR, sllatency.press_commands(ev, SR), 743)
+    med, kept, out = sllatency.trigger_estimate(rows, SR)
+    weak = sum(r["status"] in ("weak", "unclear") for r in rows)
+    check(med is None and weak >= 15,
+          "faint clicks: %d of 20 weak or unclear, no estimate (median %s)" % (weak, med))
+    return fails
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser()
@@ -766,7 +966,7 @@ def main():
                               "-p", str(PERIOD)],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     fails = (suggest_tests() + jack_report_tests() + jackdbus_settings_tests()
-             + buzz_tests() + session_save_tests())
+             + buzz_tests() + session_save_tests() + trigger_analysis_tests())
     try:
         time.sleep(2.0)
         cases = [

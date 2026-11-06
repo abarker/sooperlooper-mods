@@ -378,8 +378,11 @@ over many presses with a small spread, so ``trigger_latency`` = 743 - 58 =
 simultaneous, and a foot press makes some softer noise before the click,
 so the click's onset has to be found on the click itself.
 
-The ``sllatency`` tool does not measure this yet: it measures the audio round trip,
-shows the current ``trigger_latency``, and leaves it unchanged.
+``sllatency --trigger`` measures it this way (see "New Tool: sllatency"
+in ``late_hit_patch_summary.rst``).  Because the value goes with the
+``input_latency`` setting, set input and output latency first, and
+measure again after changing ``input_latency`` (or change
+``trigger_latency`` by the same amount).
 
 
 Trigger latency at every edge

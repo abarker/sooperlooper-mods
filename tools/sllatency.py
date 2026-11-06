@@ -883,25 +883,32 @@ def remember_session_file(path):
         pass
 
 
-def save_latency_to_session(path, il, ol):
+def save_latency_to_session(path, il, ol, tl=None):
     """Change only the latency values in a SooperLooper session file (and
     auto_latency to "no", so they are used), keeping a backup copy.
-    Everything else in the file stays byte-for-byte as it was, unlike
-    SooperLooper's /save_session, which writes the whole live state.  A
-    symlink is followed: the file it points to is changed, and backed up
-    next to itself.  The new file keeps the old one's permissions.
-    Returns (file changed, backup, loops); raises ValueError, before
-    changing anything, if the file has no latency values."""
+    Values given as None are left as they are (--trigger saves only the
+    trigger latency).  Everything else in the file stays byte-for-byte as
+    it was, unlike SooperLooper's /save_session, which writes the whole
+    live state.  A symlink is followed: the file it points to is changed,
+    and backed up next to itself.  The new file keeps the old one's
+    permissions.  Returns (file changed, backup, loops); raises
+    ValueError, before changing anything, if the file lacks a value to
+    change."""
     path = os.path.realpath(path)
     with open(path) as f:
         text = f.read()
-    text, n_in = re.subn(r'(<Control name="input_latency" value=")[^"]*(")',
-                         r"\g<1>%d\g<2>" % il, text)
-    text, n_out = re.subn(r'(<Control name="output_latency" value=")[^"]*(")',
-                          r"\g<1>%d\g<2>" % ol, text)
+    counts = []
+    for name, value in (("input_latency", il), ("output_latency", ol),
+                        ("trigger_latency", tl)):
+        if value is None:
+            continue
+        text, n = re.subn(r'(<Control name="%s" value=")[^"]*(")' % name,
+                          r"\g<1>%d\g<2>" % value, text)
+        counts.append(n)
     text, _ = re.subn(r'(\bauto_latency=")[^"]*(")', r"\g<1>no\g<2>", text)
-    if not (n_in and n_out):
+    if not counts or not all(counts):
         raise ValueError("no latency values found in %s" % path)
+    n_in = counts[0]
     backup = path + time.strftime(".bak-%Y%m%d-%H%M%S")
     shutil.copy2(path, backup)
     tmp = path + ".sllatency-tmp"
@@ -1104,8 +1111,13 @@ def offer_apply_and_save(sl, args, interactive, il, ol, new_in, new_out,
     say("   Applied: input_latency %d, output_latency %d on all loops." % (new_in, new_out),
         GOOD)
     global _applied
-    _applied = (new_in, new_out)
+    _applied = "input %d, output %d" % (new_in, new_out)
+    return offer_save(args, interactive, new_in, new_out)
 
+
+def offer_save(args, interactive, new_in, new_out, new_tl=None):
+    """After applying: ask (or follow --save) to save the applied values in
+    the session file.  None leaves a value in the file as it is."""
     print()
     explain("""
         These last until SooperLooper restarts.  To keep them, they can be
@@ -1145,7 +1157,7 @@ def offer_apply_and_save(sl, args, interactive, il, ol, new_in, new_out,
         say("   %s does not exist; nothing saved." % path, BAD)
         return 1
     try:
-        real, backup, n = save_latency_to_session(path, new_in, new_out)
+        real, backup, n = save_latency_to_session(path, new_in, new_out, new_tl)
     except ValueError:
         say("   %s has no latency values to change (is it a SooperLooper session "
             "file?); nothing saved." % path, BAD)
@@ -1156,6 +1168,393 @@ def offer_apply_and_save(sl, args, interactive, il, ol, new_in, new_out,
            n, "" if n == 1 else "s", backup), GOOD)
     return 0
 
+
+
+# ------------------------------------------------- trigger latency (--trigger)
+#
+# How late a pedal's command reaches SooperLooper after the press, on
+# JACK's timeline: the right trigger_latency.  A mic right against the
+# pedal hears the switch's click; it reaches JACK input_latency after the
+# press (the same path as the performance), so
+#
+#     press frame       = click frame - input_latency
+#     trigger_latency   = command frame - press frame
+#
+# The tool listens, in parallel with SooperLooper, to every MIDI port
+# feeding SooperLooper's midi_in: JACK hands an event to every connected
+# input in the same cycle at the same frame, so it sees the frame the
+# engine acts on, through whatever is in between (a remapper).  It sends
+# nothing.
+
+TRIGGER_CLUSTER_MS = 50.0    # events this close after a press are the same press
+TRIGGER_BACK_MS = 450.0      # how far before a command to look for its click
+TRIGGER_MAX_MS = 40.0        # later than this: a gesture window, not the device
+TRIGGER_RISE_MS = 5.0        # the click's onset is within this before its peak
+TRIGGER_MIN_SNR = 8.0        # click peak over the window's median level
+TRIGGER_MIN_GOOD = 5
+
+
+def is_press(data):
+    """A MIDI message a button press sends: note on, a controller with a
+    nonzero value, or a program change.  Releases (note off, controller
+    0) are not presses."""
+    if len(data) < 2:
+        return False
+    status = data[0] & 0xF0
+    if status in (0x90, 0xB0):
+        return len(data) >= 3 and data[2] > 0
+    return status == 0xC0
+
+
+def press_commands(events, sr):
+    """(frame, port index) of the first press message of each press, from
+    (frame, port index, bytes) events: what follows within
+    TRIGGER_CLUSTER_MS (more messages from one press, or the same press on
+    another port) belongs to it."""
+    gap = TRIGGER_CLUSTER_MS * sr / 1000.0
+    out = []
+    for frame, port, data in sorted(events, key=lambda e: e[0]):
+        if not is_press(data):
+            continue
+        if out and frame - out[-1][0] < gap:
+            continue
+        out.append((frame, port))
+    return out
+
+
+def _switch_envelope(x, sr):
+    """A switch click is broadband; keeping 1 kHz and up leaves out the
+    thump of the foot and room rumble, which arrive with or before it."""
+    w = max(1, int(0.00025 * sr))
+    return np.convolve(np.abs(_band(x, sr, 1000.0, min(10000.0, 0.22 * sr))),
+                       np.ones(w) / w, mode="same")
+
+
+def analyse_presses(audio, sr, cmds, il):
+    """One row per command: dict(cmd, port, click, tl, snr, status).
+
+    The click is the strongest sound in the TRIGGER_BACK_MS before the
+    command (to input_latency + 20 ms after it); its onset is where the
+    level last rose through half its peak before the peak, within
+    TRIGGER_RISE_MS, so a softer sound just before it (the foot on the
+    pedal) is not taken for it.  status: "ok"; "weak" (no clear click);
+    "unclear" (no sharp onset); "late" (more than TRIGGER_MAX_MS: the command
+    waited, e.g. for a double press or long press); "early" (the sound
+    came after the command by more than input_latency: not the press)."""
+    back = int(TRIGGER_BACK_MS * sr / 1000.0)
+    fwd = int(il + 0.02 * sr)
+    margin = int(0.05 * sr)
+    rise = max(2, int(TRIGGER_RISE_MS * sr / 1000.0))
+    rows = []
+    for m, port in cmds:
+        row = dict(cmd=m, port=port, click=None, tl=None, snr=0.0, status="edge")
+        rows.append(row)
+        s0, s1 = m - back - margin - 2000, m + fwd + margin
+        if s0 < 0 or s1 > len(audio):
+            continue
+        env = _switch_envelope(audio[s0:s1], sr)
+        lo, hi = m - back - s0, m + fwd - s0
+        p = lo + int(np.argmax(env[lo:hi]))
+        row["snr"] = float(env[p] / (np.median(env[lo:hi]) + 1e-12))
+        if row["snr"] < TRIGGER_MIN_SNR:
+            row["status"] = "weak"
+            continue
+        # Back from the peak while the level stays at half of it or more:
+        # where it last rose through half is the onset.  A softer sound
+        # before the click (the foot) ends in a dip below half and is not
+        # reached; a level that stays high for TRIGGER_RISE_MS is no click.
+        thr = 0.5 * env[p]
+        j = p
+        while j > p - rise and env[j - 1] >= thr:
+            j -= 1
+        if j <= p - rise:
+            row["status"] = "unclear"
+            continue
+        y0, y1 = env[j - 1], env[j]
+        row["click"] = s0 + j - 1 + (thr - y0) / (y1 - y0)
+        row["tl"] = m - (row["click"] - il)
+        if row["tl"] > TRIGGER_MAX_MS * sr / 1000.0:
+            row["status"] = "late"
+        elif row["tl"] < 0:
+            row["status"] = "early"
+        else:
+            row["status"] = "ok"
+    return rows
+
+
+def trigger_estimate(rows, sr):
+    """(median, kept rows, rejected rows) over the "ok" rows, dropping any
+    further than max(5 robust deviations, 2 ms) from the median; median
+    None with fewer than TRIGGER_MIN_GOOD left."""
+    good = [r for r in rows if r["status"] == "ok"]
+    if len(good) < TRIGGER_MIN_GOOD:
+        return None, good, []
+    tl = np.array([r["tl"] for r in good])
+    med = float(np.median(tl))
+    mad = float(np.median(np.abs(tl - med))) * 1.4826
+    lim = max(5.0 * mad, 0.002 * sr)
+    kept = [r for r in good if abs(r["tl"] - med) <= lim]
+    out = [r for r in good if abs(r["tl"] - med) > lim]
+    if len(kept) < TRIGGER_MIN_GOOD:
+        return None, kept, out
+    return float(np.median([r["tl"] for r in kept])), kept, out
+
+
+class PressRecorder:
+    """Record one audio input and the MIDI from some ports, on one frame
+    count, until enough presses have come or time is up."""
+
+    def __init__(self, mic, midi_ports, seconds, client_name="sllatency_trigger"):
+        self.c = jack.Client(client_name, no_start_server=True)
+        self.sr = self.c.samplerate
+        self.n = int(seconds * self.sr)
+        self.audio = np.zeros(self.n + 8192, dtype=np.float32)
+        self.events = []
+        self.f0 = None
+        self.xruns = 0
+        self.mic, self.midi_ports = mic, list(midi_ports)
+        self.a_in = self.c.inports.register("mic")
+        self.m_in = [self.c.midi_inports.register("cmd%d" % i)
+                     for i in range(len(self.midi_ports))]
+        self.c.set_process_callback(self._process)
+        self.c.set_xrun_callback(self._xrun)
+
+    def _xrun(self, delay):
+        self.xruns += 1
+
+    def _process(self, frames):
+        f = self.c.last_frame_time
+        if self.f0 is None:
+            self.f0 = f
+        p = f - self.f0
+        if p >= self.n:
+            return
+        self.audio[p:p + frames] = self.a_in.get_array()
+        for k, port in enumerate(self.m_in):
+            for off, data in port.incoming_midi_events():
+                self.events.append((p + off, k, bytes(data)))
+
+    def run(self, presses, on_press=None):
+        """Until `presses` presses (and 0.3 s after the last of them, for
+        the audio after it), or the time limit; returns the first
+        `presses`.  on_press(count) is called as they come."""
+        self.c.activate()
+        try:
+            self.c.connect(self.mic, self.a_in)
+            for src, dst in zip(self.midi_ports, self.m_in):
+                self.c.connect(src, dst)
+            seen = 0
+            while self.f0 is None or self.c.last_frame_time - self.f0 < self.n:
+                time.sleep(0.1)
+                cmds = press_commands(list(self.events), self.sr)[:presses]
+                if len(cmds) > seen:
+                    seen = len(cmds)
+                    if on_press:
+                        on_press(seen)
+                if seen >= presses and \
+                        self.c.last_frame_time - self.f0 - cmds[-1][0] > 0.3 * self.sr:
+                    break
+            self.length = min(self.n, self.c.last_frame_time - self.f0)
+        finally:
+            self.c.deactivate()
+            self.c.close()
+        self.audio = self.audio[:self.length]
+        return press_commands(self.events, self.sr)[:presses]
+
+
+def midi_feeders(client, sl_client):
+    """The MIDI ports connected to SooperLooper's midi_in."""
+    try:
+        return [p.name for p in client.get_all_connections("%s:midi_in" % sl_client)]
+    except jack.JackError:
+        return []
+
+
+def trigger_main(args, interactive):
+    say("sllatency --trigger: how late a pedal's command reaches SooperLooper")
+    heading("Setup")
+    jack.set_error_function(lambda msg: None)
+    jack.set_info_function(lambda msg: None)
+    try:
+        probe = jack.Client("sllatency_probe", no_start_server=True)
+    except jack.JackOpenError:
+        sys.exit("sllatency: no JACK server is running; start JACK and "
+                 "SooperLooper first.")
+    finally:
+        jack.set_error_function(None)
+        jack.set_info_function(None)
+    sr = probe.samplerate
+    ms = lambda f: f * 1000.0 / sr
+
+    sl = None
+    if not args.no_sl:
+        sl = SooperLooper(args.sl_host, args.sl_port)
+        if sl.ping() is None:
+            sl = None
+            say("   SooperLooper does not answer on OSC port %d." % args.sl_port, FIX)
+    feeders = args.midi or midi_feeders(probe, args.sl_client)
+    if not feeders:
+        probe.close()
+        sys.exit("sllatency: nothing is connected to %s:midi_in; give --midi PORT "
+                 "(the port the pedal's commands come from)." % args.sl_client)
+
+    mic = args.inp
+    if not mic:
+        caps = physical_ports(probe, is_input=False)
+        if not interactive or not caps:
+            probe.close()
+            sys.exit("sllatency: give --in PORT, the capture port of a mic right "
+                     "against the pedal.")
+        say("   Capture ports:")
+        for i, p in enumerate(caps, 1):
+            say("     %d. %s" % (i, p))
+        while not mic:
+            ans = prompt("   Which one is the mic next to the pedal? [number]").strip()
+            if ans.isdigit() and 1 <= int(ans) <= len(caps):
+                mic = caps[int(ans) - 1]
+
+    if args.il is not None:
+        il, il_from = float(args.il), "--il"
+    elif sl is not None and sl.get("input_latency", loop=0) is not None:
+        il, il_from = float(sl.get("input_latency", loop=0)), "SooperLooper's input_latency"
+    else:
+        r = port_latency(probe.get_port_by_name(mic), playback=False)
+        if r is None:
+            probe.close()
+            sys.exit("sllatency: no input latency to work from; give --il N.")
+        il, il_from = float(r[1]), "JACK's latency for %s" % mic
+    probe.close()
+
+    say_field("Mic:", mic)
+    say_field("Commands:", ", ".join(feeders) + "  (what reaches SooperLooper)")
+    say_field("Input lat.:", "%d samples (%.1f ms), %s" % (il, ms(il), il_from))
+    print()
+    explain("""
+        Put the mic right against the pedal, so it hears the switch's click.
+        Then press one button firmly, about once a second, %d times.
+
+        The presses go through your normal MIDI chain and really act: what
+        they do depends on SooperLooper's bindings and on any remapper's
+        current bank.  Choose a harmless command, such as Mute on an empty
+        loop, and a button whose command goes out on the press, not one
+        that waits for a double press or a long press.
+
+        The result goes with the input latency above.  SooperLooper starts
+        and ends a recording input_latency - trigger_latency after the
+        command, so the measured value puts the edges on the click for this
+        input latency setting, even if the setting is a little off.  Set
+        the input and output latency first (sllatency without --trigger),
+        and measure again after changing the input latency.  If the mic is
+        on another interface than the performance, give its latency with
+        --il.
+    """ % args.presses)
+    if il_from == "SooperLooper's input_latency" and sl.get("autoset_latency", loop=0):
+        print()
+        explain("""
+            SooperLooper's input latency is set by autoset, which is often
+            wrong (0 for loops connected individually), and applying the
+            result turns autoset off, keeping that value.  Set the input and
+            output latency first (sllatency without --trigger).
+        """, FIX)
+    if interactive:
+        print()
+        prompt("   Press Enter, then start pressing...")
+    rec = PressRecorder(mic, feeders, args.seconds)
+    say("   Listening (up to %.0f s)..." % args.seconds)
+    cmds = rec.run(args.presses,
+                   on_press=lambda n: print("\r   press %d of %d" % (n, args.presses),
+                                            end="", flush=True))
+    print()
+    if rec.xruns:
+        say("   %d xrun(s) during the run; a press near one may be off." % rec.xruns, FIX)
+    if args.dump:
+        np.savez(args.dump, audio=rec.audio, sr=sr, il=il,
+                 events=np.array([(f, k, *d[:3]) for f, k, d in rec.events if len(d) >= 3]))
+
+    heading("Result")
+    rows = analyse_presses(rec.audio, sr, cmds, il)
+    med, kept, out = trigger_estimate(rows, sr)
+    names = {
+        "ok": "", "weak": "no clear click", "unclear": "no sharp onset",
+        "late": "command came late (a gesture window?)", "edge": "too near the end",
+        "early": "below 0 (input latency too small?)"}
+    say("    #  lateness (samples, ms)   click level")
+    for i, r in enumerate(rows, 1):
+        note = names[r["status"]]
+        if r in out:
+            note = "far from the others; left out"
+        say("   %2d  %s   %5.0fx   %s" % (
+            i, "%6.0f  %6.2f ms" % (r["tl"], ms(r["tl"])) if r["tl"] is not None
+            else "      -          ", r["snr"], note))
+    weak = sum(r["status"] in ("weak", "unclear") for r in rows)
+    late = sum(r["status"] == "late" for r in rows)
+    early = sum(r["status"] == "early" for r in rows)
+    print()
+    if early and early >= 0.5 * len(rows):
+        explain("""
+            Most clicks reached JACK more than the input latency (%d) after
+            their command, which would need a trigger latency below 0.  The
+            input latency setting is probably too small: set it first
+            (sllatency without --trigger), or give the mic's with --il.
+        """ % il, FIX)
+        print()
+    if late:
+        explain("""
+            %d press%s reached SooperLooper more than %d ms after its click.
+            A device delay is rarely that long: the command probably waited
+            for a gesture window (double press, long press).  Use a button
+            whose command goes out on the press.
+        """ % (late, "" if late == 1 else "es", TRIGGER_MAX_MS), FIX)
+        print()
+    if weak and weak >= max(2, 0.3 * len(rows)):
+        explain("""
+            The click was too faint in %d of %d presses.  Move the mic closer,
+            raise its gain, or clap sharply next to the mic at the moment you
+            press (less exact: hand and foot are never quite together, so use
+            more presses).
+        """ % (weak, len(rows)), FIX)
+        print()
+    if med is None:
+        say("   Not enough clear presses (%d; at least %d needed)."
+            % (len(kept), TRIGGER_MIN_GOOD), BAD)
+        return 1
+    tl = int(round(med))
+    vals = [r["tl"] for r in kept]
+    say("   Trigger latency: %d samples (%.2f ms), median of %d presses; "
+        "spread %.0f to %.0f (%.2f ms)." % (tl, ms(tl), len(kept), min(vals), max(vals),
+                                             ms(max(vals) - min(vals))), GOOD)
+    say("   That is %+d samples (%+.2f ms) from the input latency (CL - IL)."
+        % (tl - il, ms(tl - il)))
+    if sl is None:
+        return 0
+    cur = sl.get("trigger_latency", loop=0)
+    auto = sl.get("autoset_latency", loop=0)
+    if cur is not None:
+        say("   SooperLooper's trigger_latency now: %d%s; measured: %d."
+            % (cur, " (autoset)" if auto else "", tl))
+    if cur is not None and abs(cur - tl) <= args.tolerance * sr / 1000.0 and not auto:
+        say("   Within %.1f ms -- nothing needs changing." % args.tolerance, GOOD)
+        return 0
+    if interactive:
+        print()
+        apply_it = ask("Apply trigger_latency %d to SooperLooper now (all loops, "
+                       "autoset off)?" % tl)
+    else:
+        apply_it = args.apply
+    if not apply_it:
+        return 0
+    sl.set("autoset_latency", 0.0, loop=-1)
+    sl.set("trigger_latency", tl, loop=-1)
+    time.sleep(0.3)
+    got = sl.get("trigger_latency", loop=0)
+    if got != float(tl):
+        say("   SooperLooper reports %s after applying -- not what was set." % (got,), BAD)
+        return 1
+    print()
+    say("   Applied: trigger_latency %d on all loops." % tl, GOOD)
+    global _applied
+    _applied = "trigger %d" % tl
+    return offer_save(args, interactive, None, None, tl)
 
 
 def main():
@@ -1187,7 +1586,9 @@ examples:
   sllatency --no-sl --in system:capture_2     round trip only
   sllatency --no-sl --out "ardour:BUS/audio_in 1" --in "ardour:BUS/audio_out 1"
                                               delay through a DAW bus (no mic)
-  sllatency --yes --out system:playback_1     no questions, report only""")
+  sllatency --yes --out system:playback_1     no questions, report only
+  sllatency --trigger --in system:capture_2   trigger latency: a mic on
+                                              capture_2 against the pedal""")
     ap.add_argument("--out", action="append", metavar="PORT",
                     help="JACK port to play the click to (repeatable).  Default: "
                          "ask, suggesting the outputs SooperLooper's loop 1 is "
@@ -1239,8 +1640,27 @@ examples:
     ap.add_argument("--save", action="store_true",
                     help="with --yes, --apply and --session-file: also save "
                          "them in that session file")
+    trig = ap.add_argument_group(
+        "trigger latency (--trigger)",
+        "Measure how late a pedal's command reaches SooperLooper after the "
+        "press, with a mic right against the pedal; --in is the mic's port.")
+    trig.add_argument("--trigger", action="store_true",
+                      help="measure the trigger latency instead of the round trip")
+    trig.add_argument("--presses", type=int, default=20, metavar="N",
+                      help="presses to collect (default 20)")
+    trig.add_argument("--seconds", type=float, default=90.0, metavar="S",
+                      help="stop listening after this long (default 90)")
+    trig.add_argument("--midi", action="append", metavar="PORT",
+                      help="MIDI port the commands come from (repeatable).  "
+                           "Default: every port connected to SooperLooper's midi_in.")
+    trig.add_argument("--il", type=float, metavar="N",
+                      help="the mic's input latency in samples.  Default: "
+                           "SooperLooper's input_latency (loop 1), else JACK's "
+                           "latency for the mic's port.")
     args = ap.parse_args()
     interactive = not args.yes
+    if args.trigger:
+        return trigger_main(args, interactive)
 
     say("sllatency: audio round-trip and SooperLooper latency check")
     heading("Setup")
@@ -1679,7 +2099,7 @@ if __name__ == "__main__":
         print()
         if _applied:
             say("sllatency: stopped.  SooperLooper keeps the applied latencies "
-                "(input %d, output %d) until it restarts; nothing was saved." % _applied)
+                "(%s) until it restarts; nothing was saved." % _applied)
         else:
             say("sllatency: stopped.  SooperLooper's settings are as they were.")
         sys.exit(130)
