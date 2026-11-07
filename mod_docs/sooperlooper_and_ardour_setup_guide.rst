@@ -41,10 +41,10 @@ Overview
 This is a fairly low-budget setup built around Linux audio hardware and
 open-source software. It lets you build loops locked to a Hydrogen drum pattern
 and record the result in Ardour with sample-accurate alignment. The Hydrogen
-beat plays continuously (in pattern mode) when drums are started and acts as a
-click track and sync source. The drums are not captured in a loop, but can be
-recorded in the DAW for mixing and/or played through a PA.  This is useful
-for practice sessions, at the least.
+beat plays continuously (in pattern mode) when drums are started and acts both
+as a sync source and as a click track (or metronome). The drums are not
+captured in a loop, but can be recorded in the DAW for mixing and/or played
+through a PA.  This is useful for practice sessions, at the least.
 
 Much of the work in getting it to feel right is **latency calibration**: making
 sure the loop you record lines up with what you actually heard when you played
