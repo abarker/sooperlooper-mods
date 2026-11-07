@@ -227,8 +227,9 @@ item links to its full description.
   autoset sets when it reads input latency 0, puts every edge several
   milliseconds after its press.
 
-- **Free pre-roll** (``FREE_PREROLL``, new in this fork, off in this
-  build, and only with ``TRIGGER_LATENCY_ALL_EDGES`` on).  A recording
+- **Free pre-roll** (``FREE_PREROLL``, new in this fork, on in this
+  build, inactive until ``free_preroll_ms`` is set, and only with
+  ``TRIGGER_LATENCY_ALL_EDGES`` on).  A recording
   with Sync off keeps the ``free_preroll_ms`` just before the Record
   press, and ends as much before the stop press, so its length is still
   the interval between the presses.  See `Free Pre-Roll`_.
@@ -637,11 +638,12 @@ start on a boundary:
 * Every end of the recording allows for it: Record again, and any other
   command that ends it.
 * Only with no threshold (``rec_thresh`` 0).  A pre-roll the input
-  history does not hold is dropped.  Default 0: no pre-roll.  Negative
-  values are refused.
+  history does not hold is dropped.  Default 0: no pre-roll.  20 to 40
+  ms is a range to try; whether it sounds better is a matter of taste.
+  Negative values are refused.
 * Needs ``TRIGGER_LATENCY_ALL_EDGES`` on: the pre-roll counts as extra
   command latency at the recording's two edges, which that option
-  places from the presses.  Both options are off in this build.
+  places from the presses.  Both options are on in this build.
 
 Set ``free_preroll_ms`` like the other settings: in the session file's
 ``<Globals>`` line, or over OSC with ``/set`` (see `OSC Control`_).
@@ -1711,13 +1713,13 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        stock's edges.
    * - ``FREE_PREROLL``
      - ``plugin.hpp``
-     - ``0``
-     - New behavior, off until tried live; needs
-       ``TRIGGER_LATENCY_ALL_EDGES``.  When 1, inactive while
-       ``free_preroll_ms`` is 0: a recording with Sync off starts
-       ``free_preroll_ms`` before the press and ends as much before the
-       stop press, with the loop's first beat at the start press (see
-       `Free Pre-Roll`_).
+     - ``1``
+     - New behavior, on in this build, inactive while
+       ``free_preroll_ms`` is 0; needs ``TRIGGER_LATENCY_ALL_EDGES``.  A
+       recording with Sync off starts ``free_preroll_ms`` before the
+       press and ends as much before the stop press, with the loop's
+       first beat at the start press (see `Free Pre-Roll`_).  Set to 0
+       for the previous behavior.
    * - ``FREE_PREROLL_MS_DEFAULT``
      - ``plugin.cc``
      - ``0.0f``

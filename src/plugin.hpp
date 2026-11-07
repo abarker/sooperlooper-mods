@@ -143,9 +143,9 @@
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
-// FREE_PREROLL: compile-time switch for a NEW behaviour, off until tried
-// live (ROADMAP entry 40).  Needs TRIGGER_LATENCY_ALL_EDGES, whose take
-// edges it moves.
+// FREE_PREROLL: compile-time switch for a NEW behaviour, on since its rig
+// try (ROADMAP entry 40); inactive while free_preroll_ms is 0.  Needs
+// TRIGGER_LATENCY_ALL_EDGES, whose take edges it moves.
 //
 // Neither Sync pre-roll reaches a take that does not start on a boundary.
 // With this, an unsynced take (Sync off, no threshold) starts P =
@@ -158,7 +158,7 @@
 // press was: a restart puts that point on the restart's press.  At 0
 // (the default) nothing changes.  Here, not in plugin.cc, for the fields
 // below.
-#define FREE_PREROLL 0
+#define FREE_PREROLL 1
 #if FREE_PREROLL && !TRIGGER_LATENCY_ALL_EDGES
 #error "FREE_PREROLL needs TRIGGER_LATENCY_ALL_EDGES"
 #endif

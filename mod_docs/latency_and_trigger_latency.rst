@@ -438,17 +438,20 @@ then land where stock's do.
 Possible changes
 ================
 
-The first is built, as a compile-time option that is off by default; the
-second is not built.  Everything above describes the default.
+Both are built.  The first is a compile-time option, on in this build
+but inactive until its setting is given; everything above describes
+SooperLooper without it.
 
 * **A pre-roll for takes with sync off.**  The option ``FREE_PREROLL``
-  (also in ``src/plugin.hpp``, off, and only with
-  ``TRIGGER_LATENCY_ALL_EDGES`` on) gives takes with sync off a
+  (also in ``src/plugin.hpp``, on, inactive while ``free_preroll_ms`` is
+  0, and only with ``TRIGGER_LATENCY_ALL_EDGES`` on) gives takes with
+  sync off a
   pre-roll: the global setting ``free_preroll_ms`` counts as extra
   command latency at both edges of such a take.  It starts that much
   before the press, from the input history, and ends that much before
   the stop press, so its length is still the interval between the
   presses and playback stays in phase.  The loop's first beat is where
   the start press was, so a restart plays that point at its press.
-* **A measuring mode in** ``sllatency``: presses beside a mic, reporting
-  CL - IL and offering to set ``trigger_latency``.
+* **A measuring mode in** ``sllatency``: ``sllatency --trigger`` times
+  presses beside a mic, reports CL - IL, and offers to set
+  ``trigger_latency``.
