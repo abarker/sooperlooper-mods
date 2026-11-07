@@ -264,19 +264,10 @@ allows recording a loop either locked to the beat or free-running.
 .. warning::
 
    **Hydrogen's song mode.**  This setup runs Hydrogen in pattern mode.  If
-   you use song mode instead, turn off one of this fork's build options
-   before building: in ``src/audio_driver.hpp``, comment out the line
-   ``#define ALB_JACK_BBT_TRACKING``, then rebuild from clean (``make
-   clean``, ``make``, and ``sudo make install``).  Also leave
-   ``auto_realign`` (below) off, as it is by default: a realign moves the
-   transport, which in song mode also moves Hydrogen's place in the song,
-   and it has not been tried with song mode.  With the build option on,
-   SooperLooper follows the bar and beat position that Hydrogen publishes.
-   After a tempo change made while the transport rolls, Hydrogen in song
-   mode can publish a position that differs from what it is playing, and
-   the loops would follow it off the drums.  Pattern mode is not affected:
-   Hydrogen publishes no moving position there.  This holds until Hydrogen
-   fixes the position it publishes.
+   you use song mode instead, leave ``auto_realign`` (below) off, as it is
+   by default: a realign moves the transport, which in song mode also
+   moves Hydrogen's place in the song, and it has not been tried with song
+   mode.
 
 **Keeping the drums on the loops.** A tempo change made while the
 transport rolls, followed later by an xrun, can leave the drums off the

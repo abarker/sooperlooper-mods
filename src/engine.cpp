@@ -113,8 +113,9 @@ extern float g_free_preroll_ms;
 // position to follow, so SooperLooper assumes frame x tempo, and after
 // tempo changes made while rolling a cycle Hydrogen misses can move its
 // drums onto that grid.  Both would be better addressed in Hydrogen
-// itself; BBT following (ALB_JACK_BBT_TRACKING) is ready for a master
-// that publishes the position it plays.  Always
+// itself; BBT following (ALB_JACK_BBT_TRACKING, not defined by default:
+// ROADMAP entry 51) is ready for a master that publishes the position it
+// plays, with tick_double.  Always
 // relocates (SooperLooper cannot tell whether the master carries an
 // offset), so a press when all is well is just a relocation that changes
 // no musical position.  JACK applies a relocation two cycles after the

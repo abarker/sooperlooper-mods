@@ -38,10 +38,16 @@ typedef struct _jack_client jack_client_t;
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
-// ALB_JACK_BBT_TRACKING: DEFINED by default since 2026-11-01 -- unit-tested
-// (src/test_beat_tracker) and tested on a dummy JACK server against a
-// patched Hydrogen 1.2.7 in pattern mode (hydrogen_missed_cycle_test.py
-// --pattern-mode --restart-engine); not yet tried live.  With a master
+// ALB_JACK_BBT_TRACKING: NOT DEFINED by default (it was 2026-11-01 to
+// 2026-11-07).  With a master that publishes its position in whole ticks
+// and no tick_double -- Hydrogen and Ardour both do -- following puts the
+// pulses a few samples off the beat (2-3 at 1920 ticks per beat, more at
+// Hydrogen's 48), so every synced take is that much off and drifts: worse
+// than not following (ROADMAP entry 51).  Exact with a master that sets
+// tick_double; none known so far.  Unit-tested (src/test_beat_tracker)
+// and tested on a dummy JACK server against a patched Hydrogen 1.2.7 in
+// pattern mode (hydrogen_missed_cycle_test.py --pattern-mode
+// --restart-engine); never tried live.  With a master
 // that publishes no live position (stock Hydrogen in pattern mode: bar 1,
 // beat 1, tick 0 throughout) nothing changes.  Caution: stock Hydrogen in
 // SONG mode publishes a live but wrong position after tempo changes made
@@ -67,7 +73,7 @@ typedef struct _jack_client jack_client_t;
 // not in engine.hpp, because it changes TransportInfo's layout, which
 // every file including this header must agree on.  Uses JACK's tick_double
 // (JackTickDouble) when the master publishes it.
-#define ALB_JACK_BBT_TRACKING
+// #define ALB_JACK_BBT_TRACKING
 //------ albEnd ----------------------------------
 
 namespace SooperLooper {

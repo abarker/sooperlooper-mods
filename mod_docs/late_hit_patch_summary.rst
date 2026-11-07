@@ -1939,12 +1939,21 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        defined:** stock JackSync pulse placement.
    * - ``ALB_JACK_BBT_TRACKING``
      - ``audio_driver.hpp``
-     - defined
-     - **When defined (default):** the beat count also follows the
+     - not defined
+     - **Not defined by default,** because with the masters checked so
+       far it does more harm than good.  Hydrogen and Ardour publish their
+       position in whole ticks without ``tick_double``.  Following that
+       rounding puts the pulses a few samples off the beat (2-3 samples at
+       Ardour's 1920 ticks per beat, more at Hydrogen's 48), so every
+       synced take is that many samples too long or short and drifts
+       against the drums.  Without following, the takes are as exact as
+       on stock.  Stock Hydrogen in pattern mode publishes no moving
+       position, so it is not followed either way.
+       **When defined:** the beat count also follows the
        timebase master's own bar/beat/tick position, where the master
        publishes a changing one (a DAW, Hydrogen in song mode, or a patched
        Hydrogen in pattern mode), using JACK's ``tick_double`` when the
-       master sets it.  A relocate, including the one after the engine
+       master sets it (then exact).  A relocate, including the one after the engine
        misses cycles itself, and following after an engine restart, snap
        to the master's position.  A master whose position does not change
        (stock Hydrogen in pattern mode) is ignored: no change from not
