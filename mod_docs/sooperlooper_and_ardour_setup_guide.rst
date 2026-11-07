@@ -916,7 +916,7 @@ entered your input and output latencies (section 2.6), set the trigger
 latency to the same value as the input latency.  Recordings then start
 and end where stock SooperLooper's plain recordings do.
 To measure the exact value, first set the input and output latencies
-(sections 2.3 to 2.7), then put a mic right against the pedal and run
+(sections 2.3 to 2.7), then put a mic close to the pedal (a few centimeters away, not touching it) and run
 ``sllatency --trigger``.  It listens while you press a button about 20
 times, reports the trigger latency, and offers to apply and save it.
 The value goes with the input latency setting: if you change the input

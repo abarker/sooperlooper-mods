@@ -1173,7 +1173,7 @@ def offer_save(args, interactive, new_in, new_out, new_tl=None):
 # ------------------------------------------------- trigger latency (--trigger)
 #
 # How late a pedal's command reaches SooperLooper after the press, on
-# JACK's timeline: the right trigger_latency.  A mic right against the
+# JACK's timeline: the right trigger_latency.  A mic close to the
 # pedal hears the switch's click; it reaches JACK input_latency after the
 # press (the same path as the performance), so
 #
@@ -1404,7 +1404,7 @@ def trigger_main(args, interactive):
         if not interactive or not caps:
             probe.close()
             sys.exit("sllatency: give --in PORT, the capture port of a mic right "
-                     "against the pedal.")
+                     "close to the pedal.")
         say("   Capture ports:")
         for i, p in enumerate(caps, 1):
             say("     %d. %s" % (i, p))
@@ -1430,7 +1430,8 @@ def trigger_main(args, interactive):
     say_field("Input lat.:", "%d samples (%.1f ms), %s" % (il, ms(il), il_from))
     print()
     explain("""
-        Put the mic right against the pedal, so it hears the switch's click.
+        Put the mic close to the pedal, a few centimeters away but not
+        touching it, so it hears the switch's click clearly.
         Then press one button firmly, about once a second, %d times.
 
         The presses go through your normal MIDI chain and really act: what
@@ -1588,7 +1589,7 @@ examples:
                                               delay through a DAW bus (no mic)
   sllatency --yes --out system:playback_1     no questions, report only
   sllatency --trigger --in system:capture_2   trigger latency: a mic on
-                                              capture_2 against the pedal""")
+                                              capture_2 close to the pedal""")
     ap.add_argument("--out", action="append", metavar="PORT",
                     help="JACK port to play the click to (repeatable).  Default: "
                          "ask, suggesting the outputs SooperLooper's loop 1 is "
@@ -1643,7 +1644,7 @@ examples:
     trig = ap.add_argument_group(
         "trigger latency (--trigger)",
         "Measure how late a pedal's command reaches SooperLooper after the "
-        "press, with a mic right against the pedal; --in is the mic's port.")
+        "press, with a mic close to the pedal; --in is the mic's port.")
     trig.add_argument("--trigger", action="store_true",
                       help="measure the trigger latency instead of the round trip")
     trig.add_argument("--presses", type=int, default=20, metavar="N",

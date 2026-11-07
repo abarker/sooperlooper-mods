@@ -355,7 +355,7 @@ Measuring CL - IL
 =================
 
 What every edge depends on is CL - IL, and it can be measured directly.
-Put a mic right against the pedal, on an input of the same interface the
+Put a mic close to the pedal (not touching it), on an input of the same interface the
 instruments use.  The switch's click reaches JACK IL after the press, the
 command CL after it, so for each press
 
