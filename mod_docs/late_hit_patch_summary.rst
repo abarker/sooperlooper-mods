@@ -1528,10 +1528,11 @@ job (below).
 reaches SooperLooper after the press: the right ``trigger_latency``.  Set
 the input and output latency first (the run above): the result goes with
 the ``input_latency`` setting, and must be measured again after it
-changes.  Put a mic close to the pedal (a few centimeters away, not touching it), on the same interface as the
-performance, and run ``sllatency --trigger --in PORT`` (the mic's
-capture port; without ``--in`` it asks).  Then press one button firmly,
-about once a second, 20 times (``--presses``).
+changes.  Put a mic close to the pedal (a few centimeters away, not
+touching it), on the same interface as the performance, and run
+``sllatency --trigger --in PORT`` (the mic's capture port; without
+``--in`` it asks).  Then press one button the usual way (no need to hold
+it), about once a second, 20 times (``--presses``).
 
 The tool sends nothing.  It listens, beside SooperLooper, to every MIDI
 port connected to SooperLooper's ``midi_in`` (or ``--midi PORT``), so it

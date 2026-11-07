@@ -1432,7 +1432,8 @@ def trigger_main(args, interactive):
     explain("""
         Put the mic close to the pedal, a few centimeters away but not
         touching it, so it hears the switch's click clearly.
-        Then press one button firmly, about once a second, %d times.
+        Then press one button the usual way (no need to hold it), about
+        once a second, %d times.
 
         The presses go through your normal MIDI chain and really act: what
         they do depends on SooperLooper's bindings and on any remapper's
