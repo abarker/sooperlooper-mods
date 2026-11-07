@@ -758,12 +758,15 @@ def suggest_tests():
 # ------------------------------------------------------------ --trigger
 
 def synth_presses(n, il, late, sr=SR, spacing=0.9, level=0.5, noise=0.002,
-                  foot=0.1, scatter=0, gesture=(), seed=5):
+                  foot=0.1, scatter=0, gesture=(), seed=5, strike=0.0, bounce=0.0):
     """Synthetic mic audio and command frames for n presses: each press's
     click (a sharp broadband burst) at press + il, after a softer foot
     sound (foot x level, broadband, 12 to 3 ms before it) and a low thump;
     its command at press + late (+ up to +/-scatter, + 300 ms for the
-    presses in `gesture`).  Returns (audio, [(frame, 0, bytes)], clicks)."""
+    presses in `gesture`).  strike: a sharp burst of strike x level 28 ms
+    before the click (a finger or foot hitting the cap, as on the rig);
+    bounce: one of bounce x level 3 ms after it.  Returns (audio,
+    [(frame, 0, bytes)], clicks)."""
     rng = np.random.default_rng(seed)
     total = int((n * spacing + 2.0) * sr)
     audio = (noise * rng.standard_normal(total)).astype(np.float64)
@@ -779,6 +782,10 @@ def synth_presses(n, il, late, sr=SR, spacing=0.9, level=0.5, noise=0.002,
         th = click - int(0.006 * sr)
         audio[th:th + len(t)] += 2 * level * np.sin(2 * np.pi * 80 * t / sr) * np.exp(-t / (0.005 * sr))
         audio[click:click + len(k)] += level * rng.standard_normal(len(k)) * np.exp(-k / (0.0008 * sr))
+        for at, lvl in ((click - int(0.028 * sr), strike), (click + int(0.003 * sr), bounce)):
+            if lvl:
+                audio[at:at + len(k)] += (lvl * level * rng.standard_normal(len(k))
+                                          * np.exp(-k / (0.0008 * sr)))
         cmd = press + late + (int(rng.integers(-scatter, scatter + 1)) if scatter else 0)
         if i in gesture:
             cmd += int(0.3 * sr)
@@ -895,6 +902,42 @@ def trigger_tool_tests(sl, port, client, tmp, session, il):
     if not ok:
         print(report)
     sl.set("trigger_latency", before, loop=0)
+
+    # The mic choice lists capture ports only (the rig run listed the
+    # playback ports too, and choosing one failed to connect).
+    c = jack.Client("portlist", no_start_server=True)
+    caps = sllatency.physical_ports(c, is_input=False)
+    plays = sllatency.physical_ports(c, is_input=True)
+    c.close()
+    ok = (caps and plays and all(":capture_" in p for p in caps)
+          and all(":playback_" in p for p in plays))
+    fails += not ok
+    print("%s physical ports: capture %s, playback %s" % ("PASS" if ok else "FAIL", caps, plays))
+
+    # No command at all (on the rig: the pedal's MIDI not arriving): a
+    # clear message, not "not enough clear presses".
+    q = jack.Client("silentpedal", no_start_server=True)
+    q.outports.register("mic")
+    cmd = q.midi_outports.register("cmd")
+    # A client with no process callback stalls the recorder's (seen on the
+    # dummy server); this one sends nothing.
+    q.set_process_callback(lambda frames: cmd.clear_buffer())
+    q.activate()
+    try:
+        r = subprocess.run([sys.executable, os.path.join(HERE, "sllatency.py"), "--trigger",
+                            "--in", "silentpedal:mic", "--midi", "silentpedal:cmd",
+                            "--seconds", "2", "--yes", "--sl-port", str(port),
+                            "--sl-client", client],
+                           capture_output=True, text=True, timeout=30)
+    finally:
+        q.deactivate()
+        q.close()
+    ok = r.returncode == 1 and "No press command came from silentpedal:cmd" in r.stdout
+    fails += not ok
+    print("%s --trigger with no commands: exit %d, says none came"
+          % ("PASS" if ok else "FAIL", r.returncode))
+    if not ok:
+        print(r.stdout, r.stderr)
     return fails
 
 
@@ -908,13 +951,30 @@ def trigger_analysis_tests():
         print("%s %s" % ("PASS" if ok else "FAIL", msg))
 
     # Which messages are presses, and one press per cluster.
-    ev = [(100, 0, bytes([0x90, 60, 100])), (120, 1, bytes([0xB0, 1, 127])),   # same press
+    # Only messages like the first press count (note 60 on channel 1 here).
+    ev = [(100, 0, bytes([0x90, 60, 100])), (120, 1, bytes([0x90, 60, 90])),   # same press
           (5000, 0, bytes([0x80, 60, 0])), (6000, 0, bytes([0x90, 60, 0])),     # releases
-          (9000, 0, bytes([0xB0, 1, 0])), (20000, 1, bytes([0xC0, 3])),
-          (20100, 0, bytes([0xB0, 1, 127]))]
+          (9000, 0, bytes([0xB0, 1, 127])),                  # another message: ignored
+          (12000, 0, bytes([0x91, 60, 100])),                # other channel: ignored
+          (20000, 1, bytes([0x90, 60, 80])), (20100, 0, bytes([0xC0, 3]))]
     got = sllatency.press_commands(ev, SR)
     check(got == [(100, 0), (20000, 1)],
           "press grouping: %s (expected [(100, 0), (20000, 1)])" % got)
+    check(sllatency.describe_key(sllatency.press_key(ev)) == "note 60 on channel 1"
+          and sllatency.describe_key((0xB4, 13)) == "controller 13 on channel 5",
+          "press key described: %s" % sllatency.describe_key(sllatency.press_key(ev)))
+
+    # A long-press action (another controller, 400 ms after some presses,
+    # as the rig's record button sends when held): not counted.
+    audio, ev, _ = synth_presses(20, 743, 685)
+    ev = ev + [(f + int(0.4 * SR), 0, bytes([0xB0, 65, 127]))
+               for f, _, d in ev[::4] if d[2]]
+    cmds = sllatency.press_commands(ev, SR)
+    rows = sllatency.analyse_presses(audio, SR, cmds, 743)
+    med, kept, out = sllatency.trigger_estimate(rows, SR)
+    check(len(cmds) == 20 and med is not None and abs(med - 685) <= 4 and len(kept) == 20,
+          "long-press messages ignored: %d presses, median %s, %d kept" % (len(cmds), med,
+                                                                           len(kept)))
 
     for il, late, scatter in ((743, 685, 0), (743, 685, 40), (256, 300, 0), (1200, 1500, 20)):
         audio, ev, _ = synth_presses(20, il, late, scatter=scatter)
@@ -944,6 +1004,21 @@ def trigger_analysis_tests():
     med, kept, out = sllatency.trigger_estimate(rows, SR)
     check(med is not None and abs(med - 685) <= 4,
           "louder foot sound (0.4 of the click): median %s (expected about 685)" % med)
+
+    # The rig's hand presses (2026-11-06): the finger hitting the cap 25-35
+    # ms before the snap, up to twice as loud; a small bounce after it.
+    # The loudest-sound rule took the strike on half of them (~20 ms high).
+    # At twice the click, the random bursts put a few clicks under 0.3 of
+    # their strike (as one rig press was); those must come out flagged
+    # late, not in the median.
+    audio, ev, _ = synth_presses(20, 743, 685, strike=2.0, bounce=0.15)
+    rows = sllatency.analyse_presses(audio, SR, sllatency.press_commands(ev, SR), 743)
+    med, kept, out = sllatency.trigger_estimate(rows, SR)
+    rest = [r["status"] for r in rows if r not in kept]
+    check(med is not None and abs(med - 685) <= 4 and len(kept) >= 16
+          and all(s == "late" for s in rest),
+          "strike 2x the click 28 ms before it, bounce 0.15 after: median %s, %d kept, "
+          "others %s (expected about 685, 16 or more, late)" % (med, len(kept), rest))
 
     audio, ev, _ = synth_presses(20, 743, 685, level=0.006)
     rows = sllatency.analyse_presses(audio, SR, sllatency.press_commands(ev, SR), 743)

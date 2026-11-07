@@ -1533,16 +1533,20 @@ the ``input_latency`` setting, and must be measured again after it
 changes.  Put a mic close to the pedal (a few centimeters away, not
 touching it), on the same interface as the performance, and run
 ``sllatency --trigger --in PORT`` (the mic's capture port; without
-``--in`` it asks).  Then press one button the usual way (no need to hold
-it), about once a second, 20 times (``--presses``).
+``--in`` it asks).  Then press one button the usual way, about once a
+second, 20 times (``--presses``).  Holding each press a moment is fine:
+only the first press's message counts, so a long-press action is not
+taken for a press.
 
 The tool sends nothing.  It listens, beside SooperLooper, to every MIDI
 port connected to SooperLooper's ``midi_in`` (or ``--midi PORT``), so it
 sees each command at the frame SooperLooper acts on, through whatever is
 in between, such as a remapper.  For each press it finds the switch's
-click in the mic, the strongest sound before the command, timed where it
-last rises through half its peak (so the foot's softer sound before it is
-not taken for it), and reports
+click in the mic: the last strong sound before the command, since the
+switch closes at the end of its travel (the finger or foot striking the
+switch earlier can be louder).  It times the click where the level last
+rises through half its peak, so a softer sound just before it is not
+taken for it, and reports
 
     trigger_latency = input_latency + (command frame - click frame)
 

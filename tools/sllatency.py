@@ -22,6 +22,7 @@ import ctypes
 import ctypes.util
 import os
 import re
+import select
 import shutil
 import signal as _signal   # "signal" is the click signal in main()
 import socket
@@ -504,9 +505,11 @@ def measure_loop_offset(rec, starts, click, sr, period):
 # ------------------------------------------------------------------ main
 
 def physical_ports(client, is_input):
-    """Physical ports; is_input=True gives playback (sink) ports."""
+    """Physical ports; is_input=True gives playback (sink) ports, False
+    capture (source) ports.  (python-jack's is_input=False means "either".)"""
     return [p.name for p in client.get_ports(is_physical=True, is_audio=True,
-                                             is_input=is_input)]
+                                             is_input=is_input,
+                                             is_output=not is_input)]
 
 
 def default_input(client, sl_client):
@@ -1190,6 +1193,8 @@ TRIGGER_CLUSTER_MS = 50.0    # events this close after a press are the same pres
 TRIGGER_BACK_MS = 450.0      # how far before a command to look for its click
 TRIGGER_MAX_MS = 40.0        # later than this: a gesture window, not the device
 TRIGGER_RISE_MS = 5.0        # the click's onset is within this before its peak
+TRIGGER_LAST_FRAC = 0.3      # the click: the latest peak this close to the loudest
+TRIGGER_PEAK_MS = 3.0        # a peak is the highest point within this either side
 TRIGGER_MIN_SNR = 8.0        # click peak over the window's median level
 TRIGGER_MIN_GOOD = 5
 
@@ -1206,15 +1211,33 @@ def is_press(data):
     return status == 0xC0
 
 
+def press_key(events):
+    """The first press message's status byte (with its channel) and first
+    data byte (note, controller, or program), or None: every press must
+    send the same message, so anything else (a long-press action, another
+    program's output) is not a press."""
+    for frame, port, data in sorted(events, key=lambda e: e[0]):
+        if is_press(data):
+            return (data[0], data[1])
+    return None
+
+
+def describe_key(key):
+    """'controller 13 on channel 5' and the like."""
+    kind = {0x90: "note %d", 0xB0: "controller %d", 0xC0: "program %d"}[key[0] & 0xF0]
+    return (kind + " on channel %d") % (key[1], (key[0] & 0x0F) + 1)
+
+
 def press_commands(events, sr):
     """(frame, port index) of the first press message of each press, from
-    (frame, port index, bytes) events: what follows within
-    TRIGGER_CLUSTER_MS (more messages from one press, or the same press on
-    another port) belongs to it."""
+    (frame, port index, bytes) events: only messages like the first press
+    (press_key) count, and what follows within TRIGGER_CLUSTER_MS (the
+    same press on another port) belongs to it."""
     gap = TRIGGER_CLUSTER_MS * sr / 1000.0
+    key = press_key(events)
     out = []
     for frame, port, data in sorted(events, key=lambda e: e[0]):
-        if not is_press(data):
+        if not is_press(data) or (data[0], data[1]) != key:
             continue
         if out and frame - out[-1][0] < gap:
             continue
@@ -1230,14 +1253,31 @@ def _switch_envelope(x, sr):
                        np.ones(w) / w, mode="same")
 
 
+def _last_strong_peak(env, lo, hi, w):
+    """Index of the latest point in env[lo:hi] that is the highest within
+    w either side and at least TRIGGER_LAST_FRAC of the loudest there
+    (the loudest itself if none is later).  Not in the last w, where a
+    sound still rising at the window's end would look like a peak."""
+    top = lo + int(np.argmax(env[lo:hi]))
+    thr = TRIGGER_LAST_FRAC * env[top]
+    for i in np.flatnonzero(env[top + 1:hi - w] >= thr)[::-1] + top + 1:
+        if env[i] >= env[i - w:i + w + 1].max():
+            return int(i)
+    return top
+
+
 def analyse_presses(audio, sr, cmds, il):
     """One row per command: dict(cmd, port, click, tl, snr, status).
 
-    The click is the strongest sound in the TRIGGER_BACK_MS before the
-    command (to input_latency + 20 ms after it); its onset is where the
-    level last rose through half its peak before the peak, within
-    TRIGGER_RISE_MS, so a softer sound just before it (the foot on the
-    pedal) is not taken for it.  status: "ok"; "weak" (no clear click);
+    The click is the latest peak, in the TRIGGER_BACK_MS before the command
+    (to input_latency + 20 ms after it), at least TRIGGER_LAST_FRAC of the
+    loudest there: the switch closes at the end of its travel, so its snap
+    is the last strong sound before the command, and a finger or foot
+    striking the cap earlier can be louder (rig, 2026-11-06: 25-35 ms
+    earlier, up to twice the snap, on hand presses).  Bounces after the
+    snap were at most 0.16 of the loudest, snaps at least 0.5.  The onset
+    is where the level last rose through half the peak before it, within
+    TRIGGER_RISE_MS, so a softer sound just before it is not taken.  status: "ok"; "weak" (no clear click);
     "unclear" (no sharp onset); "late" (more than TRIGGER_MAX_MS: the command
     waited, e.g. for a double press or long press); "early" (the sound
     came after the command by more than input_latency: not the press)."""
@@ -1254,7 +1294,7 @@ def analyse_presses(audio, sr, cmds, il):
             continue
         env = _switch_envelope(audio[s0:s1], sr)
         lo, hi = m - back - s0, m + fwd - s0
-        p = lo + int(np.argmax(env[lo:hi]))
+        p = _last_strong_peak(env, lo, hi, int(TRIGGER_PEAK_MS * sr / 1000.0))
         row["snr"] = float(env[p] / (np.median(env[lo:hi]) + 1e-12))
         if row["snr"] < TRIGGER_MIN_SNR:
             row["status"] = "weak"
@@ -1334,10 +1374,11 @@ class PressRecorder:
             for off, data in port.incoming_midi_events():
                 self.events.append((p + off, k, bytes(data)))
 
-    def run(self, presses, on_press=None):
+    def run(self, presses, on_press=None, enter_stops=False):
         """Until `presses` presses (and 0.3 s after the last of them, for
-        the audio after it), or the time limit; returns the first
-        `presses`.  on_press(count) is called as they come."""
+        the audio after it), the time limit, or (enter_stops) Enter on the
+        terminal; returns the first `presses`.  on_press(count) is called
+        as they come."""
         self.c.activate()
         try:
             self.c.connect(self.mic, self.a_in)
@@ -1345,7 +1386,12 @@ class PressRecorder:
                 self.c.connect(src, dst)
             seen = 0
             while self.f0 is None or self.c.last_frame_time - self.f0 < self.n:
-                time.sleep(0.1)
+                if enter_stops:
+                    if select.select([sys.stdin], [], [], 0.1)[0]:
+                        sys.stdin.readline()
+                        break
+                else:
+                    time.sleep(0.1)
                 cmds = press_commands(list(self.events), self.sr)[:presses]
                 if len(cmds) > seen:
                     seen = len(cmds)
@@ -1432,14 +1478,17 @@ def trigger_main(args, interactive):
     explain("""
         Put the mic close to the pedal, a few centimeters away but not
         touching it, so it hears the switch's click clearly.
-        Then press one button the usual way (no need to hold it), about
-        once a second, %d times.
+        Then press one button the usual way, about once a second, %d
+        times.
 
         The presses go through your normal MIDI chain and really act: what
         they do depends on SooperLooper's bindings and on any remapper's
         current bank.  Choose a harmless command, such as Mute on an empty
         loop, and a button whose command goes out on the press, not one
-        that waits for a double press or a long press.
+        that waits for a double press or a long press.  Holding each press
+        a moment is fine.  Only the first press's message is counted, so a
+        long-press action that holding fires is not taken for a press (but
+        it does act).
 
         The result goes with the input latency above.  SooperLooper starts
         and ends a recording input_latency - trigger_latency after the
@@ -1462,16 +1511,33 @@ def trigger_main(args, interactive):
         print()
         prompt("   Press Enter, then start pressing...")
     rec = PressRecorder(mic, feeders, args.seconds)
-    say("   Listening (up to %.0f s)..." % args.seconds)
+    enter_stops = interactive and sys.stdin.isatty()
+    say("   Listening (up to %.0f s%s); each press is counted as its command "
+        "arrives..." % (args.seconds, "; Enter finishes early" if enter_stops else ""))
     cmds = rec.run(args.presses,
                    on_press=lambda n: print("\r   press %d of %d" % (n, args.presses),
-                                            end="", flush=True))
-    print()
+                                            end="", flush=True),
+                   enter_stops=enter_stops)
+    if cmds:
+        print()
     if rec.xruns:
         say("   %d xrun(s) during the run; a press near one may be off." % rec.xruns, FIX)
     if args.dump:
         np.savez(args.dump, audio=rec.audio, sr=sr, il=il,
                  events=np.array([(f, k, *d[:3]) for f, k, d in rec.events if len(d) >= 3]))
+    if not cmds:
+        print()
+        explain("""
+            No press command came from %s.  Check that the pedal reaches
+            SooperLooper (does the button act?), or give the port it comes
+            from with --midi.
+        """ % ", ".join(feeders), BAD)
+        return 1
+    key = press_key(rec.events)
+    other = sum(1 for _, _, d in rec.events if is_press(d) and (d[0], d[1]) != key)
+    say("   Counted only %s, the first press's message%s." % (
+        describe_key(key), "; %d other message%s ignored (a long-press action?)"
+        % (other, "" if other == 1 else "s") if other else ""))
 
     heading("Result")
     rows = analyse_presses(rec.audio, sr, cmds, il)
@@ -1480,14 +1546,14 @@ def trigger_main(args, interactive):
         "ok": "", "weak": "no clear click", "unclear": "no sharp onset",
         "late": "command came late (a gesture window?)", "edge": "too near the end",
         "early": "below 0 (input latency too small?)"}
-    say("    #  lateness (samples, ms)   click level")
+    say("    #   lateness (samples, ms)   click level")
     for i, r in enumerate(rows, 1):
         note = names[r["status"]]
         if r in out:
             note = "far from the others; left out"
-        say("   %2d  %s   %5.0fx   %s" % (
-            i, "%6.0f  %6.2f ms" % (r["tl"], ms(r["tl"])) if r["tl"] is not None
-            else "      -          ", r["snr"], note))
+        lat = ("%7.0f  %10.2f ms" % (r["tl"], ms(r["tl"])) if r["tl"] is not None
+               else "%7s  %13s" % ("-", ""))
+        say(("   %2d   %s   %10.0fx   %s" % (i, lat, r["snr"], note)).rstrip())
     weak = sum(r["status"] in ("weak", "unclear") for r in rows)
     late = sum(r["status"] == "late" for r in rows)
     early = sum(r["status"] == "early" for r in rows)
