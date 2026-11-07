@@ -1,98 +1,132 @@
 ## Modifications to SooperLooper 1.7.9
 
-This is a modified fork of SooperLooper which adds late-hit correction
-for record, mute/unmute, and multiply operations, two new commands around
-recording safety, direct JACK MIDI ports, JACK sync that stays on the
-beat through tempo changes, fixes for restarts that play late and for
-multiplied loops that drop out at their end, and a standalone
-at-a-distance loop-state display.  Thanks to Jesse Chappell for the
-original SooperLooper.
+This is a modified fork of SooperLooper 1.7.9.  It adds late-hit
+correction, pre-rolls that keep what was played just before a recording
+starts, trigger latency at every recording edge, two new commands and a
+record failsafe, direct JACK MIDI ports, JACK sync that stays on the
+beat through tempo changes, and two standalone tools: a large-text loop
+state display and a latency calibration program.  It also fixes a number
+of timing and audio bugs in stock 1.7.9.  Thanks to Jesse Chappell for
+the original SooperLooper.
 
-**Late-hit correction.** When sync is active, a press that lands within a
-configurable window after a sync boundary is corrected back to that boundary
-instead of waiting for the next one — covering Record start/end, Mute/Unmute,
-and Multiply end. A corrected Record start or end gives the same loop an
-on-time press would, to the sample, fades included. The window defaults to
-100ms, never more than half the Quantize unit (an eighth or a cycle),
-narrowable to a fraction of that unit, and is
-configurable via the session file or live over OSC. Also fixes a stock 1.7.9
-bug where a quantized Pause press while Muted resolved to Playing instead of
-Paused.
+**Late-hit correction.**  When sync is active, a press that lands within
+a configurable window after a sync boundary acts at that boundary instead
+of waiting for the next one.  This covers starting and ending a recording
+(with Record, Overdub, or a quantized Mute), Mute and Unmute, Multiply
+end, and Rel Sync recordings.  A corrected start or end gives the same
+loop an on-time press would, to the sample, fades included.  The window
+defaults to 100 ms, is never more than half the Quantize unit (an eighth
+or a cycle), can be capped at a smaller fraction of that unit, and is set
+in the session file or live over OSC.  Mute and Unmute have a window of
+their own.
 
-**Restarts in time.**  Fixes a stock 1.7.9 bug: a restart (`trigger`, or
-`mute_trigger` from Mute) or a oneshot (`once`) started the loop late by
-SooperLooper's input plus output latency (31 ms at 743/743), with sync on
-too, leaving it that far behind the drums until the next restart.  They
-now start in time, as playback after a record already does.
+**Pre-rolls.**  A synced recording can keep a short stretch from just
+before the boundary it starts on (`sync_preroll_ms`, and
+`rel_sync_preroll_ms` for Rel Sync), and an unsynced one from just before
+the Record press (`free_preroll_ms`), so a strum attack or pickup played
+slightly early is in the loop.  The end moves back by as much, so the
+loop's length does not change.  Off until set.
 
-**Multiply ends cleanly.**  Fixes a stock 1.7.9 bug: a Multiply that
-ended at the end of the new loop (with Round on, or waiting for a sync
-boundary) left that loop's last input plus output latency (31 ms at
-743/743) unrecorded, so it dropped out there on every pass.  The loop is
-now recorded to its end and plays in time, after an on-time or late
-Multiply end, and so does the original take after an Undo.
+**Trigger latency at every edge.**  Stock SooperLooper uses its trigger
+latency setting (how late a command reaches it after the press) only
+where an overdub, Multiply, or Insert starts; everywhere else it acts as
+if that delay were the input latency.  In this fork every recording start
+and end uses it, so with a measured value each one lands on its press.
+It can be measured with `sllatency --trigger`, and autoset now sets it to
+the input latency it reads (at least one period) instead of one period.
 
-**`cancel_record_mute`, `cancel_overdub_undo` and record failsafe.**  Plain
-`record` already carries a loop from recording into play on its own — that part
-needs nothing new.  What `cancel_record_mute` adds is a clean way to stop that
-play again without needing a second button.  An optional second trigger on the
-same switch does the stopping: a long hold or a quick double tap, always
-following the `record` the switch sent the moment it was pressed.  That
-`record` is always sent at once, on every press (the switch fires "eagerly");
-waiting to see whether a second trigger will follow would cost the very timing
-accuracy this patch exists to protect.  A separate button bound to
-`mute_trigger` would do the same job for a playing loop, but costs a second
-pedal and is one more control to remember under performance pressure.
-Internally `cancel_record_mute` works by discarding the take and restoring the
-previous loop muted, but that's implementation, not intent — the performer
-isn't undoing a mistake, they're choosing to stop play in favor of silence, on
-the same pedal.  A companion setting, record failsafe (off by default), covers
-the case where that second trigger never comes at all — a record simply left
-running too long, with no press of any kind.  `cancel_overdub_undo` puts a
-general undo button on top of an overdub switch: a tap overdubs, and a long
-press undoes as if that overdub press had not happened — usually taking back
-the last overdub, but undoing whatever was done last.  Since that hold is a
-real undo, the overdub switch must be tapped: a press that is merely slow
-undoes too.  The record switch, by contrast, can be held freely except when it
-starts a recording over a playing loop.
+**New commands and a record failsafe.**  The two new commands are meant
+for the long press or double tap of a switch whose press has already sent
+its usual command, so that command keeps its timing:
 
-**JACK sync through tempo changes.**  With a JACK timebase master such
-as Hydrogen, stock SooperLooper's sync pulses drift off the master's beat
--- by up to half a beat -- after a tempo change made while the transport
-is rolling, and stay off until the next relocate.  This fork counts beats
-through tempo changes, so the pulses stay on the beat.
+- On the Record switch, `cancel_record_mute` cancels the recording the
+  press just started and brings back the previous take, muted.  One
+  switch can then record, play, and stop.
+- On the Overdub switch, `cancel_overdub_undo` undoes as if the overdub
+  press had not happened.  A slow press counts as a long press, so this
+  switch has to be tapped.
 
-**Direct JACK MIDI ports.**  A `sooperlooper:midi_in` port accepts MIDI
-commands with sub-buffer sample-accurate timestamps, and MIDI clock for
-syncing to.  A
-`sooperlooper:midi_out` port generates 24-ppqn MIDI clock and sends JACK
-Transport Start/Stop messages, replacing the need for `a2jmidid` when
-driving external hardware.
+The record failsafe (off by default) does the same as `cancel_record_mute`
+when a recording that cut off a playing loop runs longer than a set time.
 
-**`slbigstate`.**  A standalone program showing one or more loops' current
-state in large, high-contrast text — readable from across a room, unlike
-slgui's own small indicators.
+**JACK sync.**  With a JACK timebase master such as Hydrogen or a DAW,
+stock SooperLooper's sync pulses drift off the master's beat, by up to
+half a cycle, after a tempo change made while the transport rolls, and
+stay off until the next relocate.  This fork counts beats through tempo
+changes, so the pulses stay on the beat.  When the drums themselves jump
+off the loops (Hydrogen skipping a processing cycle), `realign_transport`
+moves the transport so they land back on SooperLooper's beat without
+moving the loops, on request or automatically after tempo changes
+(`auto_realign`).  Changing Eighths/Cycle while synced starts the new
+cycles at the old cycles' nearest boundary.
 
-**`sllatency`.**  A latency calibration tool.  It plays a click, times it
-coming back through a mic (or a cable), and checks JACK's latency settings
-and SooperLooper's own input and output latency, including the delay of
+**Direct JACK MIDI ports.**  A `sooperlooper:midi_in` port takes MIDI
+commands straight from JACK, each acted on at its exact sample within the
+audio buffer, and MIDI clock to sync to.  A `sooperlooper:midi_out` port
+sends 24-ppqn MIDI clock, and MIDI Start and Stop when the JACK transport
+starts and stops, for driving external hardware.  No ALSA bridge or
+`a2jmidid` is needed.
+
+**Stock bug fixes.**  The main ones:
+
+- Restarts and oneshots (`trigger`, `mute_trigger` from Mute, `once`)
+  play in time.  Stock starts them late by the input plus output latency
+  (31 ms at 743/743), with sync on too.
+- A multiplied loop no longer drops out for the input plus output latency
+  at its end on every pass.
+- Overdub, Replace, Substitute, Multiply, and Insert keep all of their
+  own audio and the old loop's, land in time, and fade cleanly at their
+  edges.  Stock loses a few milliseconds of one or the other in several
+  cases, and clicks or lands late in others when the latency settings
+  differ.
+- Record over a playing loop fades the loop out instead of cutting it off
+  with a click, and with Sync on the loop plays on until the take starts.
+- Rel Sync recordings come out the right length after Sync or the sync
+  source or Quantize changes, and restart in time.  Internal sync no longer drops a
+  cycle boundary, and MIDI clock sync no longer starts a synced recording
+  early.
+- A Once plays the whole loop, and a Trigger after Replace or Substitute
+  keeps the loop.  Pause from Mute ends Paused.
+- No crash when a recording waiting for its stop runs out of loop memory.
+- Autoset sees latency reported by programs between the interface and
+  SooperLooper, and `-S` selects the JACK server.
+- Fewer xruns on transport locates.
+
+Also: the default loop memory is 120 seconds (was 40), with a warning
+when a loop nears the end of it, and the input kept for late starts and
+pre-rolls is at least 4 seconds (`--input-history`).
+
+**Large-text loop state (`slbigstate`).**  A standalone program showing
+one or more loops' current state in large, high-contrast text, readable
+from across a room, unlike slgui's own small indicators.
+
+**Latency calibration (`sllatency`).**  Plays a click, times it coming
+back through a mic or a cable, and checks JACK's latency settings and
+SooperLooper's own input and output latency, including the delay of
 whatever the loops are monitored through.  It then offers to apply and
-save corrected SooperLooper values.
+save corrected values.  With `--trigger` it measures the trigger latency
+from a mic placed near the pedal.
 
 For full details see the documentation in [`mod_docs/`](mod_docs/):
 
 - [`late_hit_patch_summary.rst`](mod_docs/late_hit_patch_summary.rst) —
-  complete description of all modifications, configuration, and known issues.
+  complete description of all modifications, configuration, build
+  switches, and known issues.
 - [`sync_quantize_round_relsync.rst`](mod_docs/sync_quantize_round_relsync.rst) —
   background on SooperLooper's sync and quantize model.
+- [`latency_and_trigger_latency.rst`](mod_docs/latency_and_trigger_latency.rst) —
+  the delays between the performer and SooperLooper, what each latency
+  setting is for, and where each recording edge lands.
 - [`sooperlooper_and_ardour_setup_guide.rst`](mod_docs/sooperlooper_and_ardour_setup_guide.rst) —
   a practical low-budget live-looping setup and latency-calibration guide.
 - [`windows/README.md`](windows/README.md) — building and running on
   Windows under Cygwin, with a build script (built and run on Windows 10,
   MIDI through JACK included; a MIDI device not yet tried).
 
-All new code is bracketed with `albBegin` / `albEnd` markers; search for
-`albBegin` to locate every changed block.
+On Ubuntu 24.04 the script `ubuntu_compile.bash` builds and installs the
+fork (see the summary).  It also builds with liblo 0.32, which stock 1.7.9
+does not.  All new code is bracketed with `albBegin` / `albEnd` markers;
+search for `albBegin` to locate every changed block.
 
 ---
 
@@ -207,7 +241,7 @@ To connect your MIDI device, you need to use a MIDI patchbay.
 |---------------|------------------------------------------------------------------------------------------------------------------|----------------------------------|
 | JACK  >= 0.80 | http://jackaudio.org/                                                                                            |                                  |
 | wxWidgets     | https://www.wxwidgets.org/                                                                                       | It should work with the 2.6.x, 2.8, or 3.x versions. For OS X you will want at least the 2.6.1 version of [wxMac](https://wiki.wxwidgets.org/Install#Mac_OS). |
-| liblo >= 0.18 | http://liblo.sourceforge.net/                                                                                    | Lightweight OSC library. This fork also builds with 0.32, which stock 1.7.9 does not. |
+| liblo >= 0.18 | http://liblo.sourceforge.net/                                                                                    | Lightweight OSC library          |
 | sigc++ >= 2   | https://libsigcplusplus.github.io/libsigcplusplus/                                                               | You probably already have it.... |
 | libsndfile    | http://www.mega-nerd.com/libsndfile/                                                                             |                                  |
 | libsamplerate | http://www.mega-nerd.com/SRC/                                                                                    |                                  |
