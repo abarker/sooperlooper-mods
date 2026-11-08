@@ -1,11 +1,12 @@
 SooperLooper Late-Hit Recording Modification Summary
 ====================================================
 
-This fork of SooperLooper 1.7.9 started with the idea to make beat-synchronized
-looping more forgiving and more precise.  Most synchronized operations that
-land a moment late (after the beat) now count as on time and are corrected
-rather than waiting a full cycle.  Along the way JACK MIDI was added, many
-stock bugs were fixed, and new commands, tools, and settings were added.
+This fork of SooperLooper 1.7.9 began with the idea to make beat-synchronized
+looping more forgiving and more precise.  Synchronized operations that land a
+moment late (after the beat) in stock SooperLooper wait a full cycle to start.
+Most of these operations now count as on time if they fall in a preset
+allowed-lateness window.  Along the way JACK MIDI was added, many stock bugs
+were fixed, and new commands, tools, and settings were added.
 
 This document describes each change and how it can be configured.  Details
 about the implementations, such as where the changes are in the source, are in
@@ -116,9 +117,9 @@ item links to its full description.
 - **Eight settings, one place.** ``late_hit_window_ms``,
   ``late_hit_max_quant_unit_fraction``, ``record_failsafe_seconds``,
   ``mute_late_hit_ms``, ``rel_sync_preroll_ms``, ``sync_preroll_ms``,
-  ``free_preroll_ms`` and ``auto_realign`` are all saved in the session file's ``<Globals>`` line,
-  and can be read and set live over OSC.  See `Record Late-Hit Window
-  Size`_, `Realigning the Drums`_ and `OSC Control`_.
+  ``free_preroll_ms`` and ``auto_realign`` are all saved in the session file's
+  ``<Globals>`` line, and can be read and set live over OSC.  See `Record
+  Late-Hit Window Size`_, `Realigning the Drums`_ and `OSC Control`_.
 
 .. rubric:: Tools
 
@@ -1256,6 +1257,10 @@ Playing, Overdub, Mute, ...) in large, high-contrast text on a background
 color for each state -- readable from across a room during a performance,
 where ``slgui``'s own state indicators are too small.  It is its own
 window, not part of ``slgui``.
+
+.. image:: images/slbigstate_record.png
+   :width: 400px
+   :alt: The slbigstate window showing a loop in the Record state: the word Record in large white text on a red background
 
 It is built and installed with ``sooperlooper`` and ``slgui`` by the same
 ``configure``/``make``/``make install``, into the same directory (e.g.
