@@ -70,8 +70,9 @@ starts and stops, for driving external hardware.  No ALSA bridge or
 **Stock bug fixes.**  The main ones:
 
 - Restarts and oneshots (`trigger`, `mute_trigger` from Mute, `once`)
-  play in time.  Stock starts them late by the input plus output latency
-  (31 ms at 743/743), with sync on too.
+  play in time, and so does a loop re-locked by playback sync.  Stock
+  starts them late by the input plus output latency (31 ms at 743/743),
+  with sync on too.
 - A multiplied loop no longer drops out for the input plus output latency
   at its end on every pass.
 - Overdub, Replace, Substitute, Multiply, and Insert keep all of their

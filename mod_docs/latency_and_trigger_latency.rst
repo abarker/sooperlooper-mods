@@ -321,7 +321,9 @@ Stock does not do it everywhere:
   this fork (``RESTART_POSITION_FIX``).
 * **The end of a rounded Multiply** left the last IL + OL of the new loop
   unwritten.  Fixed in this fork (``MULTIPLY_END_FIX``).
-* Playback-sync re-alignment has the restart's problem and is not fixed.
+* **Playback-sync re-alignment** had the restart's problem: a re-locked
+  loop played IL + OL late.  Fixed in this fork
+  (``PLAYBACK_SYNC_OFFSET_FIX``).
 
 An overdub end has no immediate audible effect (the loop plays on; the
 new layer is heard on the next pass), so it is not limited at all.

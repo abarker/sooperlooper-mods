@@ -58,6 +58,13 @@ item links to its full description.
   ``RESTART_POSITION_FIX`` build flag (on).  See `Restart Position
   Fix`_ in the appendix.
 
+- **Playback sync in time.**  With ``playback_sync`` on, a playing loop
+  re-locks to the beat once a pass, so it never drifts.  Stock 1.7.9
+  re-locks it late by the input plus output latency (31 ms at 743/743),
+  the restart bug in another place; now it stays in time.  Controlled by
+  the ``PLAYBACK_SYNC_OFFSET_FIX`` build flag (on).  See `Restart
+  Position Fix`_ in the appendix.
+
 - **Multiply end fix.** A multiplied loop no longer drops out just before
   its start on every pass: stock 1.7.9 leaves the last input plus output
   latency of the new loop (31 ms at 743/743) unrecorded.  The loop also
@@ -1784,6 +1791,15 @@ a member to ``Engine``). ``ALB_TEMPO_ONLY_WHEN_ROLLING``,
        behavior.  A bug fix with an escape hatch, not a tunable: no
        session-file or OSC equivalent.  Unrelated to the
        ``trigger_latency`` setting.
+   * - ``PLAYBACK_SYNC_OFFSET_FIX``
+     - ``plugin.cc``
+     - ``1``
+     - When 1 (default), a stock 1.7.9 bug fix is active: with
+       ``playback_sync`` on, the once-a-pass re-lock puts the loop input +
+       output latency past its sync point, where normal play has it, so a
+       re-locked loop is heard in time (see `Restart Position Fix`_ in the
+       appendix).  Set to 0 to revert to stock behavior.  No effect with
+       ``playback_sync`` off (the default).
    * - ``ONESHOT_ONE_PASS_FIX``
      - ``plugin.hpp``
      - ``1``
@@ -2493,10 +2509,24 @@ downbeat played to the drums you hear is recorded later than that.
 Without sync, about the first 15 ms of the loop's opening is cut.  It is
 the same trade SooperLooper already makes after a record.
 
-**Not covered** (the same bug, left for later): playback-sync
-re-alignment (``playback_sync``), which snaps a playing loop to the top
-of its buffer at a sync point.  Measured: with it on, loops play the
-input plus output latency behind the beat (see `Known Issues and Future Work`_).
+**Playback sync, the same bug in another place.**  With ``playback_sync``
+on, a playing loop re-locks to a sync pulse once a pass, so it cannot
+drift from the beat.  Stock sets the loop's position at the re-lock to
+its sync point with no offset, so from the first re-lock on the loop
+plays the input plus output latency behind the beat (measured 1486
+samples at 743/743 on stock and on this fork before the fix, steady, with
+no drift).  The re-lock's window was also measured around the sync point,
+so with IL + OL more than half a cycle it fired at another pulse.
+``PLAYBACK_SYNC_OFFSET_FIX`` (``plugin.cc``, default ``1``) puts the
+target IL + OL past the sync point, scaled by the rate as above, and
+measures the window around it.  Measured with it on (dummy server, 170
+BPM, a 4-beat and an 8-beat loop for a minute): both loops within one
+sample of the beat throughout, no drift.  Each re-lock moves the loop by
+at most the sample of length rounding one pass builds up, with no
+crossfade: on a steady sine, the largest step was 1.18 times the sine's
+own (a click starts at about 2.5).  Regression tests:
+``testdef_playback_sync_offset.py`` (nine of its ten tests fail with the
+flag at 0; the tenth is the control with playback sync off).
 
 **Guarded by a compile-time flag.**  ``RESTART_POSITION_FIX``
 (``plugin.cc``, default ``1``).  Set it to ``0`` and rebuild to revert to
@@ -3079,13 +3109,13 @@ Known Issues and Future Work
    change doesn't realign, so neither helps.  A fix is designed but not
    built.
 
--  **Playback sync plays loops late (stock bug, not fixed yet).**
-   With ``playback_sync`` on, SooperLooper snaps a playing loop to the top
-   of its buffer at a sync point, without the input plus output latency
-   offset that the restart fix adds (see `Restart Position Fix`_).
-   Measured on stock and on this fork: every loop then plays exactly the
-   input plus output latency behind the beat (31 ms at 743/743), from its
-   first repeat on.  Leave ``playback_sync`` off until it is fixed.
+-  **Playback sync not yet tried live, or with tempo changes.**  Its
+   lateness is fixed (see `Restart Position Fix`_), and it has been
+   measured in time on a dummy server, but not yet on a real rig.  A loop
+   keeps its length when the tempo changes, so after a tempo change made
+   while loops play, the re-lock can move a loop by up to half a cycle
+   once a pass, with no crossfade.  Expected from the code, the same on
+   stock; not yet measured.
 
 -  **Only tested on Ubuntu 24.04:** no other environments yet tested.
 

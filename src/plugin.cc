@@ -536,8 +536,8 @@ unsigned long sl_input_history_samples(unsigned long sample_rate)
 // for them.  Oneshot gets the same in its two places: MULTI_ONESHOT's
 // immediate branch (which sets the position itself and already adds
 // the offset from Record and TrigStop) and the STATE_ONESHOT case for
-// synced ones.  Not covered (same bug, unused on the rig):
-// playback-sync re-alignment.  See ROADMAP entry 26.
+// synced ones.  The playback-sync re-lock had the same bug:
+// PLAYBACK_SYNC_OFFSET_FIX below.  See ROADMAP entry 26.
 // Regression tests: testdef_restart_position.py.
 //
 // Not related to the trigger_latency control (how late commands reach
@@ -545,6 +545,31 @@ unsigned long sl_input_history_samples(unsigned long sample_rate)
 //
 // Set to 0 to revert to the stock (buggy) behaviour.
 #define RESTART_POSITION_FIX 1
+//------ albEnd ----------------------------------
+
+//------ albBegin ----------------------------------
+// PLAYBACK_SYNC_OFFSET_FIX: compile-time safety switch for a STOCK bug
+// (stock 1.7.9 measured the same: ROADMAP entry 52).
+//
+// The bug: with playback_sync on, a playing loop re-locks to a sync pulse
+// once a pass by setting its position to its sync point, with no input
+// plus output latency.  Normal play runs IL + OL ahead (see
+// RESTART_POSITION_FIX), so from the first re-lock the loop plays IL + OL
+// late (1486 samples, 31 ms, at 743/743), and stays there.  Its window
+// (half a cycle, or half an eighth with Quantize 8th) is measured around
+// the sync point itself, so with IL + OL larger than the window it fires
+// at another pulse instead (by the code, a cycle away): measured, the
+// same IL + OL late, modulo a cycle.
+//
+// The fix puts the target IL + OL past the sync point (times the rate),
+// as RESTART_POSITION_FIX does for restarts, and measures the window
+// around the target.  A re-locked loop then plays in time and, since
+// each re-lock only removes the length rounding built up in one pass (a
+// sample at most), does not drift.  Only acts with playback_sync on (off
+// by default).  Regression tests: testdef_playback_sync_offset.py.
+//
+// Set to 0 to revert to the stock (buggy) behaviour.
+#define PLAYBACK_SYNC_OFFSET_FIX 1
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
@@ -8384,19 +8409,56 @@ runSooperLooper(LADSPA_Handle Instance,
 		 
 		 // test playback sync
 
+		 //------ albBegin ----------------------------------
+#if PLAYBACK_SYNC_OFFSET_FIX
+		 // Re-lock to the loop's sync point plus IL + OL (times the rate,
+		 // so reverse subtracts), where normal play has it, so the loop
+		 // is heard in time.  The window is measured around that target,
+		 // either way round the loop.  A target past the end wraps in the
+		 // block's recenter; a negative one in the wrap test below.
+		 bool playSyncHit = false;
+		 double playSyncTarget = 0.0;
+		 if (syncSamples && fPlaybackSyncMode != 0.0f && fQuantizeMode != QUANT_OFF && !pLS->donePlaySync
+		     && pfSyncInput[lSampleIndex] > 1.5f)
+		 {
+			 const long len = (long) loop->lLoopLength;
+			 const double lat = ((double) *pLS->pfInputLatency
+					     + (double) *pLS->pfOutputLatency) * pLS->fCurrRate;
+			 if (pLS->fCurrRate > 0)
+				 playSyncTarget = (double) (len - loop->lSyncPos) + fSyncOffsetSamples + lat;
+			 else
+				 playSyncTarget = (double) (len - loop->lSyncPos) - 1 - fSyncOffsetSamples + lat;
+			 long d = ((long) floor (playSyncTarget) - (long) lCurrPos) % len;
+			 if (d < 0) d += len;
+			 playSyncHit = (d < (long) syncSamples || len - d < (long) syncSamples);
+		 }
+		 if (playSyncHit)
+#else
+		 //------ albEnd ----------------------------------
 		 if (syncSamples && fPlaybackSyncMode != 0.0f && fQuantizeMode != QUANT_OFF && !pLS->donePlaySync
 		     && ( pfSyncInput[lSampleIndex] > 1.5f)
 		     && (labs((long)(loop->lLoopLength - loop->lSyncPos) - lCurrPos) < syncSamples
 		     	 || (lCurrPos + loop->lSyncPos) < syncSamples))
+		 //------ albBegin ----------------------------------
+#endif
+		 //------ albEnd ----------------------------------
 		 {
 			 DBG(cerr << pLS->lLoopIndex << ":" << pLS->lChannelIndex  << "PLAYBACK SYNC " <<  "  hit at " << lCurrPos << endl);
 			 //pLS->waitingForSync = 1;
 			 pLS->donePlaySync = true;
 
+			 //------ albBegin ----------------------------------
+#if PLAYBACK_SYNC_OFFSET_FIX
+			 loop->dCurrPos = playSyncTarget;
+#else
+			 //------ albEnd ----------------------------------
 			 if (pLS->fCurrRate > 0)
 				 loop->dCurrPos = (double) (loop->lLoopLength - loop->lSyncPos) + fSyncOffsetSamples;
 			 else
 				 loop->dCurrPos = (loop->lLoopLength - loop->lSyncPos) - 1 - fSyncOffsetSamples;
+			 //------ albBegin ----------------------------------
+#endif
+			 //------ albEnd ----------------------------------
 
 			 pfSyncOutput[lSampleIndex] = 2.0f;
 		 }
