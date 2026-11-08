@@ -98,7 +98,9 @@ class TriggerLatencyTestCase(unittest.TestCase):
         self.engine.request("RECORD")
         self.wait_buffers(self.record_bufs())
         self.engine.request("RECORD")
-        self.wait_buffers(5)
+        # With TRIGGER_LATENCY_ALL_EDGES the end waits IL (trigger_latency
+        # is 0 here): 5 buffers were enough only at 1024-sample blocks.
+        self.wait_buffers(5 + (IL if ALL_EDGES else 0) // self.buf)
         self.assertState("Playing", "record_a_loop: could not enter Playing")
 
     def mute_it(self):
@@ -219,7 +221,12 @@ class TestTriggerLatency(TriggerLatencyTestCase):
         then mutes."""
         self.mute_it()
         self.engine.request("ONESHOT")
-        self.wait_buffers(self.record_bufs() + 10)
+        # One pass is the loop's length (ONESHOT_ONE_PASS_FIX), which the
+        # take end's IL wait makes longer than record_bufs() at small
+        # blocks.  Allow up to two: this only checks that it ends Muted;
+        # testdef_oneshot_one_pass.py checks the pass is exactly one.
+        length = self.looper.get_control_value(test_engine.LoopLength) * self.sr
+        self.wait_for_state("Muted", 2 * int(length) // self.buf + 10)
         self.assertState("Muted", "oneshot should end Muted after one pass")
 
     def testOneShotEndingRecord_NotDoubled(self):
