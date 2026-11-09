@@ -61,6 +61,9 @@ class RelSyncPosTestCase(RelSyncLateHitTestCase):
         L = self.length()
         start = (self.loop_frame(64) - 64) % RAMP
         offs = set()
+        # The state can read Playing during the block that restarts the
+        # loop, and that block's first sample is still muted.
+        self.wait_buffers(1)
         for _ in range(30):
             self.wait_buffers(1)
             fr = self.looper.out_first_frame
