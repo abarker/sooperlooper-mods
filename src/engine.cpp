@@ -114,7 +114,7 @@ extern float g_free_preroll_ms;
 // tempo changes made while rolling a cycle Hydrogen misses can move its
 // drums onto that grid.  Both would be better addressed in Hydrogen
 // itself; BBT following (ALB_JACK_BBT_TRACKING, not defined by default:
-// ROADMAP entry 51) is ready for a master that publishes the position it
+// see audio_driver.hpp) is ready for a master that publishes the position it
 // plays, with tick_double.  Always
 // relocates (SooperLooper cannot tell whether the master carries an
 // offset), so a press when all is well is just a relocation that changes
@@ -3631,7 +3631,7 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 
 				// Stock resets loops' lSamplesSinceSync on a backwards
 				// locate; it detected one from TransportInfo::last_framepos,
-				// which is copied from uninitialised memory (entry 14).
+				// which is copied from uninitialised memory.
 				if (_beat_tracker.backwards() && !realign_landed) {
 					for (Instances::iterator i = _rt_instances.begin(); i != _rt_instances.end(); ++i) {
 						(*i)->set_samples_since_sync(info.framepos + offset);

@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 """
-Tests for TRIGGER_FEED_FADE_FIX (plugin.cc; stock bug, ROADMAP entry 43):
+Tests for TRIGGER_FEED_FADE_FIX (plugin.cc; stock bug):
 a Replace or Substitute ended by Trigger, or by a Oneshot that waits for
 the pulse, keeps the loop.  Replace and Substitute fade the loop's
 feedback to 0; stock never faded it back in on those two transitions, so

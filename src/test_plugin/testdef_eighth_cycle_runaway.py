@@ -74,7 +74,7 @@ INITIAL_EIGHTH_CYCLE = 16.0
 # Matches the min(128.0f, ...) clamp added to the doubling branch.
 EIGHTH_CYCLE_CEILING = 128.0
 
-# From the live rig config, ~/ardour/startup_config_files/big_tempo_config.py.
+# Tempo bounds from a live rig's Big Tempo config.
 MIN_BPM = 20.0
 STEP_BPM = 5.0
 

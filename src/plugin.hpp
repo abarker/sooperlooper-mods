@@ -55,7 +55,7 @@
 // boundary.  Here, not in plugin.cc, for the LoopChunk field below.
 #define SYNC_PREROLL 1
 // TRIGGER_LATENCY_ALL_EDGES: compile-time switch for a NEW behaviour, on
-// by default since its rig try (ROADMAP entry 39, option B); set to 0 for
+// by default since its rig try; set to 0 for
 // stock's edges.
 // trigger_latency is taken to mean exactly the command latency: the time
 // from the press to the engine acting on the command.  Stock uses it only
@@ -101,7 +101,7 @@
 // plugin.cc); the play loop counts it down by the rate's size and mutes
 // when it runs out, in place of its two buffer-end tests.  A oneshot then
 // plays the loop once from its beat 1, wherever that lies in the buffer,
-// and ends with the loop's pass.  See ROADMAP entry 43.  Here, not in
+// and ends with the loop's pass.  Here, not in
 // plugin.cc, for the SooperLooperI field below.
 // Set to 0 to revert to the stock (buggy) behaviour.
 #define ONESHOT_ONE_PASS_FIX 1
@@ -109,8 +109,7 @@
 
 //------ albBegin ----------------------------------
 // TL_OVER_IL_LAYER_FIX: compile-time safety switch for a STOCK bug
-// (stock 1.7.9 behaves the same; measured on a dummy server, ROADMAP
-// entry 42).
+// (stock 1.7.9 behaves the same; measured on a dummy server).
 //
 // The bug: when trigger_latency is larger than input_latency, the sound
 // played at the press reached the input k = TL - IL samples before the
@@ -130,7 +129,7 @@
 // Multiply and Insert the same (beginMultiply(), beginInsert(); a
 // lagged Multiply's rounded end waits lLayerLag longer, and its
 // unrounded end fills the whole OL + IL + lLayerLag stretch at once).
-// The layer's tail keeps the lag too (ROADMAP entry 49): STATE_PLAY
+// The layer's tail keeps the lag too: STATE_PLAY
 // (and the states sharing its block) writes the fade-out lLayerLag
 // further back, from the input lLayerLag back, so it follows the layer's
 // last sample; the lag goes once the fades are through, and any state
@@ -144,7 +143,7 @@
 
 //------ albBegin ----------------------------------
 // FREE_PREROLL: compile-time switch for a NEW behaviour, on since its rig
-// try (ROADMAP entry 40); inactive while free_preroll_ms is 0.  Needs
+// try; inactive while free_preroll_ms is 0.  Needs
 // TRIGGER_LATENCY_ALL_EDGES, whose take edges it moves.
 //
 // Neither Sync pre-roll reaches a take that does not start on a boundary.
@@ -166,8 +165,7 @@
 
 //------ albBegin ----------------------------------
 // RECORD_OVER_PLAY_FADE: compile-time safety switch for a STOCK bug
-// (stock 1.7.9 behaves the same; measured on a dummy server, ROADMAP
-// entry 48).
+// (stock 1.7.9 behaves the same; measured on a dummy server).
 //
 // The bug: Record pressed while a loop plays (or records a layer) cut the
 // loop off within a sample, with no fade: STATE_TRIG_START, the wait for

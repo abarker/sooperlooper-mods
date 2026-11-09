@@ -1,15 +1,14 @@
 #! /usr/bin/env python3
 """
 Tests for the fades at a layer's edges and at a Record over a playing
-loop: TL_OVER_IL_LAYER_FIX's tail (plugin.hpp; ROADMAP entry 49),
-TL_UNDER_IL_LAYER_FIX (plugin.cc), and RECORD_OVER_PLAY_FADE (plugin.hpp;
-entry 48).
+loop: TL_OVER_IL_LAYER_FIX's tail (plugin.hpp),
+TL_UNDER_IL_LAYER_FIX (plugin.cc), and RECORD_OVER_PLAY_FADE (plugin.hpp).
 
 The crossfade here is FADE samples (most tests run at 1).  The take is a
 constant (BASE) and the layer's input another (LEVEL), so a loop with its
 fades right holds only levels, joined by straight ramps of FADE samples:
 no two neighbouring samples differ by more than a ramp's step.  A cut, a
-layer's fade-out k after its end with the old loop between (entry 49), a
+layer's fade-out k after its end with the old loop between, a
 Replace's step where the old loop's fade ran ahead of the input's, or
 silence left unfilled before a Multiply or Insert (both TL < IL) each make
 a bigger one.  Every layer type, at TL above, equal to, and below IL.

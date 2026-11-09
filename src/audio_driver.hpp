@@ -43,7 +43,7 @@ typedef struct _jack_client jack_client_t;
 // and no tick_double -- Hydrogen and Ardour both do -- following puts the
 // pulses a few samples off the beat (2-3 at 1920 ticks per beat, more at
 // Hydrogen's 48), so every synced take is that much off and drifts: worse
-// than not following (ROADMAP entry 51).  Exact with a master that sets
+// than not following.  Exact with a master that sets
 // tick_double; none known so far.  Unit-tested (src/test_beat_tracker)
 // and tested on a dummy JACK server against a patched Hydrogen 1.2.7 in
 // pattern mode (hydrogen_missed_cycle_test.py --pattern-mode
@@ -52,7 +52,7 @@ typedef struct _jack_client jack_client_t;
 // beat 1, tick 0 throughout) nothing changes.  Caution: stock Hydrogen in
 // SONG mode publishes a live but wrong position after tempo changes made
 // while rolling (it ignores its own tempo offset), and would be followed;
-// the patched Hydrogen (~/programming/c_and_cpp/hydrogen) fixes that.  Keeps
+// a Hydrogen patched to apply the offset fixes that.  Keeps
 // the JackSync beat count on the timebase master's own bar/beat/tick
 // position (BeatTracker::follow_master), so the pulses also follow a
 // master whose position is not frames * beat length -- a DAW relocated

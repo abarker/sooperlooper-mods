@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 """
-Tests for the Rel Sync known-phase design (ROADMAP entry 33, "Next step"):
+Tests for the Rel Sync known-phase design:
 the loop keeps track of where it is in the cycle while its Sync is off, so
 a Rel Sync record can start at the press as soon as Rel Sync comes on.
 

@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 """
-Tests for TL_OVER_IL_LAYER_FIX's Multiply half (plugin.hpp; ROADMAP
-entry 42, increment (b)): with trigger_latency larger than input_latency
+Tests for TL_OVER_IL_LAYER_FIX's Multiply half (plugin.hpp): with
+trigger_latency larger than input_latency
 (k = TL - IL), a Multiply started at once by its command reads the input
 k samples back but wrote it at the usual place, k samples late.  Now it
 is written where it was heard; its first sample is the one played at the
@@ -18,10 +18,10 @@ heard at frame g - IL - OL, belongs at position P(p0) + g - IL - OL - p0.
 Sync and Quantize off; started mid-loop.  The loop is read a whole loop
 after the Multiply ends.
 
-Also two stock fixes (plugin.cc): MULTIPLY_FRONTFILL_FIX (ROADMAP entry
-45), the classes with input_latency unequal to output_latency, which
+Also two stock fixes (plugin.cc): MULTIPLY_FRONTFILL_FIX, the classes
+with input_latency unequal to output_latency, which
 left a gap (IL > OL) or an overlap (OL > IL) before the multiply; and
-ROUNDED_MULTIPLY_FILL_FIX (entry 46), testRounded, a two-cycle rounded
+ROUNDED_MULTIPLY_FILL_FIX, testRounded, a two-cycle rounded
 Multiply whose second press copied the old loop over OL + IL recorded
 samples one cycle back.
 """

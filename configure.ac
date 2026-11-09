@@ -220,7 +220,7 @@ then
     dnl test with JACK_LIBS alone, whatever the library is called.
     alb_save_LIBS="$LIBS"
     LIBS="$JACK_LIBS $LIBS"
-    dnl ROADMAP entry 50: jack_client_open() is now required (the
+    dnl jack_client_open() is now required (the
     dnl jack_client_new() path is gone; in JACK since about 2006), and the
     dnl latency-range API is used when present (since about 2011), else
     dnl the deprecated jack_port_get_total_latency().

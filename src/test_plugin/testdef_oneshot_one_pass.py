@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 """
-Tests for ONESHOT_ONE_PASS_FIX (plugin.hpp; stock bug, ROADMAP entry 43):
+Tests for ONESHOT_ONE_PASS_FIX (plugin.hpp; stock bug):
 a oneshot plays the loop once, one loop length from its start, and ends
 with the loop's pass.  Stock ended it when the position reached the end
 of the buffer, so it played lSyncPos samples when that was positive (part

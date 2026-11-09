@@ -15,7 +15,7 @@ immediate end's would; a restart in the slack window keeps the loop's
 phase.  At s <= 0 nothing changes (the "Equal" classes, TL = IL, run the
 stock immediate branches; several expectations are measured there).
 
-Two cases need ROADMAP entry 43's fixes (TRIGGER_FEED_FADE_FIX,
+Two cases need other fixes (TRIGGER_FEED_FADE_FIX,
 ONESHOT_ONE_PASS_FIX), which are bugs on the stock path too.
 
 Skipped when the switch is off.  Same exact-frame presses and ramp input
@@ -120,7 +120,7 @@ class LayerEndsMixin:
     by the same command.  Replace and Substitute write the input itself
     (no sum), so the newest input frame anywhere in the loop is the last
     sample the layer took: s - 1 after the ending press (-1 at s = 0).
-    s is signed: at s < 0 (increment (c), entry 42) the take starts -s
+    s is signed: at s < 0 (increment (c)) the take starts -s
     early and the layer ends -s before its command."""
 
     def s(self):
@@ -530,7 +530,7 @@ class TestTriggerLatencyTakeEndsAbove(TakeEndsMixin, TriggerLatencyAllEdgesTestC
 class TestTriggerLatencyLayerEndsAbove(LayerEndsMixin, TriggerLatencyAllEdgesTestCase):
 
     TL = 900            # s = -300: the take (increment (c)) and the layers
-                        # (entry 42's TL_OVER_IL_LAYER_FIX)
+                        # (TL_OVER_IL_LAYER_FIX)
 
 
 class TestTriggerLatencyRestarts(RestartsMixin, TriggerLatencyAllEdgesTestCase):
@@ -569,7 +569,7 @@ class TestTriggerLatencyAboveInput(TestTriggerLatencyAllEdges):
                         # history, and ends as much before the second
 
 
-# FREE_PREROLL (ROADMAP entry 40): the same cases with an unsynced
+# FREE_PREROLL: the same cases with an unsynced
 # pre-roll P, which counts as command latency at the take's edges: the
 # take starts and ends P earlier (a shorter wait, or more history), keeps
 # the press interval as its length and its playback phase, and has its

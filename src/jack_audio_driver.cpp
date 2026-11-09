@@ -31,7 +31,7 @@
 #include <jack/jack.h>
 
 //------ albBegin ----------------------------------
-// ROADMAP entry 50: the deprecated JACK calls, and a stock -S bug.
+// The deprecated JACK calls, and a stock -S bug.
 //
 // JACK_LATENCY_RANGE_FIX: stock fix, on.  get_input_port_latency() and
 // get_output_port_latency() (what autoset reads) used the deprecated
@@ -148,8 +148,8 @@ JackAudioDriver::connect_to_jack ()
 	// STOCK (sooperlooper 1.7.9): this block was inside
 	// #ifdef HAVE_JACK_CLIENT_OPEN, with an #else branch that opened the
 	// client with the deprecated jack_client_new(), trying the names
-	// sooperlooper_1 .. sooperlooper_9 (or <name>_1 .. _9).  CHANGE
-	// (ROADMAP entry 50): the #else branch is gone; configure now stops
+	// sooperlooper_1 .. sooperlooper_9 (or <name>_1 .. _9).  CHANGE:
+	// the #else branch is gone; configure now stops
 	// when JACK lacks jack_client_open() (in JACK since about 2006).
 	//------ albEnd ----------------------------------
 	jack_options_t options = JackNullOption;

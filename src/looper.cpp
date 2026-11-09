@@ -666,7 +666,7 @@ Looper::recompute_latencies()
 		}
 
 		//------ albBegin ----------------------------------
-		// AUTOSET_TL_FROM_INPUT: stock fix, on (ROADMAP entry 39 follow-up).
+		// AUTOSET_TL_FROM_INPUT: stock fix, on.
 		// STOCK: trigger latency = one period, whatever the input latency.
 		// With TRIGGER_LATENCY_ALL_EDGES that puts every edge (IL - period)
 		// after the press when IL is larger.  Now max(IL, period): never

@@ -1,6 +1,6 @@
 #! /usr/bin/env python3
 """
-Regression tests for PLAYBACK_SYNC_OFFSET_FIX (stock bug, ROADMAP entry 52).
+Regression tests for PLAYBACK_SYNC_OFFSET_FIX (stock bug).
 
 With playback_sync on, a playing loop re-locks to a sync pulse once a pass.
 Stock set its position to the sync point with no input plus output latency,

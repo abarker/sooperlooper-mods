@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 """
-Tests for TL_OVER_IL_LAYER_FIX's Insert half (plugin.hpp; ROADMAP entry
-42, increment (b)): with trigger_latency larger than input_latency
+Tests for TL_OVER_IL_LAYER_FIX's Insert half (plugin.hpp): with
+trigger_latency larger than input_latency
 (k = TL - IL), an Insert started at once by its command reads the input
 k samples back but wrote it at the usual place, k samples late.  Now the
 inserted stretch starts where the press was heard, OL + IL + k behind
@@ -10,7 +10,7 @@ ends with the input played at the second press.
 
 As testdef_multiply_placement.py: a take of a constant (BASE), the
 inserted input a ramp; input frame g belongs at P(p0) + g - IL - OL - p0.
-Also INSERT_GAP_FILL_FIX (plugin.cc; ROADMAP entry 47, a stock fix, on):
+Also INSERT_GAP_FILL_FIX (plugin.cc; a stock fix, on):
 the old loop resumes after the inserted cycles, at the play position
 where the insert finished; the OL + IL (+ k) samples before it were never
 written (the old loop just before the insert's start lost, rounded or

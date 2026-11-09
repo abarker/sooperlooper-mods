@@ -537,7 +537,7 @@ unsigned long sl_input_history_samples(unsigned long sample_rate)
 // immediate branch (which sets the position itself and already adds
 // the offset from Record and TrigStop) and the STATE_ONESHOT case for
 // synced ones.  The playback-sync re-lock had the same bug:
-// PLAYBACK_SYNC_OFFSET_FIX below.  See ROADMAP entry 26.
+// PLAYBACK_SYNC_OFFSET_FIX below.
 // Regression tests: testdef_restart_position.py.
 //
 // Not related to the trigger_latency control (how late commands reach
@@ -549,7 +549,7 @@ unsigned long sl_input_history_samples(unsigned long sample_rate)
 
 //------ albBegin ----------------------------------
 // PLAYBACK_SYNC_OFFSET_FIX: compile-time safety switch for a STOCK bug
-// (stock 1.7.9 measured the same: ROADMAP entry 52).
+// (stock 1.7.9 measured the same).
 //
 // The bug: with playback_sync on, a playing loop re-locks to a sync pulse
 // once a pass by setting its position to its sync point, with no input
@@ -585,15 +585,14 @@ unsigned long sl_input_history_samples(unsigned long sample_rate)
 // one pass after the restart: heard once, then silence.
 //
 // The fix fades the feedback in, in both cases, as STATE_PLAY does.  It
-// changes nothing where the feedback is already up.  See ROADMAP entry 43.
+// changes nothing where the feedback is already up.
 // Set to 0 to revert to the stock (buggy) behaviour.
 #define TRIGGER_FEED_FADE_FIX 1
 //------ albEnd ----------------------------------
 
 //------ albBegin ----------------------------------
 // OVERDUB_WRAP_FILL_FIX: compile-time safety switch for a STOCK bug
-// (stock 1.7.9 behaves the same; measured on a dummy server, ROADMAP
-// entry 44).
+// (stock 1.7.9 behaves the same; measured on a dummy server).
 //
 // The bug: an Overdub, Replace or Substitute writes OL + IL behind the
 // play position, and copies the previous layer into its new chunk in
@@ -652,7 +651,7 @@ unsigned long sl_input_history_samples(unsigned long sample_rate)
 
 //------ albBegin ----------------------------------
 // MULTIPLY_FRONTFILL_FIX: compile-time safety switch for a STOCK bug
-// (ROADMAP entry 45; harness, stock 1.7.9 not run).
+// (harness; stock 1.7.9 not run).
 //
 // The bug: beginMultiply() ended its front fill (the old loop copied into
 // the new chunk before the multiply's first write) at
@@ -670,7 +669,7 @@ unsigned long sl_input_history_samples(unsigned long sample_rate)
 
 //------ albBegin ----------------------------------
 // ROUNDED_MULTIPLY_FILL_FIX: compile-time safety switch for a STOCK bug
-// (ROADMAP entry 46; harness, stock 1.7.9 not run).
+// (harness; stock 1.7.9 not run).
 //
 // The bug: endMultiply() starts an OL + IL "leftover" fill at every end.
 // With Round on the multiply runs on to the cycle's end, and the
@@ -690,7 +689,7 @@ unsigned long sl_input_history_samples(unsigned long sample_rate)
 
 //------ albBegin ----------------------------------
 // INSERT_GAP_FILL_FIX: compile-time safety switch for a STOCK bug
-// (ROADMAP entry 47; harness, stock 1.7.9 not run).
+// (harness; stock 1.7.9 not run).
 //
 // The bug: an Insert with Quantize off writes its input OL + IL (plus
 // TL_OVER_IL_LAYER_FIX's lLayerLag) behind the play position, from where
@@ -710,8 +709,7 @@ unsigned long sl_input_history_samples(unsigned long sample_rate)
 
 //------ albBegin ----------------------------------
 // TL_UNDER_IL_LAYER_FIX: compile-time safety switch for a STOCK bug
-// (stock code; measured on this fork on a dummy server, ROADMAP entry
-// 49's probe).
+// (stock code; measured on this fork on a dummy server).
 //
 // When trigger_latency is below input_latency (the rig: 685 and 743), a
 // layer started at a command waits c = IL - TL samples (lFramesUntilInput)

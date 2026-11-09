@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 """
-Tests for TL_OVER_IL_LAYER_FIX (plugin.hpp; ROADMAP entry 42) and
-OVERDUB_WRAP_FILL_FIX (plugin.cc; ROADMAP entry 44), both stock bugs.
+Tests for TL_OVER_IL_LAYER_FIX (plugin.hpp) and
+OVERDUB_WRAP_FILL_FIX (plugin.cc), both stock bugs.
 
 TL_OVER_IL_LAYER_FIX: with trigger_latency larger than input_latency
 (k = TL - IL), an Overdub, Replace or Substitute started at once by its
