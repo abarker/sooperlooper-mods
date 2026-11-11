@@ -1,13 +1,13 @@
 ## Modifications to SooperLooper 1.7.9
 
-This is a modified fork of SooperLooper 1.7.9.  It adds late-hit
-correction, pre-rolls that keep what was played just before a recording
-starts, trigger latency at every recording edge, two new commands and a
-record failsafe, direct JACK MIDI ports, JACK sync that stays on the
-beat through tempo changes, and two standalone tools: a large-text loop
-state display and a latency calibration program.  It also fixes a number
-of timing and audio bugs in stock 1.7.9.  Thanks to Jesse Chappell for
-the original SooperLooper.
+This is a modified fork of SooperLooper 1.7.9.  It adds late-hit correction,
+direct JACK MIDI ports, pre-rolls that keep what was played just before a
+recording starts, trigger latency at every recording edge, two new commands and
+a record failsafe option, JACK sync that stays on the beat through tempo
+changes, and two standalone tools: a large-text loop state display and a
+latency calibration program.  It also fixes a number of timing and audio bugs
+in stock 1.7.9 and adds many new tests.  Thanks to Jesse Chappell for the
+original SooperLooper.
 
 **Late-hit correction.**  When sync is active, a press that lands within
 a configurable window after a sync boundary acts at that boundary instead
