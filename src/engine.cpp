@@ -136,11 +136,15 @@ static int s_realign_held = 0;
 // Automatic realign (``/set auto_realign 1``; 0, the default, is off;
 // saved with the session): a realign once the JACK tempo has stayed
 // unchanged for AUTO_REALIGN_SETTLE_S after a change made while rolling,
-// so a burst of tempo steps gives one.  A tempo change made while rolling
-// is what leaves the master carrying an offset from the plain frame x
-// tempo grid; the realign clears it on both sides, after which a cycle the
-// master misses, or a transport skip the engine re-anchors at, lands both
-// on the grid they are already on, and nothing moves.  Each one is a
+// so a burst of tempo steps gives one.  The wait is longer than the 0.1 to
+// 0.2 s between steps of a held tempo pedal: at 0.2 s a realign went out
+// just as the next step came, and the tempo then changed while it landed
+// (s_realign_bpm) at about one realign in three.
+// A tempo change made while rolling is what leaves the master carrying an
+// offset from the plain frame x tempo grid; the realign clears it on both
+// sides, after which a cycle the master misses, or a transport skip the
+// engine re-anchors at, lands both on the grid they are already on, and
+// nothing moves.  Each one is a
 // relocation that changes no musical position: the transport is held for
 // one cycle (the master's ringing sounds carry on, measured with
 // Hydrogen 1.2.7), and the drums move by about one period's worth of the
@@ -156,7 +160,31 @@ static std::atomic<bool> s_auto_realign (false);
 static std::atomic<bool> s_auto_realign_blocked (false);
 // A hold that was not one cycle, for the non-RT loop to report; -1: none.
 static std::atomic<int> s_realign_hold_report (-1);
-#define AUTO_REALIGN_SETTLE_S 0.2
+// A realign the tempo raced: the master places itself on a relocation at
+// the tempo it then has (Hydrogen 1.2.4: the tempo the transport reports
+// in the cycle before the landing), while the target was worked out at the
+// tempo of the request cycle.  A tempo change from the request through the
+// landing cycle can therefore land the master off the count by any amount,
+// and the count, re-anchored to frame x tempo as on any relocation, would
+// jump with it, away from loops already playing.  So when the tempo moved
+// in that window the landing keeps the count (where it would be had the
+// transport rolled on, the held cycles included), and the realign is
+// requested again from that count once the tempo is still for a cycle.  A
+// retry that was not needed (the master placed itself at the old tempo)
+// changes no musical position.  At most REALIGN_RETRY_MAX in a row: then
+// the count follows the master (frame x the tempo of the cycle before the
+// landing), loops already playing are left off it, and automatic realigns
+// stop, so a master whose tempo moves every few cycles cannot keep the
+// transport relocating.  Process thread only, except the
+// report (for the non-RT loop; -1: none).
+#define REALIGN_RETRY_MAX 3
+static double s_realign_bpm = 0.0;          // tempo of the request cycle
+static bool s_realign_tempo_moved = false;  // since the request
+static double s_realign_expect = 0.0;       // the count, had the transport rolled on
+static bool s_realign_retry_pending = false;
+static int s_realign_retries = 0;           // in a row
+static std::atomic<int> s_realign_race_report (-1);
+#define AUTO_REALIGN_SETTLE_S 0.5
 // Process thread only: the tempo of the previous cycle, and the frames the
 // tempo has been unchanged since a change made while rolling (-1: no
 // change waiting).
@@ -2176,6 +2204,17 @@ Engine::mainloop()
 					         " from bar 1 clears it for new takes.  %s\n", what);
 				}
 			}
+			// Realigns the tempo raced REALIGN_RETRY_MAX times in a row.
+			const int raced = s_realign_race_report.exchange (-1);
+			if (raced >= 0) {
+				fprintf (stderr, "SooperLooper: WARNING: the tempo changed while %d realigns"
+				         " in a row were landing.  The drums and SooperLooper's bar lines"
+				         " may now be off loops already playing; a restart from bar 1"
+				         " clears it for new takes.%s\n", raced,
+				         s_auto_realign.load ()
+				         ? "  auto_realign is paused (/get auto_realign returns 2);"
+				           " set auto_realign 1 again to resume it." : "");
+			}
 		}
 		//------ albEnd ----------------------------------
 		// pull off all loop management events from the rt thread
@@ -2282,6 +2321,13 @@ Engine::mainloop()
 						fprintf (_sync_pulse_log_file,
 						         "event=realign what=landed why=%s frame=%u held=%d time=%s\n",
 						         w, pev.framepos, pev.realign_held, t);
+					} else if (pev.realign_what == RealignRaced) {
+						// count: where the count was kept (beats);
+						// retry: 1.., or 0 when the retries ran out.
+						fprintf (_sync_pulse_log_file,
+						         "event=realign what=raced why=%s frame=%u count=%.4f"
+						         " retry=%d bpm=%.3f time=%s\n", w, pev.framepos,
+						         pev.realign_count, pev.realign_held, pev.bpm, t);
 					} else {
 						fprintf (_sync_pulse_log_file,
 						         "event=realign what=lost why=%s frame=%u time=%s\n",
@@ -3592,39 +3638,82 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				// seen, counts as that.
 				// A realign's pulse-log record (ALB_SYNC_PULSE_LOG): what
 				// happened, why it was requested, frames, the hold.
-				auto log_realign = [&] (SyncRealignWhat what, int64_t frame, int64_t target, int held) {
+				auto log_realign = [&] (SyncRealignWhat what, int64_t frame, int64_t target, int held,
+				                        double count) {
 #ifdef ALB_SYNC_PULSE_LOG
 					SyncPulseLogEvent rev = SyncPulseLogEvent();
-					rev.kind         = SyncPulseLogEvent::Realign;
-					rev.realign_what = (uint8_t) what;
-					rev.realign_why  = (uint8_t) s_realign_why;
-					rev.framepos     = (nframes_t) frame;
-					rev.expected     = (nframes_t) target;
-					rev.realign_held = held;
-					rev.bpm          = bpm;
+					rev.kind          = SyncPulseLogEvent::Realign;
+					rev.realign_what  = (uint8_t) what;
+					rev.realign_why   = (uint8_t) s_realign_why;
+					rev.framepos      = (nframes_t) frame;
+					rev.expected      = (nframes_t) target;
+					rev.realign_held  = held;
+					rev.realign_count = count;
+					rev.bpm           = bpm;
 					sync_log_push (rev);
 #else
-					(void) what; (void) frame; (void) target; (void) held;
+					(void) what; (void) frame; (void) target; (void) held; (void) count;
 #endif
 				};
 				if (s_realign_landing >= 0) {
+					// A tempo change from the request through the landing
+					// (s_realign_bpm).
+					if (TEMPO_DIFF (bpm, s_realign_bpm)) {
+						s_realign_tempo_moved = true;
+					}
 					if (info.state != TransportInfo::ROLLING) {
 						++s_realign_held;
+						// Loops already playing go on through the hold.
+						s_realign_expect += (double) nframes * bpm / (60.0 * sr);
 					}
 					else if (realign_landed
 					         || (_beat_tracker.relocated () && s_realign_held == 0)) {
 						log_realign (RealignLanded, info.framepos,
-						             s_realign_landing, s_realign_held);
+						             s_realign_landing, s_realign_held, 0.0);
 						if (s_realign_held != 1) {
 							s_auto_realign_blocked.store (true);
 							s_realign_hold_report.store (s_realign_held);
+						}
+						if (s_realign_tempo_moved) {
+							// Raced (s_realign_bpm): keep the count, and
+							// realign again from it.
+							if (s_realign_retries < REALIGN_RETRY_MAX) {
+								_beat_tracker.set_position (s_realign_expect);
+								++s_realign_retries;
+								s_realign_retry_pending = true;
+								log_realign (RealignRaced, info.framepos, 0,
+								             s_realign_retries, s_realign_expect);
+							} else {
+								// Out of retries: follow the master instead,
+								// placed at the tempo of the cycle before
+								// the landing (s_auto_last_bpm, not yet
+								// updated this cycle), so the pulses stay
+								// with the drums.
+								if (s_auto_last_bpm > 0.0) {
+									_beat_tracker.set_position ((double) info.framepos
+									                            * s_auto_last_bpm / (60.0 * sr));
+								}
+								log_realign (RealignRaced, info.framepos, 0, 0,
+								             _beat_tracker.start_beats ());
+								s_realign_race_report.store (s_realign_retries + 1);
+								s_realign_retries = 0;
+								s_auto_realign_blocked.store (true);
+							}
+						} else {
+							s_realign_retries = 0;
 						}
 						s_realign_landing = -1;
 					}
 					else if (_beat_tracker.relocated () || ++s_realign_wait > 32) {
 						log_realign (RealignLost, info.framepos,
-						             s_realign_landing, s_realign_held);
+						             s_realign_landing, s_realign_held, 0.0);
 						s_realign_landing = -1;
+						s_realign_retries = 0;
+						s_realign_retry_pending = false;
+					}
+					else {
+						// Rolled on before the landing.
+						s_realign_expect = _beat_tracker.end_beats ();
 					}
 				}
 				//------ albEnd ----------------------------------
@@ -3685,10 +3774,24 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				else {
 					s_auto_settle_frames = -1;
 				}
+				const bool tempo_still = !(s_auto_last_bpm > 0.0 && TEMPO_DIFF (bpm, s_auto_last_bpm));
 				s_auto_last_bpm = bpm;
 				// A request while not rolling is dropped, not kept for
 				// later: a start re-anchors anyway.
-				const int why = s_realign_request.exchange (0);
+				int why = s_realign_request.exchange (0);
+				if (why != 0) {
+					// A new request: retries count from here.
+					s_realign_retries = 0;
+					s_realign_retry_pending = false;
+				}
+				else if (s_realign_retry_pending && s_realign_landing < 0 && tempo_still) {
+					// Again after a raced landing, once the tempo is still
+					// for a cycle (s_realign_bpm).
+					why = s_realign_why;
+				}
+				if (info.state != TransportInfo::ROLLING) {
+					s_realign_retry_pending = false;
+				}
 				if (why != 0 && _beat_tracker.active ()
 				    && info.state == TransportInfo::ROLLING && bpm > 0.0) {
 					const double rate = bpm / (60.0 * sr);      // beats per frame
@@ -3696,10 +3799,14 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 					const int64_t target = (int64_t) llround (beats_then / rate);
 					if (target >= 2 * (int64_t) nframes) {
 						s_realign_why = why;
-						log_realign (RealignRequest, info.framepos, target, 0);
+						log_realign (RealignRequest, info.framepos, target, 0, 0.0);
 						s_realign_landing = target;
 						s_realign_wait = 0;
 						s_realign_held = 0;
+						s_realign_bpm = bpm;
+						s_realign_tempo_moved = false;
+						s_realign_expect = _beat_tracker.end_beats ();
+						s_realign_retry_pending = false;
 						_driver->reposition_transport ((nframes_t) (target - 2 * (int64_t) nframes));
 					}
 				}

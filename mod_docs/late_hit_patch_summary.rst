@@ -1179,7 +1179,7 @@ With nothing to correct, the drums carry on unchanged.  A request while
 the transport is stopped is ignored.
 
 **Automatic realign.**  With ``/set auto_realign 1`` (off by default;
-saved with the session), SooperLooper realigns by itself 0.2 s after the
+saved with the session), SooperLooper realigns by itself 0.5 s after the
 tempo last changed while rolling, so a run of tempo steps, such as a
 tempo-list change, gives one realign.  A tempo change made while rolling
 is what lets a later xrun or a cycle Hydrogen misses put the drums off the
@@ -1189,6 +1189,24 @@ so such an error causes only its own momentary glitch.  What you hear at a
 tempo change: only the tempo change.  The drums move by a fraction of a
 millisecond (about one period's worth of the tempo change), and a hit due
 in the one held period may come that period late.
+
+**A tempo change while a realign lands.**  A realign lands three JACK
+periods after SooperLooper asks for it, and Hydrogen places itself there
+at the tempo it has then.  If the tempo changes in between, as when the
+next step of a held tempo pedal arrives just as the realign goes out,
+Hydrogen lands up to a beat away from where SooperLooper aimed, and the
+drums and SooperLooper's bar lines would jump together, off loops already
+playing (in 3/4 the bar line also moves by whole beats).  SooperLooper
+therefore checks the tempo of every period from the request through the
+landing.  If it changed, SooperLooper keeps its own count, so its bar
+lines and the loops stay put, and realigns again as soon as the tempo has
+been steady for one period.  What you hear in that case: the drums may be
+off for two or three periods (11 to 16 ms at 256 frames) before they land
+back, so one hit may sound twice or not at all.  After three such retries
+in a row it stops trying: its bar lines then follow the drums, its
+console warns that loops already playing may be off them, and automatic
+realigns pause (``/get auto_realign`` returns 2) until the setting is set
+again.  A restart from bar 1 clears the offset for new takes.
 
 **Not with a slow-sync client.**  Realign relies on JACK holding the
 transport for exactly one period on a relocate.  A slow-sync client -- a
@@ -1224,7 +1242,15 @@ drums and pulses one period behind the loops.  Tested on a dummy JACK
 server with Hydrogen 1.2.7 (drums back within 0.001 beat, pulses
 continuous to within a frame; with ``auto_realign``, a Hydrogen missed
 cycle after a tempo change moved nothing, where without it the drums
-ended 0.4 beat off); not yet tried live.
+ended 0.4 beat off); not yet tried live.  The check for a tempo change
+while a realign lands was tested the same way with Hydrogen 1.2.4 in
+pattern mode, switching between 2/4, 3/4, and 4/4 patterns: through
+tempo ramps the drums stayed within 0.001 beat of SooperLooper's pulses
+and the bar line stayed on SooperLooper's count, where without the check
+two of nine realigns moved the pulses by 0.46 and 0.75 beat and the bar
+line by one and two beats.  Hydrogen 1.2.4 places itself at the tempo the
+transport reported in the period before the landing (measured), which is
+the tempo SooperLooper follows when it stops retrying.
 
 Eighths/Cycle Changes While Running
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

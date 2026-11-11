@@ -142,6 +142,46 @@ static void test_relocate ()
 	       "forward locate anchor %g", bt.start_beats ());
 }
 
+// set_position() after a relocation keeps the count where it was going
+// (a realign the tempo raced): pulses continue one beat apart from it, at
+// the new frames; a later relocation re-anchors to frame x tempo again.
+static void test_set_position_keeps_count ()
+{
+	const uint32_t nf = 256;
+	const double r = 120.0 / (60.0 * SR);
+	BeatTracker bt;
+	uint32_t pos = 0;
+	for (int c = 0; c < 400; ++c, pos += nf) {
+		bt.update (pos, nf, 120.0, true, SR);
+	}
+	const double kept = bt.end_beats ();            // where the count is going
+	bt.update (1000000, nf, 120.0, true, SR);       // relocate elsewhere
+	CHECK (bt.relocated (), "relocate not flagged");
+	bt.set_position (kept);
+	CHECK (bt.start_beats () == kept, "count not kept: %g vs %g", bt.start_beats (), kept);
+	CHECK (std::fabs (bt.end_beats () - (kept + nf * r)) < 1e-9, "end of cycle %g", bt.end_beats ());
+	// The next pulse: the first whole beat after `kept`, at the new frames.
+	std::vector<double> p;
+	uint32_t f = 1000000;
+	for (int c = 0; c < 200; ++c) {
+		if (c > 0) bt.update (f, nf, 120.0, true, SR);
+		CHECK (c == 0 || !bt.relocated (), "continuing after set_position flagged as relocate");
+		uint32_t offs[8];
+		int n = bt.boundaries (1.0, nf, offs, 8);
+		for (int i = 0; i < n; ++i) p.push_back ((double) f + offs[i]);
+		f += nf;
+	}
+	CHECK (p.size () >= 2, "no pulses after set_position");
+	if (p.size () >= 2) {
+		const double first = 1000000 + (std::ceil (kept) - kept) / r;
+		CHECK (std::fabs (p[0] - first) <= 1.0, "first pulse %g, expected %g", p[0], first);
+		CHECK (std::fabs ((p[1] - p[0]) - 1.0 / r) <= 1.0, "pulse spacing %g", p[1] - p[0]);
+	}
+	bt.update (480000, nf, 120.0, true, SR);        // an ordinary relocate
+	CHECK (std::fabs (bt.start_beats () - 480000 * r) < 1e-9,
+	       "relocate after set_position not re-anchored: %g", bt.start_beats ());
+}
+
 // Stop/start without a locate continues; with a locate to 0 re-anchors.
 static void test_stop_start ()
 {
@@ -668,6 +708,7 @@ int main (int argc, char ** argv)
 	test_tempo_change_keeps_phase ();
 	test_ramp_no_drop_no_double ();
 	test_relocate ();
+	test_set_position_keeps_count ();
 	test_stop_start ();
 	test_unknown_tempo ();
 	test_wrap ();

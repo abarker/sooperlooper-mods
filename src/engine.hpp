@@ -163,7 +163,7 @@ namespace SooperLooper {
 // reports.  Outside ALB_SYNC_PULSE_LOG: generate_sync() names these
 // whether or not the log is compiled in (its log_realign() then
 // discards them).
-enum SyncRealignWhat { RealignRequest = 0, RealignLanded = 1, RealignLost = 2 };
+enum SyncRealignWhat { RealignRequest = 0, RealignLanded = 1, RealignLost = 2, RealignRaced = 3 };
 //------ albEnd ----------------------------------
 
 #ifdef ALB_SYNC_PULSE_LOG
@@ -187,9 +187,12 @@ struct SyncPulseLogEvent
 	// landed (framepos: the landing frame, realign_held: the cycles JACK
 	// held the transport), or lost (another relocation, or none within the
 	// wait).  realign_why: 1 manual, 2 auto_realign, 3 engine start.
+	// raced (framepos: the landing frame, realign_count: where the count
+	// was kept, realign_held: the retry, 0 when the retries ran out).
 	uint8_t   realign_what;  // a SyncRealignWhat (above)
 	uint8_t   realign_why;
 	int32_t   realign_held;
+	double    realign_count;
 	uint8_t   kind;          // which of the record types this is
 
 	nframes_t framepos;      // Pulse: info.framepos + offset, the absolute

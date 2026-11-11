@@ -288,7 +288,9 @@ most are not): each realign would then leave the drums slightly behind the
 loops.  **Ardour is one when it follows JACK transport** (JACK chosen as
 Ardour's transport master), so do not turn that on together with
 ``auto_realign``; in this setup Ardour does not follow JACK transport.
-SooperLooper prints a warning on its console when a realign shows one.  Try it before relying on it at a performance: with the rig running as
+SooperLooper prints a warning on its console when a realign shows one.
+
+Try it before relying on it at a performance: with the rig running as
 usual, change the tempo a few times while the transport rolls, and check
 SooperLooper's console for a realign warning.
 

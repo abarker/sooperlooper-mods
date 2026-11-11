@@ -325,6 +325,23 @@ class BeatTracker
 	// Beats per frame during this cycle.
 	double rate () const { return _rate; }
 
+	//------ albBegin ----------------------------------
+	// Set the count at the start of this cycle, keeping its tempo: for a
+	// relocation that must not move the count (a realign the tempo raced;
+	// see the engine).  Call right after update(), in an active cycle.
+	void set_position (double beats)
+	{
+		if (!_active) {
+			return;
+		}
+		_seg_frame = _next_frame - _nframes;
+		_seg_beats = beats;
+		_b0 = beats;
+		_b1 = beats + (double) _nframes * _rate;
+		_cycle_rate = _rate;
+	}
+	//------ albEnd ----------------------------------
+
 	// Write into out[] the offsets (0 .. nframes-1) of every grid boundary
 	// in this cycle for a grid of `step` beats; returns how many (at most
 	// max_out).  Returns 0 when inactive or step <= 0.
