@@ -1203,10 +1203,10 @@ lines and the loops stay put, and realigns again as soon as the tempo has
 been steady for one period.  What you hear in that case: the drums may be
 off for two or three periods (11 to 16 ms at 256 frames) before they land
 back, so one hit may sound twice or not at all.  After three such retries
-in a row it stops trying: its bar lines then follow the drums, its
-console warns that loops already playing may be off them, and automatic
-realigns pause (``/get auto_realign`` returns 2) until the setting is set
-again.  A restart from bar 1 clears the offset for new takes.
+in a row it gives up on that realign: its bar lines then follow the
+drums, and its console warns that loops already playing may be off them.
+A restart from bar 1 clears the offset for new takes.  The next tempo
+change realigns as usual.
 
 **Not with a slow-sync client.**  Realign relies on JACK holding the
 transport for exactly one period on a relocate.  A slow-sync client -- a

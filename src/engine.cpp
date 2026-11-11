@@ -173,9 +173,12 @@ static std::atomic<int> s_realign_hold_report (-1);
 // retry that was not needed (the master placed itself at the old tempo)
 // changes no musical position.  At most REALIGN_RETRY_MAX in a row: then
 // the count follows the master (frame x the tempo of the cycle before the
-// landing), loops already playing are left off it, and automatic realigns
-// stop, so a master whose tempo moves every few cycles cannot keep the
-// transport relocating.  Process thread only, except the
+// landing) and loops already playing are left off it.  The cap keeps a
+// master whose tempo moves every few cycles from relocating the transport
+// without end; the next automatic realign waits for the tempo to settle
+// again (AUTO_REALIGN_SETTLE_S).  Unlike a long hold, a race says nothing
+// about the next realign, so automatic realigns are not stopped.  Process
+// thread only, except the
 // report (for the non-RT loop; -1: none).
 #define REALIGN_RETRY_MAX 3
 static double s_realign_bpm = 0.0;          // tempo of the request cycle
@@ -2210,10 +2213,7 @@ Engine::mainloop()
 				fprintf (stderr, "SooperLooper: WARNING: the tempo changed while %d realigns"
 				         " in a row were landing.  The drums and SooperLooper's bar lines"
 				         " may now be off loops already playing; a restart from bar 1"
-				         " clears it for new takes.%s\n", raced,
-				         s_auto_realign.load ()
-				         ? "  auto_realign is paused (/get auto_realign returns 2);"
-				           " set auto_realign 1 again to resume it." : "");
+				         " clears it for new takes.\n", raced);
 			}
 		}
 		//------ albEnd ----------------------------------
@@ -3697,7 +3697,6 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 								             _beat_tracker.start_beats ());
 								s_realign_race_report.store (s_realign_retries + 1);
 								s_realign_retries = 0;
-								s_auto_realign_blocked.store (true);
 							}
 						} else {
 							s_realign_retries = 0;
